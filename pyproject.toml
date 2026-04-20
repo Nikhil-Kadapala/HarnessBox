@@ -1,10 +1,26 @@
 [project]
 name = "harnessbox"
-version = "0.1.0"
-description = "Sandbox security primitives and unified API for AI coding agents in cloud sandboxes"
+version = "0.1.1"
+description = "Sandbox security, workspace, and harness primitives for AI coding agents"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = []
+keywords = ["ai", "agents", "sandbox", "security", "claude-code", "e2b", "harness"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/Nikhil-Kadapala/HarnessBox"
+Repository = "https://github.com/Nikhil-Kadapala/HarnessBox"
+Issues = "https://github.com/Nikhil-Kadapala/HarnessBox/issues"
 
 [project.optional-dependencies]
 e2b = ["e2b>=1.0.0"]
