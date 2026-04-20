@@ -1,13 +1,12 @@
 """HarnessBox — Sandbox security primitives and unified API for AI coding agents."""
 
 from harnessbox._version import __version__
-from harnessbox.harness import (
+from harnessbox.config.harness import (
     HarnessTypeConfig,
     get_harness_type,
     list_harness_types,
     register_harness_type,
 )
-from harnessbox.hooks import BLOCKED_PATTERNS, GUARD_BASH_SCRIPT, matches_blocked_pattern
 from harnessbox.lifecycle import (
     VALID_TRANSITIONS,
     InvalidTransitionError,
@@ -16,12 +15,24 @@ from harnessbox.lifecycle import (
 )
 from harnessbox.providers import CommandHandle, CommandResult, SandboxProvider
 from harnessbox.sandbox import Sandbox
-from harnessbox.security import SecurityPolicy, build_settings, credential_deny_rules
+from harnessbox.security.events import (
+    CallbackHandler,
+    EventHandler,
+    EventType,
+    JsonLogger,
+    SandboxEvent,
+)
+from harnessbox.security.hooks import (
+    BLOCKED_PATTERNS,
+    GUARD_BASH_SCRIPT,
+    matches_blocked_pattern,
+)
+from harnessbox.security.policy import SecurityPolicy, build_settings, credential_deny_rules
 from harnessbox.workspace import GitWorkspace, MountWorkspace, Workspace
 
 __all__ = [
     "__version__",
-    # Phase 1 — Security primitives
+    # Security primitives
     "BLOCKED_PATTERNS",
     "GUARD_BASH_SCRIPT",
     "InvalidTransitionError",
@@ -32,7 +43,7 @@ __all__ = [
     "credential_deny_rules",
     "matches_blocked_pattern",
     "validate_transition",
-    # Phase 2 — Sandbox abstraction
+    # Sandbox abstraction
     "CommandHandle",
     "CommandResult",
     "HarnessTypeConfig",
@@ -41,8 +52,14 @@ __all__ = [
     "get_harness_type",
     "list_harness_types",
     "register_harness_type",
-    # Phase 3 — Workspace primitives
+    # Workspace primitives
     "GitWorkspace",
     "MountWorkspace",
     "Workspace",
+    # Event system
+    "CallbackHandler",
+    "EventHandler",
+    "EventType",
+    "JsonLogger",
+    "SandboxEvent",
 ]

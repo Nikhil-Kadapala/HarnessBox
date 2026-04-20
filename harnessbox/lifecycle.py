@@ -30,9 +30,7 @@ class InvalidTransitionError(Exception):
     def __init__(self, current: SessionState, target: SessionState) -> None:
         self.current = current
         self.target = target
-        super().__init__(
-            f"Invalid transition: {current.value!r} → {target.value!r}"
-        )
+        super().__init__(f"Invalid transition: {current.value!r} → {target.value!r}")
 
 
 def validate_transition(current: SessionState, target: SessionState) -> bool:

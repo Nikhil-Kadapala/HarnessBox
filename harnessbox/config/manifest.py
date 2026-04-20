@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from harnessbox.harness import HarnessTypeConfig
-from harnessbox.security import SecurityPolicy
+from harnessbox.config.harness import HarnessTypeConfig
+from harnessbox.security.policy import SecurityPolicy
 
 
 @dataclass

@@ -34,14 +34,29 @@ await sandbox.end()  # commits + pushes changes back
 
 Zero runtime dependencies. Stdlib only. Provider SDKs are optional extras.
 
+## Quickstart
+
+```bash
+pip install "harnessbox[e2b]"
+```
+
+```python
+from harnessbox import Sandbox, JsonLogger
+
+sandbox = Sandbox("e2b", api_key="your-e2b-key", event_handler=JsonLogger())
+await sandbox.setup()       # → {"event_type": "setup_complete", ...}
+result = await sandbox.run_command("echo hello from the sandbox")
+print(result.stdout)         # "hello from the sandbox"
+await sandbox.kill()         # → {"event_type": "session_end", ...}
+```
+
 ## Install
 
 ```bash
-# From source (until PyPI name is finalized)
-pip install -e packages/harnessbox
+pip install harnessbox
 
 # With E2B provider
-pip install -e "packages/harnessbox[e2b]"
+pip install "harnessbox[e2b]"
 ```
 
 ## What It Does
@@ -295,10 +310,31 @@ Sandbox(
     template: str | None = None,
     workspace: Workspace | None = None,
     setup_script: str | None = None,     # shell command to run before agent launch
+    event_handler: EventHandler | None = None,  # receives SandboxEvent on lifecycle changes
 )
 ```
 
 **Lifecycle:** `setup()` → `run_prompt()` / `start_interactive()` → `end()` or `kill()`
+
+### Event System
+
+```python
+from harnessbox import SandboxEvent, EventType, JsonLogger, CallbackHandler
+
+# JsonLogger prints JSON lines to stdout
+sandbox = Sandbox("e2b", api_key="...", event_handler=JsonLogger())
+
+# CallbackHandler calls your function
+events = []
+sandbox = Sandbox("e2b", api_key="...", event_handler=CallbackHandler(events.append))
+
+# Custom handler (async protocol)
+class MyHandler:
+    async def handle(self, event: SandboxEvent) -> None:
+        await send_to_webhook(event)
+```
+
+**Event types:** `SETUP_COMPLETE`, `SESSION_END`, `COMMAND_RUN`, `STATE_CHANGED`
 
 ### GitWorkspace
 
@@ -340,23 +376,25 @@ SecurityPolicy(
 ## Project Structure
 
 ```
-packages/harnessbox/
-  harnessbox/
-    __init__.py          # public API
-    sandbox.py           # Sandbox class
-    workspace.py         # Workspace protocol, GitWorkspace, MountWorkspace
-    providers.py         # SandboxProvider protocol
-    harness.py           # HarnessTypeConfig registry
-    security.py          # SecurityPolicy, deny rules
-    hooks.py             # PreToolUse hook guard
-    lifecycle.py         # SessionState machine
-    _setup.py            # manifest builder
-    _providers/
-      e2b.py             # E2B provider
-      docker.py          # stub
-      daytona.py         # stub
-      ec2.py             # stub
-  tests/                 # 211 tests
+harnessbox/
+  __init__.py              # public API
+  sandbox.py               # Sandbox class
+  workspace.py             # Workspace protocol, GitWorkspace, MountWorkspace
+  providers.py             # SandboxProvider protocol
+  lifecycle.py             # SessionState machine
+  config/
+    harness.py             # HarnessTypeConfig registry
+    manifest.py            # SandboxManifest builder
+  security/
+    policy.py              # SecurityPolicy, deny rules
+    hooks.py               # PreToolUse hook guard
+    events.py              # SandboxEvent, EventHandler, JsonLogger, CallbackHandler
+  _providers/
+    e2b.py                 # E2B provider
+    docker.py              # stub
+    daytona.py             # stub
+    ec2.py                 # stub
+tests/                     # 233 tests
 ```
 
 ## License

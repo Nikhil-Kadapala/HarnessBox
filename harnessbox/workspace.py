@@ -184,9 +184,7 @@ class GitWorkspace:
         if sha_result.exit_code == 0:
             self._initial_sha = sha_result.stdout.strip()
 
-        lfs_result = await self._run_git(
-            provider, "lfs ls-files 2>/dev/null", cwd=workspace_root
-        )
+        lfs_result = await self._run_git(provider, "lfs ls-files 2>/dev/null", cwd=workspace_root)
         if lfs_result.exit_code == 0 and lfs_result.stdout.strip():
             pass
 
@@ -213,10 +211,11 @@ class GitWorkspace:
 
         await self._run_git(provider, "add -A", cwd=workspace_root)
 
-        msg = self.commit_message or f"harnessbox: auto-commit {datetime.now(timezone.utc).isoformat()}"
-        commit_result = await self._run_git(
-            provider, f'commit -m "{msg}"', cwd=workspace_root
+        msg = (
+            self.commit_message
+            or f"harnessbox: auto-commit {datetime.now(timezone.utc).isoformat()}"
         )
+        commit_result = await self._run_git(provider, f'commit -m "{msg}"', cwd=workspace_root)
         if commit_result.exit_code == 0:
             sha = commit_result.stdout.strip().split()[-1] if commit_result.stdout else ""
             self._fire_event(self._on_commit, sha=sha, message=msg)
@@ -234,9 +233,7 @@ class GitWorkspace:
         )
         if push_result.exit_code != 0:
             self.push_error = push_result.stderr
-            self._fire_event(
-                self._on_push_failure, error=push_result.stderr, branch=self.branch
-            )
+            self._fire_event(self._on_push_failure, error=push_result.stderr, branch=self.branch)
         else:
             self._fire_event(self._on_push_success, branch=self.branch)
             if self._auth_token:
@@ -244,9 +241,7 @@ class GitWorkspace:
                     provider, "config --unset credential.helper", cwd=workspace_root
                 )
 
-    async def snapshot(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
+    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
         """Create a named snapshot (lightweight git tag) at the current state."""
         await self._run_git(provider, "add -A", cwd=workspace_root)
         await self._run_git(
@@ -261,9 +256,7 @@ class GitWorkspace:
             raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
         self._last_snapshot = name
 
-    async def restore(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
+    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
         """Restore to a named snapshot."""
         result = await self._run_git(
             provider, f"checkout harnessbox-snap-{name} -- .", cwd=workspace_root
@@ -272,9 +265,7 @@ class GitWorkspace:
             raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
         self._last_snapshot = name
 
-    async def diff(
-        self, provider: SandboxProvider, workspace_root: str
-    ) -> str:
+    async def diff(self, provider: SandboxProvider, workspace_root: str) -> str:
         """Return unified diff of changes since clone (or last snapshot restore)."""
         if self._last_snapshot:
             ref = f"harnessbox-snap-{self._last_snapshot}"

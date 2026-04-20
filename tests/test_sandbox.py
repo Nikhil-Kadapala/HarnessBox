@@ -6,7 +6,7 @@ import pytest
 
 from harnessbox.lifecycle import InvalidTransitionError, SessionState
 from harnessbox.sandbox import Sandbox
-from harnessbox.security import SecurityPolicy
+from harnessbox.security.policy import SecurityPolicy
 
 
 class TestConstruction:

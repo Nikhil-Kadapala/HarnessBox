@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from harnessbox.security import SecurityPolicy
+from harnessbox.security.policy import SecurityPolicy
 
 
 @dataclass(frozen=True)
@@ -57,13 +57,13 @@ def list_harness_types() -> list[str]:
 
 
 def _claude_code_build_settings(policy: SecurityPolicy) -> dict[str, Any]:
-    from harnessbox.security import build_settings
+    from harnessbox.security.policy import build_settings
 
     return build_settings(policy)
 
 
 def _claude_code_build_hook() -> str:
-    from harnessbox.hooks import GUARD_BASH_SCRIPT
+    from harnessbox.security.hooks import GUARD_BASH_SCRIPT
 
     return GUARD_BASH_SCRIPT
 
@@ -84,9 +84,7 @@ register_harness_type(
             " -p {prompt}"
         ),
         cli_interactive_template=(
-            "claude --dangerously-skip-permissions"
-            " --output-format stream-json"
-            " --verbose"
+            "claude --dangerously-skip-permissions --output-format stream-json --verbose"
         ),
         build_settings=_claude_code_build_settings,
         build_hook_script=_claude_code_build_hook,

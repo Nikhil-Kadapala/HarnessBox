@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from harnessbox.harness import (
+from harnessbox.config.harness import (
     _HARNESS_REGISTRY,
     HarnessTypeConfig,
     get_harness_type,
     list_harness_types,
     register_harness_type,
 )
-from harnessbox.security import SecurityPolicy
+from harnessbox.security.policy import SecurityPolicy
 
 
 class TestRegistry:

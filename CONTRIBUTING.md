@@ -69,7 +69,7 @@ Providers live in `harnessbox/_providers/`. To add one:
 
 ## Adding a New Harness Type
 
-Harness types are registered in `harnessbox/harness.py`:
+Harness types are registered in `harnessbox/config/harness.py`:
 
 ```python
 register_harness_type(HarnessTypeConfig(

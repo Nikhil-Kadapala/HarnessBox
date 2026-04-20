@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from harnessbox.security import SecurityPolicy, build_settings, credential_deny_rules
+from harnessbox.security.policy import SecurityPolicy, build_settings, credential_deny_rules
 
 
 class TestSecurityPolicy:

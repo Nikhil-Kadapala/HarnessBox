@@ -4,7 +4,7 @@ import ast
 
 import pytest
 
-from harnessbox.hooks import GUARD_BASH_SCRIPT, matches_blocked_pattern
+from harnessbox.security.hooks import GUARD_BASH_SCRIPT, matches_blocked_pattern
 
 
 class TestMatchesBlockedPattern:
