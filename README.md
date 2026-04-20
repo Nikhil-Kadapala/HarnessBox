@@ -1,5 +1,10 @@
 # HarnessBox
 
+[![PyPI](https://img.shields.io/pypi/v/harnessbox)](https://pypi.org/project/harnessbox/)
+[![CI](https://github.com/Nikhil-Kadapala/HarnessBox/actions/workflows/ci.yml/badge.svg)](https://github.com/Nikhil-Kadapala/HarnessBox/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+
 Sandbox security, workspace, and harness primitives for AI coding agents.
 
 HarnessBox gives you a single `Sandbox` class that works across cloud providers (E2B, Docker, Daytona, EC2), configures any agent harness (Claude Code, Codex, Gemini CLI, OpenCode), enforces security policies, and optionally clones a git repo into the workspace with one parameter.
