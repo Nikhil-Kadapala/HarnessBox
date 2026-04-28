@@ -11,3 +11,7 @@ build/
 .env
 .DS_Store
 uv.lock
+.claude/
+.firecrawl/
+.context/
+TODOS.md
