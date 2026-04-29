@@ -2,29 +2,63 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
-## Template Optimization — Pre-installed tooling per harness type
+## Runtime Tool Installation — User-selectable developer tools
 
-**What:** Create E2B templates per harness type (e.g., claude-code, aider) with pre-installed tooling (bun, gh, uv, tree, ripgrep, etc.) to reduce session startup time.
+**What:** Let users choose which tools to install at sandbox startup from a curated list of common developer tools and runtimes.
 
-**Why:** Currently every sandbox installs tools at runtime. Pre-installing them in a template saves 15-25 seconds per session (for tools not in E2B base image).
+**Why:** E2B base images have git, python3, node, npm, uv pre-installed, but are missing bun, gh, tree, rg, fd. Rather than pre-baking templates (complex, rigid), let users select what they need on a per-session basis.
 
-**Decision gate:** Measure current tool installation time first. If >10 seconds → templates worth it. If <5 seconds → skip for now.
+**Timing data (from instrumentation):**
+- E2B base has: git, python3, node, npm, uv (no installation needed)
+- Missing: bun, gh, tree, rg, fd
+- Current setup time: 3.2s (no tool installation happening)
+- Tool installation would add ~15-25s for missing tools if needed
 
-**Design notes:**
-- Template per harness type, NOT per repo/session (repo/branch/auth remain runtime config)
-- Version templates (`harnessbox-claude-code-v1`) for safe rollout
-- Git clone still happens at runtime (it's session-specific)
-- Rebuild strategy: manual trigger or monthly cadence (not on every tool release)
-- Template structure: `sdk/src/harnessbox/templates/claude-code.Dockerfile`
+**Design:**
+- UI: Multi-select dropdown in session creation flow (web app, CLI flag `--install-tools bun,gh,tree`)
+- API: Add `install_tools: list[str]` to `CreateSessionRequest`
+- Server: Map tool names to install commands, run via `provider.run_command()` during setup
+- Timing: Run tool installs in Phase 2 (after sandbox creation, before git clone)
+
+**Tool catalog:**
+```python
+INSTALLABLE_TOOLS = {
+    # Already in E2B base (no-op, but show in UI as "pre-installed")
+    "git": None,
+    "python3": None,
+    "node": None,
+    "npm": None,
+    "uv": None,
+    
+    # Available for installation
+    "bun": "curl -fsSL https://bun.sh/install | bash",
+    "gh": "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt update && sudo apt install gh -y",
+    "tree": "apt-get update && apt-get install -y tree",
+    "ripgrep": "apt-get update && apt-get install -y ripgrep",
+    "fd": "apt-get update && apt-get install -y fd-find && ln -s $(which fdfind) /usr/local/bin/fd",
+    "jq": "apt-get update && apt-get install -y jq",
+    "vim": "apt-get update && apt-get install -y vim",
+    "tmux": "apt-get update && apt-get install -y tmux",
+    "docker": "curl -fsSL https://get.docker.com | sh",
+}
+```
 
 **Implementation:**
-1. Add timing instrumentation to measure current baseline (see instrumentation plan below)
-2. Create Dockerfile template with: git, node, bun, gh, uv, tree, ripgrep, fd
-3. Add `harnessbox build-template` CLI command
-4. Update `_providers/e2b.py` to accept `template` parameter
-5. Pass template from `config/harness.py` based on harness type
+1. Add `install_tools: list[str] | None = None` to `CreateSessionRequest` in `server.py`
+2. Create `sdk/src/harnessbox/_utils/tools.py` with `INSTALLABLE_TOOLS` registry and `install_tool()` function
+3. Add Phase 2.5 in `Sandbox.setup()`: loop through `install_tools`, run install commands, log timing
+4. Update web app: add multi-select tool picker in session creation form
+5. Update CLI: add `--install-tools` flag (comma-separated)
 
-**Depends on:** Performance measurement data to validate optimization is worth the complexity.
+**Tradeoffs:**
+- Pro: Flexible, no template complexity, user chooses what they need
+- Pro: Easy to extend (just add to registry)
+- Con: Adds ~15-25s to setup if many tools selected
+- Con: Install failures are runtime errors (vs template build-time errors)
+
+**Future optimization:** If most users select the same 3-5 tools, revisit templates.
+
+**Depends on:** Timing instrumentation (completed), user feedback on which tools are most needed.
 
 ## PolicyEngine — Identity-aware security rules
 
