@@ -460,9 +460,20 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
         try:
-            mgr.get_session(session_id)
+            info = mgr.get_session(session_id)
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        # Reject prompts to ended sessions
+        if info.status == "ended":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "SESSION_NOT_ACTIVE",
+                    "status": info.status,
+                    "message": "This session has ended. Create a new session to continue.",
+                },
+            )
 
         async def event_generator() -> Any:
             logger.info("SSE stream started for session %s", session_id)

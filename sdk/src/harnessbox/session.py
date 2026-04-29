@@ -51,6 +51,7 @@ class SessionConfig:
     timeout: int = 300
     skip_permissions: bool = False
     template: str | None = None
+    session_timeout: int = 900
 
 
 @dataclass
@@ -62,6 +63,7 @@ class SessionInfo:
     harness: str
     created_at: str
     status: str = "active"
+    workspace_name: str | None = None
 
 
 class SessionNotFoundError(KeyError):
@@ -87,6 +89,7 @@ class SessionManager:
         event_handler: Any = None,
     ) -> SessionInfo:
         sid = session_id or str(uuid.uuid4())
+        lock = asyncio.Lock()
         sandbox = Sandbox(
             client=config.provider,
             api_key=config.api_key,
@@ -106,17 +109,24 @@ class SessionManager:
             skip_permissions=config.skip_permissions,
             template=config.template,
             event_handler=event_handler,
+            session_timeout=config.session_timeout,
+            session_lock=lock,
         )
         await sandbox.setup()
+
+        workspace_name = None
+        if config.workspace and hasattr(config.workspace, "worktree_name"):
+            workspace_name = config.workspace.worktree_name
 
         info = SessionInfo(
             session_id=sid,
             sandbox=sandbox,
             harness=config.harness,
             created_at=datetime.now(timezone.utc).isoformat(),
+            workspace_name=workspace_name,
         )
         self._sessions[sid] = info
-        self._locks[sid] = asyncio.Lock()
+        self._locks[sid] = lock
         return info
 
     def get_session(self, session_id: str) -> SessionInfo:
@@ -128,9 +138,18 @@ class SessionManager:
         return list(self._sessions.values())
 
     async def prompt(self, session_id: str, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
+        """Stream prompt response. Marks session as ended if sandbox dies."""
         info = self.get_session(session_id)
         async with self._locks[session_id]:
             async for event in info.sandbox.run_prompt_events(prompt):
+                # Check for sandbox death
+                if (
+                    event.event_type == "error"
+                    and event.metadata.get("error_code") == "SANDBOX_DEAD"
+                ):
+                    # Mark session as ended (sandbox is dead)
+                    info.status = "ended"
+
                 yield event
 
     async def destroy_session(self, session_id: str) -> None:

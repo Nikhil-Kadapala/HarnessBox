@@ -25,6 +25,18 @@ from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.streaming import StreamParser, UniversalEvent
 from harnessbox.workspace import Workspace
 
+# E2B-specific exceptions for sandbox death detection
+try:
+    from e2b.exceptions import TimeoutException
+    from e2b_connect.client import ConnectException
+except ImportError:
+    # Mock exceptions if E2B is not installed (for tests with MockProvider)
+    class TimeoutException(Exception):  # type: ignore
+        pass
+
+    class ConnectException(Exception):  # type: ignore
+        pass
+
 _log = logging.getLogger("harnessbox.sandbox")
 
 
@@ -704,43 +716,91 @@ class Sandbox:
 
         In one-shot mode (fallback), spawns a new process per prompt with
         ``--resume`` for conversation continuity.
+
+        If the sandbox is dead (timed out, killed, or destroyed), yields a
+        structured error event and transitions to FAILED state instead of
+        raising an exception.
         """
-        self._cancel_idle_timer()
+        try:
+            self._cancel_idle_timer()
 
-        use_persistent = self._harness_config.supports_persistent and hasattr(
-            self._provider, "start_persistent"
-        )
-        if use_persistent:
-            await self._ensure_agent_ready()
-
-            try:
-                await self._agent_process.send_prompt(prompt)
-            except RuntimeError:
-                _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
-                self._agent_process = None
+            use_persistent = self._harness_config.supports_persistent and hasattr(
+                self._provider, "start_persistent"
+            )
+            if use_persistent:
                 await self._ensure_agent_ready()
-                await self._agent_process.send_prompt(prompt)
 
-            async for event in self._agent_process.stream_turn():
-                if event.session_id:
-                    self._agent_session_id = event.session_id
-                await self._event_buffer.push(event)
-                yield event
+                try:
+                    await self._agent_process.send_prompt(prompt)
+                except RuntimeError:
+                    _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
+                    self._agent_process = None
+                    await self._ensure_agent_ready()
+                    await self._agent_process.send_prompt(prompt)
 
-            status_event = await self._poll_session_status()
-            if status_event:
-                await self._event_buffer.push(status_event)
-                yield status_event
-
-            self._start_idle_timer()
-        else:
-            parser = StreamParser(session_id=self._agent_session_id or "")
-            async for line in self.run_prompt(prompt):
-                for event in parser.parse_line(line):
+                async for event in self._agent_process.stream_turn():
                     if event.session_id:
                         self._agent_session_id = event.session_id
                     await self._event_buffer.push(event)
                     yield event
+
+                status_event = await self._poll_session_status()
+                if status_event:
+                    await self._event_buffer.push(status_event)
+                    yield status_event
+
+                self._start_idle_timer()
+            else:
+                parser = StreamParser(session_id=self._agent_session_id or "")
+                async for line in self.run_prompt(prompt):
+                    for event in parser.parse_line(line):
+                        if event.session_id:
+                            self._agent_session_id = event.session_id
+                        await self._event_buffer.push(event)
+                        yield event
+
+        except (TimeoutException, ConnectException) as e:
+            # Sandbox is dead (timed out, destroyed, or killed)
+            error_msg = str(e).lower()
+            if (
+                "sandbox was not found" in error_msg
+                or "502" in error_msg
+                or "unavailable" in error_msg
+                or "timeout" in error_msg
+            ):
+                _log.error(
+                    f"Sandbox {self._provider.sandbox_id} is dead: {e}",
+                    extra={"sandbox_id": self._provider.sandbox_id},
+                )
+
+                # Yield structured error event to client
+                error_event = UniversalEvent(
+                    event_id=str(uuid.uuid4()),
+                    sequence=0,  # Event buffer will set correct sequence
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    session_id=self._agent_session_id or "",
+                    event_type=StreamEventType.ERROR,
+                    error_message="Sandbox has timed out or been destroyed. Create a new session.",
+                    metadata={
+                        "error_code": "SANDBOX_DEAD",
+                        "error_details": str(e),
+                        "recoverable": False,
+                    },
+                )
+                await self._event_buffer.push(error_event)
+                yield error_event
+
+                # Transition to FAILED state
+                try:
+                    await self._transition_to(SessionState.FAILED)
+                except InvalidTransitionError:
+                    # Already in a terminal state, that's fine
+                    pass
+
+                return
+
+            # Non-sandbox errors: re-raise
+            raise
 
     async def _poll_session_status(self) -> UniversalEvent | None:
         """Poll /context and /cost after a turn and emit a STATUS event."""
