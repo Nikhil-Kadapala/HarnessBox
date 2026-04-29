@@ -95,6 +95,136 @@ class TestDestroySession:
         assert resp.status_code == 404
 
 
+class TestCredentialStatus:
+    def test_returns_probes(self, client: TestClient) -> None:
+        resp = client.get("/v1/credentials/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "probes" in data
+        assert "timestamp" in data
+        assert isinstance(data["probes"], list)
+        for probe in data["probes"]:
+            assert "name" in probe
+            assert "available" in probe
+            assert isinstance(probe["available"], bool)
+            assert "value" not in probe
+            assert "masked_value" not in probe
+            assert "location" not in probe
+
+
+class TestListHarnesses:
+    def test_returns_harness_types(self, client: TestClient) -> None:
+        resp = client.get("/v1/harnesses")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) >= 4
+        names = {h["name"] for h in data}
+        assert {"claude-code", "codex", "gemini-cli", "opencode"}.issubset(names)
+        for h in data:
+            assert "cli_command" in h
+            assert "supports_persistent" in h
+            assert "workspace_root" in h
+
+
+class TestListProviders:
+    def test_returns_providers(self, client: TestClient) -> None:
+        resp = client.get("/v1/providers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        names = {p["name"] for p in data}
+        assert "e2b" in names
+
+
+class TestListGuards:
+    def test_returns_guard_sets(self, client: TestClient) -> None:
+        resp = client.get("/v1/guards")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) >= 10
+        names = {g["name"] for g in data}
+        assert "aws" in names
+        assert "llm_providers" in names
+        for g in data:
+            assert "bash_deny_count" in g
+            assert "read_deny_count" in g
+
+
+class TestCORS:
+    def test_cors_headers_present(self, client: TestClient) -> None:
+        resp = client.options(
+            "/v1/sessions",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+class TestCreateSessionExpanded:
+    def test_with_security_policy(self, client: TestClient) -> None:
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-1"
+
+            resp = client.post(
+                "/v1/sessions",
+                json={
+                    "session_id": "sp-1",
+                    "security_policy": {
+                        "denied_tools": ["WebFetch"],
+                        "deny_network": True,
+                        "credential_guards": ["aws", "gcp"],
+                    },
+                },
+            )
+        assert resp.status_code == 201
+
+    def test_with_workspace(self, client: TestClient) -> None:
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-1"
+
+            resp = client.post(
+                "/v1/sessions",
+                json={
+                    "session_id": "ws-1",
+                    "workspace": {
+                        "remote": "https://github.com/test/repo.git",
+                        "branch": "main",
+                    },
+                },
+            )
+        assert resp.status_code == 201
+
+    def test_invalid_security_policy(self, client: TestClient) -> None:
+        resp = client.post(
+            "/v1/sessions",
+            json={
+                "security_policy": {
+                    "denied_tools": "not-a-list",
+                },
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_invalid_workspace_missing_remote(self, client: TestClient) -> None:
+        resp = client.post(
+            "/v1/sessions",
+            json={
+                "workspace": {
+                    "branch": "main",
+                },
+            },
+        )
+        assert resp.status_code == 422
+
+
 class TestPromptSession:
     def test_prompt_not_found(self, client: TestClient) -> None:
         resp = client.post(
@@ -111,3 +241,81 @@ class TestPromptSession:
 
         resp = client.post("/v1/sessions/s-1/prompt", json={})
         assert resp.status_code == 422
+
+
+class TestWorkspaceEndpoints:
+    """Test workspace name generation and detection endpoints."""
+
+    def test_generate_workspace_name(self, client: TestClient) -> None:
+        """GET /v1/workspace/name should return a name."""
+        resp = client.get("/v1/workspace/name")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "name" in data
+        assert isinstance(data["name"], str)
+        assert len(data["name"]) > 0
+
+    def test_ssh_to_https_conversion(self, client: TestClient, tmp_path) -> None:
+        """Detect should convert SSH URLs to HTTPS."""
+        import subprocess
+
+        repo_path = tmp_path / "ssh-repo"
+        repo_path.mkdir()
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:user/repo.git"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        resp = client.get(f"/v1/workspace/detect?path={repo_path}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["remote"] == "https://github.com/user/repo.git"
+        assert "git@" not in data["remote"]
+
+    def test_detect_workspace_valid_repo(self, client: TestClient, tmp_path) -> None:
+        """GET /v1/workspace/detect should detect repo info."""
+        import subprocess
+
+        repo_path = tmp_path / "test-repo"
+        repo_path.mkdir()
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        resp = client.get(f"/v1/workspace/detect?path={repo_path}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["remote"] == "https://github.com/test/repo.git"
+        assert "default_branch" in data
+        assert data["name"] == "test-repo"
+
+    def test_detect_workspace_not_a_repo(self, client: TestClient, tmp_path) -> None:
+        """GET /v1/workspace/detect should return 400 for non-git paths."""
+        non_repo = tmp_path / "not-a-repo"
+        non_repo.mkdir()
+
+        resp = client.get(f"/v1/workspace/detect?path={non_repo}")
+        assert resp.status_code == 400
+        assert "Not a git repository" in resp.json()["detail"]
+
+    def test_detect_workspace_no_remote(self, client: TestClient, tmp_path) -> None:
+        """GET /v1/workspace/detect should return 400 when no remote exists."""
+        import subprocess
+
+        repo_path = tmp_path / "no-remote-repo"
+        repo_path.mkdir()
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+
+        resp = client.get(f"/v1/workspace/detect?path={repo_path}")
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "Failed to read remote URL" in detail or "No remote.origin.url found" in detail
+
+

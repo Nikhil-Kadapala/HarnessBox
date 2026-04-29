@@ -56,6 +56,8 @@ class TestGitWorkspaceInit:
         assert "auth_token=None" in r
 
 
+
+
 class _GitMockProvider(MockProvider):
     """MockProvider that simulates git command responses."""
 
@@ -136,6 +138,22 @@ class TestGitWorkspaceInject:
         cmds = git_provider._commands
         assert any("fetch origin develop" in c for c in cmds)
         assert any("origin/develop" in c for c in cmds)
+
+    @pytest.mark.asyncio
+    async def test_clone_checks_out_branch(self, git_provider):
+        """Verify that checkout runs after fetch to create working tree on specified branch."""
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="feature-x",
+        )
+        await ws.inject(git_provider, "/workspace")
+
+        cmds = git_provider._commands
+        # Find indexes of fetch and checkout commands
+        fetch_idx = next(i for i, c in enumerate(cmds) if "fetch origin feature-x" in c)
+        checkout_idx = next(i for i, c in enumerate(cmds) if "checkout -b feature-x origin/feature-x" in c)
+        # Checkout must happen after fetch
+        assert checkout_idx > fetch_idx
 
     @pytest.mark.asyncio
     async def test_clone_sets_git_identity(self, git_provider):
@@ -440,3 +458,5 @@ class TestGitWorkspaceDiff:
 
         result = await ws.diff(git_provider, "/workspace")
         assert "changes since v1" in result
+
+

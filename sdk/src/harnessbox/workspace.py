@@ -86,6 +86,7 @@ class GitWorkspace:
             f"auth_token={'***' if self._auth_token else 'None'})"
         )
 
+
     def _fire_event(self, callback: EventCallback | None, **kwargs: Any) -> None:
         if callback is not None:
             callback(**kwargs)
@@ -110,7 +111,10 @@ class GitWorkspace:
         """Clone the repo into workspace_root inside the sandbox."""
         self._fire_event(self._on_clone_start, remote=self.remote, branch=self.branch)
 
-        if hasattr(provider, "git_clone"):
+        # Use native git API if available, otherwise fall back to shell commands
+        use_native = hasattr(provider, "git_clone")
+
+        if use_native:
             try:
                 await self._native_clone(provider, workspace_root)
                 self._fire_event(
@@ -178,27 +182,37 @@ class GitWorkspace:
         if result.exit_code != 0:
             raise _CloneError(f"git init failed: {result.stderr}", retryable=False)
 
-        await self._run_git(
+        result = await self._run_git(
             provider,
             f"remote add origin {self._authed_remote()}",
             cwd=workspace_root,
         )
+        if result.exit_code != 0:
+            raise _CloneError(f"git remote add failed: {result.stderr}", retryable=False)
 
-        await self._run_git(
+        result = await self._run_git(
             provider,
             "config user.name harnessbox",
             cwd=workspace_root,
         )
-        await self._run_git(
+        if result.exit_code != 0:
+            raise _CloneError(f"git config user.name failed: {result.stderr}", retryable=False)
+
+        result = await self._run_git(
             provider,
             "config user.email harnessbox@noreply",
             cwd=workspace_root,
         )
-        await self._run_git(
+        if result.exit_code != 0:
+            raise _CloneError(f"git config user.email failed: {result.stderr}", retryable=False)
+
+        result = await self._run_git(
             provider,
             f"config --global safe.directory {workspace_root}",
             cwd=workspace_root,
         )
+        if result.exit_code != 0:
+            raise _CloneError(f"git config safe.directory failed: {result.stderr}", retryable=False)
 
         depth_flag = f"--depth {self.clone_depth}" if self.clone_depth else ""
         result = await self._run_git(
@@ -218,19 +232,23 @@ class GitWorkspace:
         if result.exit_code != 0:
             raise _CloneError(f"git checkout failed: {result.stderr}", retryable=False)
 
-        await self._run_git(
+        result = await self._run_git(
             provider,
             f"remote set-url origin {self._clean_remote()}",
             cwd=workspace_root,
         )
+        if result.exit_code != 0:
+            raise _CloneError(f"git remote set-url failed: {result.stderr}", retryable=False)
 
         if self._auth_token:
             helper_cmd = f"!echo password={self._auth_token}"
-            await self._run_git(
+            result = await self._run_git(
                 provider,
                 f"config credential.helper '{helper_cmd}'",
                 cwd=workspace_root,
             )
+            if result.exit_code != 0:
+                raise _CloneError(f"git config credential.helper failed: {result.stderr}", retryable=False)
 
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:
@@ -246,6 +264,7 @@ class GitWorkspace:
         )
         if "HAS_SUBMODULES" in sub_result.stdout:
             pass
+
 
     @staticmethod
     def _is_auth_or_notfound(stderr: str) -> bool:

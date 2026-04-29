@@ -106,6 +106,8 @@ class Sandbox:
         event_handler: EventHandler | None = None,
         skip_permissions: bool = False,
         cwd: str | None = None,
+        session_timeout: int = 900,
+        session_lock: asyncio.Lock | None = None,
     ) -> None:
         """Create a sandbox for running AI coding agents.
 
@@ -171,10 +173,14 @@ class Sandbox:
         self._event_handler = event_handler
         self._skip_permissions = skip_permissions
         self._cwd = cwd or self._harness_config.workspace_root
-        self._session_id: str | None = None
+        self._agent_session_id: str | None = None
         self._event_buffer = EventBuffer()
         self._agent_process: AgentProcess | None = None
         self.unpushed_files: dict[str, str] | None = None
+        self._session_timeout = session_timeout
+        self._session_lock = session_lock
+        self._idle_timer_task: asyncio.Task[None] | None = None
+        self._paused_sandbox_id: str | None = None
 
     @staticmethod
     def _resolve_string_provider(
@@ -317,7 +323,7 @@ class Sandbox:
 
     @property
     def agent_session_id(self) -> str | None:
-        return self._session_id
+        return self._agent_session_id
 
     @property
     def event_buffer(self) -> EventBuffer:
@@ -362,7 +368,7 @@ class Sandbox:
             event_id=str(uuid.uuid4()),
             sequence=self._event_buffer.latest_sequence + 1,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._session_id or self.sandbox_id or "",
+            session_id=self._agent_session_id or self.sandbox_id or "",
             event_type=event_type,
             metadata=metadata,
         )
@@ -476,6 +482,38 @@ class Sandbox:
         await self._provider.resume(sandbox_id)
         self._transition(SessionState.ACTIVE)
 
+    # -- Idle timer --
+
+    def _start_idle_timer(self) -> None:
+        self._cancel_idle_timer()
+        if self._session_timeout > 0:
+            self._idle_timer_task = asyncio.create_task(self._on_idle_timeout())
+
+    def _cancel_idle_timer(self) -> None:
+        if self._idle_timer_task and not self._idle_timer_task.done():
+            self._idle_timer_task.cancel()
+        self._idle_timer_task = None
+
+    async def _on_idle_timeout(self) -> None:
+        await asyncio.sleep(self._session_timeout)
+        if self._session_lock:
+            async with self._session_lock:
+                await self._do_idle_pause()
+        else:
+            await self._do_idle_pause()
+
+    async def _do_idle_pause(self) -> None:
+        if self._state != SessionState.ACTIVE:
+            return
+        _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
+        if self._agent_process:
+            try:
+                await self._agent_process.stop()
+            except Exception:
+                pass
+            self._agent_process = None
+        self._paused_sandbox_id = await self.pause()
+
     async def end(self) -> None:
         """Gracefully end the session."""
         self._transition(SessionState.ENDING)
@@ -541,7 +579,7 @@ class Sandbox:
         cmd = self._harness_config.build_oneshot_command(
             escaped_prompt,
             skip_permissions=self._skip_permissions,
-            session_id=self._session_id,
+            session_id=self._agent_session_id,
             plugin_dirs=self._plugin_dirs or None,
         )
         _log.info("Running command: %s", cmd[:300])
@@ -554,6 +592,27 @@ class Sandbox:
             self._try_extract_session_id(line)
             yield line
 
+    async def _ensure_agent_ready(self) -> None:
+        """Ensure the persistent agent process is running and ready for prompts.
+
+        Handles first start, restart after idle-pause, and restart after
+        sandbox timeout (agent process died, sandbox auto-resumed by E2B).
+        """
+        if self._state == SessionState.PAUSED and self._paused_sandbox_id:
+            _log.info("Resuming paused sandbox %s", self._paused_sandbox_id)
+            await self.resume(self._paused_sandbox_id)
+            self._paused_sandbox_id = None
+
+        if not self._agent_process or not self._agent_process.is_running:
+            cmd = self._harness_config.build_persistent_command(
+                skip_permissions=self._skip_permissions,
+                plugin_dirs=self._plugin_dirs or None,
+                session_id=self._agent_session_id,
+            )
+            self._agent_process = AgentProcess(self._provider, StreamParser(persistent=True))
+            await self._agent_process.start(cmd, cwd=self._cwd)
+            _log.info("Persistent agent process started")
+
     async def run_prompt_events(self, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
         """Run the agent and yield typed universal stream events.
 
@@ -564,23 +623,25 @@ class Sandbox:
         In one-shot mode (fallback), spawns a new process per prompt with
         ``--resume`` for conversation continuity.
         """
+        self._cancel_idle_timer()
+
         use_persistent = self._harness_config.supports_persistent and hasattr(
             self._provider, "start_persistent"
         )
         if use_persistent:
-            if not self._agent_process or not self._agent_process.is_running:
-                cmd = self._harness_config.build_persistent_command(
-                    skip_permissions=self._skip_permissions,
-                    plugin_dirs=self._plugin_dirs or None,
-                )
-                self._agent_process = AgentProcess(self._provider, StreamParser(persistent=True))
-                await self._agent_process.start(cmd, cwd=self._cwd)
-                _log.info("Persistent agent process started (lazy)")
+            await self._ensure_agent_ready()
 
-            await self._agent_process.send_prompt(prompt)
+            try:
+                await self._agent_process.send_prompt(prompt)
+            except RuntimeError:
+                _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
+                self._agent_process = None
+                await self._ensure_agent_ready()
+                await self._agent_process.send_prompt(prompt)
+
             async for event in self._agent_process.stream_turn():
                 if event.session_id:
-                    self._session_id = event.session_id
+                    self._agent_session_id = event.session_id
                 await self._event_buffer.push(event)
                 yield event
 
@@ -588,12 +649,14 @@ class Sandbox:
             if status_event:
                 await self._event_buffer.push(status_event)
                 yield status_event
+
+            self._start_idle_timer()
         else:
-            parser = StreamParser(session_id=self._session_id or "")
+            parser = StreamParser(session_id=self._agent_session_id or "")
             async for line in self.run_prompt(prompt):
                 for event in parser.parse_line(line):
                     if event.session_id:
-                        self._session_id = event.session_id
+                        self._agent_session_id = event.session_id
                     await self._event_buffer.push(event)
                     yield event
 
@@ -636,7 +699,7 @@ class Sandbox:
             event_id=str(uuid.uuid4()),
             sequence=self._event_buffer.latest_sequence + 1,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._session_id or "",
+            session_id=self._agent_session_id or "",
             event_type=StreamEventType.STATUS,
             metadata=metadata,
         )
@@ -711,7 +774,7 @@ class Sandbox:
             data = json.loads(line)
             sid = data.get("session_id")
             if sid:
-                self._session_id = sid
+                self._agent_session_id = sid
         except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
