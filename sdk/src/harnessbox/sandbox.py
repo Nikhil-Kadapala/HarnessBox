@@ -441,7 +441,12 @@ class Sandbox:
         if not hasattr(self._provider, "_commands"):  # Skip MockProvider
             await self._check_installed_tools()
 
-        # Phase 3: Inject workspace first (creates clone directory if needed)
+        # Phase 3: Create workspace root directory
+        workspace_root_start = time.time()
+        await self._provider.make_dir(self._harness_config.workspace_root)
+        _log.info(f"workspace_root_creation took {time.time() - workspace_root_start:.2f}s")
+
+        # Phase 4: Inject workspace (git clone into subdirectory)
         if self._workspace:
             workspace_start = time.time()
             await self._workspace.inject(self._provider, self._harness_config.workspace_root)
@@ -487,7 +492,7 @@ class Sandbox:
         hooks_start = time.time()
         if self._security_policy and self._harness_config.hooks_dir:
             hook_path = (
-                f"{self._harness_config.workspace_root}/"
+                f"{manifest_target_dir}/"
                 f"{self._harness_config.hooks_dir}/guard_bash.py"
             )
             if hook_path in manifest.files:
@@ -500,7 +505,7 @@ class Sandbox:
             for skill_spec in self._skill_installs:
                 cmd = f"{self._harness_config.skill_install_cmd} {skill_spec}"
                 result = await self._provider.run_command(
-                    cmd, cwd=self._harness_config.workspace_root
+                    cmd, cwd=manifest_target_dir
                 )
                 if result.exit_code != 0:
                     raise RuntimeError(f"Skill install failed ({skill_spec}): {result.stderr}")
@@ -511,7 +516,7 @@ class Sandbox:
         if self._setup_script:
             result = await self._provider.run_command(
                 self._setup_script,
-                cwd=self._harness_config.workspace_root,
+                cwd=manifest_target_dir,
             )
             if result.exit_code != 0:
                 raise RuntimeError(
