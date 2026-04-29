@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from harnessbox._utils.timing import timed_operation
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.manifest import build_manifest
 from harnessbox.events import EventBuffer
@@ -378,6 +380,42 @@ class Sandbox:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    async def _check_installed_tools(self) -> dict[str, bool]:
+        """Check which tools are pre-installed in E2B base image.
+
+        This is a diagnostic check to determine if E2B templates would provide
+        meaningful performance improvement. Logs results but doesn't affect setup.
+        """
+        tools = {
+            "git": "git",
+            "python3": "python3",
+            "node": "node",
+            "npm": "npm",
+            "bun": "bun",
+            "gh": "gh",
+            "uv": "uv",
+            "tree": "tree",
+            "rg": "rg",  # ripgrep
+            "fd": "fd",
+        }
+
+        installed = {}
+        for name, cmd in tools.items():
+            result = await self._provider.run_command(
+                f"command -v {cmd} >/dev/null 2>&1 && echo FOUND || echo MISSING"
+            )
+            installed[name] = "FOUND" in result.stdout
+
+        # Log as structured data for easy parsing
+        installed_names = [name for name, found in installed.items() if found]
+        missing_names = [name for name, found in installed.items() if not found]
+
+        _log.info(f"Pre-installed tools: {', '.join(installed_names) if installed_names else 'none'}")
+        if missing_names:
+            _log.info(f"Missing tools: {', '.join(missing_names)}")
+
+        return installed
+
     async def setup(self) -> None:
         """Create the sandbox, inject all files and config.
 
@@ -389,9 +427,13 @@ class Sandbox:
         Agent behavior files (system prompt, skills, plugins) are written
         AFTER workspace injection so they take precedence over repo contents.
         """
+        setup_start = time.time()
+
         resolved_skills = self._resolve_skills()
         resolved_plugins = self._resolve_plugins()
 
+        # Phase 1: Build manifest
+        manifest_start = time.time()
         manifest = build_manifest(
             harness_config=self._harness_config,
             security_policy=self._security_policy,
@@ -403,23 +445,42 @@ class Sandbox:
             skills=resolved_skills,
             plugins=resolved_plugins,
         )
+        _log.info(f"manifest_build took {time.time() - manifest_start:.2f}s")
 
+        # Phase 2: Create sandbox
+        sandbox_start = time.time()
         await self._provider.create(
             env_vars=manifest.env_vars,
             timeout=self._timeout,
         )
+        _log.info(f"sandbox_creation took {time.time() - sandbox_start:.2f}s")
 
+        # Phase 3: Check pre-installed tools (skip for mock providers in tests)
+        if not hasattr(self._provider, "_commands"):  # Skip MockProvider
+            await self._check_installed_tools()
+
+        # Phase 4: Create directories
+        dirs_start = time.time()
         for d in manifest.dirs:
             await self._provider.make_dir(d)
+        _log.info(f"directory_creation took {time.time() - dirs_start:.2f}s")
 
+        # Phase 5: Inject workspace (includes git clone)
         if self._workspace:
+            workspace_start = time.time()
             await self._workspace.inject(self._provider, self._harness_config.workspace_root)
             if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
                 self._cwd = f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
+            _log.info(f"workspace_inject took {time.time() - workspace_start:.2f}s")
 
+        # Phase 6: Inject manifest files
+        files_start = time.time()
         for path, content in manifest.files.items():
             await self._provider.write_file(path, content)
+        _log.info(f"manifest_file_injection took {time.time() - files_start:.2f}s")
 
+        # Phase 7: Set hook permissions
+        hooks_start = time.time()
         if self._security_policy and self._harness_config.hooks_dir:
             hook_path = (
                 f"{self._harness_config.workspace_root}/"
@@ -427,7 +488,10 @@ class Sandbox:
             )
             if hook_path in manifest.files:
                 await self._provider.run_command(f"chmod +x {hook_path}")
+        _log.info(f"hook_setup took {time.time() - hooks_start:.2f}s")
 
+        # Phase 8: Install skills
+        skills_start = time.time()
         if self._skill_installs and self._harness_config.skill_install_cmd:
             for skill_spec in self._skill_installs:
                 cmd = f"{self._harness_config.skill_install_cmd} {skill_spec}"
@@ -436,7 +500,10 @@ class Sandbox:
                 )
                 if result.exit_code != 0:
                     raise RuntimeError(f"Skill install failed ({skill_spec}): {result.stderr}")
+        _log.info(f"skill_install took {time.time() - skills_start:.2f}s")
 
+        # Phase 9: Run setup script
+        script_start = time.time()
         if self._setup_script:
             result = await self._provider.run_command(
                 self._setup_script,
@@ -446,6 +513,10 @@ class Sandbox:
                 raise RuntimeError(
                     f"Setup script failed (exit {result.exit_code}): {result.stderr}"
                 )
+        _log.info(f"setup_script took {time.time() - script_start:.2f}s")
+
+        total_time = time.time() - setup_start
+        _log.info(f"setup_total took {total_time:.2f}s")
 
         self._transition(SessionState.ACTIVE)
         await self._emit_event(EventType.SETUP_COMPLETE, action="setup")

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from harnessbox.providers import CommandResult, SandboxProvider
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,7 @@ class GitWorkspace:
 
     async def inject(self, provider: SandboxProvider, workspace_root: str) -> None:
         """Clone the repo into workspace_root inside the sandbox."""
+        inject_start = time.time()
         self._fire_event(self._on_clone_start, remote=self.remote, branch=self.branch)
 
         # Determine clone target directory
@@ -120,17 +125,22 @@ class GitWorkspace:
         )
 
         # Create clone directory if needed
+        mkdir_start = time.time()
         if self.clone_dir_name:
             result = await provider.run_command(f"mkdir -p {clone_target}")
             if result.exit_code != 0:
                 raise RuntimeError(f"Failed to create clone directory: {result.stderr}")
+        _log.info(f"git_mkdir took {time.time() - mkdir_start:.2f}s")
 
         # Use native git API if available, otherwise fall back to shell commands
         use_native = hasattr(provider, "git_clone")
+        clone_start = time.time()
 
         if use_native:
             try:
                 await self._native_clone(provider, clone_target)
+                _log.info(f"git_clone_native took {time.time() - clone_start:.2f}s")
+                _log.info(f"git_inject_total took {time.time() - inject_start:.2f}s")
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
@@ -139,6 +149,7 @@ class GitWorkspace:
                 )
                 return
             except Exception as e:
+                _log.info(f"git_clone_native failed after {time.time() - clone_start:.2f}s")
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
@@ -151,6 +162,8 @@ class GitWorkspace:
         for attempt in range(2):
             try:
                 await self._do_clone(provider, clone_target)
+                _log.info(f"git_clone_shell took {time.time() - clone_start:.2f}s")
+                _log.info(f"git_inject_total took {time.time() - inject_start:.2f}s")
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
@@ -161,6 +174,7 @@ class GitWorkspace:
             except _CloneError as e:
                 if e.retryable and attempt == 0:
                     continue
+                _log.info(f"git_clone_shell failed after {time.time() - clone_start:.2f}s")
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
