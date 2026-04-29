@@ -367,14 +367,20 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
         workspace = None
         if req.workspace:
+            from harnessbox.names import generate_workspace_name
             from harnessbox.workspace import GitWorkspace
+
+            # Auto-generate city name if not provided
+            clone_dir_name = req.workspace.clone_dir_name
+            if clone_dir_name is None:
+                clone_dir_name = generate_workspace_name()
 
             workspace = GitWorkspace(
                 remote=req.workspace.remote,
                 branch=req.workspace.branch,
                 auth_token=req.workspace.auth_token,
                 clone_depth=req.workspace.clone_depth,
-                clone_dir_name=req.workspace.clone_dir_name,
+                clone_dir_name=clone_dir_name,
                 commit_on_exit=req.workspace.commit_on_exit,
             )
 
