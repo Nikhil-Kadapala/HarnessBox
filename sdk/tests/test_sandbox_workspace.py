@@ -93,6 +93,33 @@ class TestSandboxWithWorkspace:
         assert sb.state == SessionState.FAILED
 
     @pytest.mark.asyncio
+    async def test_manifest_files_go_into_cloned_directory(self, ws_provider):
+        """Verify manifest files (CLAUDE.md, .claude/) are injected into the cloned repo directory."""
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            clone_dir_name="alexandria",
+        )
+        from harnessbox.security.policy import SecurityPolicy
+        sb = Sandbox(
+            client=ws_provider,
+            workspace=ws,
+            harness="claude-code",
+            security_policy=SecurityPolicy(),  # Add security policy to trigger settings.json
+        )
+        await sb.setup()
+
+        # Check that manifest files were written to /workspace/alexandria/, not /workspace/
+        written_files = list(ws_provider._files.keys())
+
+        # All manifest files should be in /workspace/alexandria/
+        assert any("/workspace/alexandria/.claude/" in f for f in written_files), \
+            f"Expected .claude/ in /workspace/alexandria/, got: {written_files}"
+
+        # No manifest files should be at workspace root
+        assert not any(f.startswith("/workspace/.claude/") and "/alexandria/" not in f for f in written_files), \
+            f"Settings should not be at workspace root, found: {[f for f in written_files if f.startswith('/workspace/.claude/')]}"
+
+    @pytest.mark.asyncio
     async def test_push_failure_populates_unpushed_files(self, ws_provider):
         ws_provider.set_git_response(
             "status --porcelain",

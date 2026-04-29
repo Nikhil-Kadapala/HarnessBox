@@ -429,15 +429,39 @@ class Sandbox:
         """
         setup_start = time.time()
 
+        # Phase 1: Create sandbox
+        sandbox_start = time.time()
+        await self._provider.create(
+            env_vars=self._env_vars or {},
+            timeout=self._timeout,
+        )
+        _log.info(f"sandbox_creation took {time.time() - sandbox_start:.2f}s")
+
+        # Phase 2: Check pre-installed tools (skip for mock providers in tests)
+        if not hasattr(self._provider, "_commands"):  # Skip MockProvider
+            await self._check_installed_tools()
+
+        # Phase 3: Inject workspace first (creates clone directory if needed)
+        if self._workspace:
+            workspace_start = time.time()
+            await self._workspace.inject(self._provider, self._harness_config.workspace_root)
+            if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
+                self._cwd = f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
+            _log.info(f"workspace_inject took {time.time() - workspace_start:.2f}s")
+
+        # Determine the actual working directory for manifest files
+        # If we cloned into a subdirectory, use that. Otherwise use workspace_root.
+        manifest_target_dir = self._cwd if self._cwd else self._harness_config.workspace_root
+
         resolved_skills = self._resolve_skills()
         resolved_plugins = self._resolve_plugins()
 
-        # Phase 1: Build manifest
+        # Phase 4: Build manifest (using the actual working directory)
         manifest_start = time.time()
         manifest = build_manifest(
             harness_config=self._harness_config,
             security_policy=self._security_policy,
-            workspace_root=self._harness_config.workspace_root,
+            workspace_root=manifest_target_dir,
             env_vars=self._env_vars,
             dirs=self._dirs,
             files=self._files,
@@ -447,33 +471,13 @@ class Sandbox:
         )
         _log.info(f"manifest_build took {time.time() - manifest_start:.2f}s")
 
-        # Phase 2: Create sandbox
-        sandbox_start = time.time()
-        await self._provider.create(
-            env_vars=manifest.env_vars,
-            timeout=self._timeout,
-        )
-        _log.info(f"sandbox_creation took {time.time() - sandbox_start:.2f}s")
-
-        # Phase 3: Check pre-installed tools (skip for mock providers in tests)
-        if not hasattr(self._provider, "_commands"):  # Skip MockProvider
-            await self._check_installed_tools()
-
-        # Phase 4: Create directories
+        # Phase 5: Create directories
         dirs_start = time.time()
         for d in manifest.dirs:
             await self._provider.make_dir(d)
         _log.info(f"directory_creation took {time.time() - dirs_start:.2f}s")
 
-        # Phase 5: Inject workspace (includes git clone)
-        if self._workspace:
-            workspace_start = time.time()
-            await self._workspace.inject(self._provider, self._harness_config.workspace_root)
-            if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
-                self._cwd = f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
-            _log.info(f"workspace_inject took {time.time() - workspace_start:.2f}s")
-
-        # Phase 6: Inject manifest files
+        # Phase 6: Inject manifest files (into cloned directory)
         files_start = time.time()
         for path, content in manifest.files.items():
             await self._provider.write_file(path, content)
