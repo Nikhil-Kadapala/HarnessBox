@@ -56,6 +56,7 @@ class GitWorkspace:
         commit_message: str | None = None,
         clone_depth: int | None = None,
         auth_token: str | None = None,
+        clone_dir_name: str | None = None,
         on_clone_start: EventCallback | None = None,
         on_clone_complete: EventCallback | None = None,
         on_commit: EventCallback | None = None,
@@ -69,6 +70,7 @@ class GitWorkspace:
         self.commit_on_exit = commit_on_exit
         self.commit_message = commit_message
         self.clone_depth = clone_depth
+        self.clone_dir_name = clone_dir_name
         self._auth_token = auth_token
         self._on_clone_start = on_clone_start
         self._on_clone_complete = on_clone_complete
@@ -83,6 +85,7 @@ class GitWorkspace:
         return (
             f"GitWorkspace(remote={self.remote!r}, branch={self.branch!r}, "
             f"commit_on_exit={self.commit_on_exit}, "
+            f"clone_dir_name={self.clone_dir_name!r}, "
             f"auth_token={'***' if self._auth_token else 'None'})"
         )
 
@@ -111,12 +114,23 @@ class GitWorkspace:
         """Clone the repo into workspace_root inside the sandbox."""
         self._fire_event(self._on_clone_start, remote=self.remote, branch=self.branch)
 
+        # Determine clone target directory
+        clone_target = (
+            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
+        )
+
+        # Create clone directory if needed
+        if self.clone_dir_name:
+            result = await provider.run_command(f"mkdir -p {clone_target}")
+            if result.exit_code != 0:
+                raise RuntimeError(f"Failed to create clone directory: {result.stderr}")
+
         # Use native git API if available, otherwise fall back to shell commands
         use_native = hasattr(provider, "git_clone")
 
         if use_native:
             try:
-                await self._native_clone(provider, workspace_root)
+                await self._native_clone(provider, clone_target)
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
@@ -136,7 +150,7 @@ class GitWorkspace:
 
         for attempt in range(2):
             try:
-                await self._do_clone(provider, workspace_root)
+                await self._do_clone(provider, clone_target)
                 self._fire_event(
                     self._on_clone_complete,
                     remote=self.remote,
@@ -276,10 +290,14 @@ class GitWorkspace:
         if not self.commit_on_exit:
             return
 
+        clone_target = (
+            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
+        )
+
         if hasattr(provider, "git_add"):
-            await self._native_commit_push(provider, workspace_root)
+            await self._native_commit_push(provider, clone_target)
         else:
-            await self._shell_commit_push(provider, workspace_root)
+            await self._shell_commit_push(provider, clone_target)
 
     async def _native_commit_push(self, provider: Any, workspace_root: str) -> None:
         """Commit and push using provider's native git API."""
@@ -347,14 +365,17 @@ class GitWorkspace:
 
     async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
         """Create a named snapshot (lightweight git tag) at the current state."""
-        await self._run_git(provider, "add -A", cwd=workspace_root)
+        clone_target = (
+            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
+        )
+        await self._run_git(provider, "add -A", cwd=clone_target)
         await self._run_git(
             provider,
             f'commit --allow-empty -m "snapshot: {name}"',
-            cwd=workspace_root,
+            cwd=clone_target,
         )
         tag_result = await self._run_git(
-            provider, f"tag harnessbox-snap-{name}", cwd=workspace_root
+            provider, f"tag harnessbox-snap-{name}", cwd=clone_target
         )
         if tag_result.exit_code != 0:
             raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
@@ -362,8 +383,11 @@ class GitWorkspace:
 
     async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
         """Restore to a named snapshot."""
+        clone_target = (
+            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
+        )
         result = await self._run_git(
-            provider, f"checkout harnessbox-snap-{name} -- .", cwd=workspace_root
+            provider, f"checkout harnessbox-snap-{name} -- .", cwd=clone_target
         )
         if result.exit_code != 0:
             raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
@@ -371,13 +395,16 @@ class GitWorkspace:
 
     async def diff(self, provider: SandboxProvider, workspace_root: str) -> str:
         """Return unified diff of changes since clone (or last snapshot restore)."""
+        clone_target = (
+            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
+        )
         if self._last_snapshot:
             ref = f"harnessbox-snap-{self._last_snapshot}"
         elif self._initial_sha:
             ref = self._initial_sha
         else:
             ref = "HEAD"
-        result = await self._run_git(provider, f"diff {ref}", cwd=workspace_root)
+        result = await self._run_git(provider, f"diff {ref}", cwd=clone_target)
         return result.stdout if result.exit_code == 0 else ""
 
 

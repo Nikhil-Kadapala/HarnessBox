@@ -414,6 +414,8 @@ class Sandbox:
 
         if self._workspace:
             await self._workspace.inject(self._provider, self._harness_config.workspace_root)
+            if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
+                self._cwd = f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
 
         for path, content in manifest.files.items():
             await self._provider.write_file(path, content)

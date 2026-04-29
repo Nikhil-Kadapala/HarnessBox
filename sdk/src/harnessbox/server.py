@@ -132,6 +132,7 @@ class WorkspaceRequest(BaseModel):
     branch: str = "main"
     auth_token: str | None = None
     clone_depth: int = 1  # Shallow clone by default for faster setup
+    clone_dir_name: str | None = None  # Subdirectory name for clone (e.g., city name)
     commit_on_exit: bool = False
 
 
@@ -373,6 +374,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
                 branch=req.workspace.branch,
                 auth_token=req.workspace.auth_token,
                 clone_depth=req.workspace.clone_depth,
+                clone_dir_name=req.workspace.clone_dir_name,
                 commit_on_exit=req.workspace.commit_on_exit,
             )
 

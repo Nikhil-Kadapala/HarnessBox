@@ -128,6 +128,22 @@ class TestGitWorkspaceInject:
         assert any("--depth 1" in c for c in fetch_cmd)
 
     @pytest.mark.asyncio
+    async def test_clone_into_subdirectory(self, git_provider):
+        """When clone_dir_name is set, clone should happen in subdirectory."""
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            clone_dir_name="alexandria",
+        )
+        await ws.inject(git_provider, "/workspace")
+
+        cmds = git_provider._commands
+        # Should create the subdirectory first
+        assert any("mkdir -p /workspace/alexandria" in c for c in cmds)
+        # All git commands should run in the subdirectory
+        # (git commands use cwd parameter, but init should be first git command after mkdir)
+        assert ws.clone_dir_name == "alexandria"
+
+    @pytest.mark.asyncio
     async def test_clone_custom_branch(self, git_provider):
         ws = GitWorkspace(
             remote="https://github.com/test/repo.git",
