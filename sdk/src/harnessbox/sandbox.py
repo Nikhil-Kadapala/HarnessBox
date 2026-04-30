@@ -792,7 +792,7 @@ class Sandbox:
 
                 # Transition to FAILED state
                 try:
-                    await self._transition_to(SessionState.FAILED)
+                    self._transition(SessionState.FAILED)
                 except InvalidTransitionError:
                     # Already in a terminal state, that's fine
                     pass
