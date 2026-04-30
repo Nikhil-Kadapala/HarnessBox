@@ -793,9 +793,11 @@ class Sandbox:
                 # Transition to FAILED state
                 try:
                     self._transition(SessionState.FAILED)
-                except InvalidTransitionError:
-                    # Already in a terminal state, that's fine
-                    pass
+                except InvalidTransitionError as transition_err:
+                    # Already in a terminal state (FAILED or MERGED), that's fine
+                    _log.debug(
+                        f"Could not transition to FAILED (already in {self._state.value}): {transition_err}"
+                    )
 
                 return
 
