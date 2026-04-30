@@ -43,13 +43,19 @@ class HarnessTypeConfig:
         return self.cli_input_format_flag is not None
 
     def build_persistent_command(
-        self, *, skip_permissions: bool, plugin_dirs: list[str] | None = None
+        self,
+        *,
+        skip_permissions: bool,
+        plugin_dirs: list[str] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Build CLI command for persistent stdin/stdout stream-json mode."""
         parts = [self.cli_command]
         if skip_permissions and self.skip_permissions_flag:
             parts.append(self.skip_permissions_flag)
         parts.extend(self.cli_base_flags)
+        if session_id and self.cli_resume_flag:
+            parts.extend([self.cli_resume_flag, session_id])
         if self.cli_input_format_flag:
             parts.extend([self.cli_input_format_flag, "stream-json"])
         if plugin_dirs and self.plugin_flag:

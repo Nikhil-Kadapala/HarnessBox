@@ -1,3 +1,5 @@
+// --- Event types (from SDK streaming.py) ---
+
 export interface UniversalEvent {
   event_id: string;
   sequence: number;
@@ -26,11 +28,98 @@ export interface ContentPart {
   file_action?: string;
 }
 
-export interface SessionConfig {
+// --- Discovery types (from server endpoints) ---
+
+export interface HarnessInfo {
+  name: string;
+  cli_command: string;
+  supports_persistent: boolean;
+  default_template: string | null;
+  workspace_root: string;
+}
+
+export interface ProviderInfo {
+  name: string;
+}
+
+export interface GuardInfo {
+  name: string;
+  bash_deny_count: number;
+  read_deny_count: number;
+}
+
+export interface CredentialProbe {
+  name: string;
+  available: boolean;
+}
+
+export interface WorkspaceNameResponse {
+  name: string;
+}
+
+export interface DetectedWorkspace {
+  remote: string;
+  default_branch: string;
+  name: string;
+}
+
+// --- Session creation ---
+
+export interface SecurityPolicyConfig {
+  denied_tools?: string[];
+  deny_network?: boolean;
+  credential_guards?: boolean | string[];
+}
+
+export interface WorkspaceConfig {
+  remote: string;
+  branch?: string;
+  auth_token?: string;
+  clone_depth?: number;
+  commit_on_exit?: boolean;
+  worktree_name?: string;
+}
+
+export interface CreateSessionRequest {
   provider: string;
   harness: string;
   env_vars: Record<string, string>;
   skip_permissions: boolean;
+  sandbox_timeout?: number;
+  session_timeout?: number;
+  template?: string;
+  security_policy?: SecurityPolicyConfig;
+  workspace?: WorkspaceConfig;
 }
 
-export type SessionState = "idle" | "creating" | "streaming" | "ended" | "error";
+export interface SessionResponse {
+  session_id: string;
+  harness: string;
+  status: string;
+  created_at: string;
+  workspace_name?: string;
+}
+
+// --- Multi-session state ---
+
+export type SessionStatus =
+  | "creating"
+  | "active"
+  | "streaming"
+  | "paused"
+  | "ended"
+  | "error";
+
+export interface SessionEntry {
+  id: string;
+  harness: string;
+  status: SessionStatus;
+  createdAt: string;
+  events: UniversalEvent[];
+  error: string | null;
+  workspaceName?: string;
+}
+
+// --- View switching ---
+
+export type ActiveView = "session" | "new-session" | "settings" | "board";

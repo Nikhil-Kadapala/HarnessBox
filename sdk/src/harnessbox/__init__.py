@@ -7,6 +7,13 @@ from harnessbox.config.harness import (
     list_harness_types,
     register_harness_type,
 )
+from harnessbox.credentials import (
+    CredentialProbe,
+    CredentialStatus,
+    build_claude_env_vars,
+    detect_claude_auth_mode,
+    detect_credentials,
+)
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import (
     VALID_TRANSITIONS,
@@ -74,6 +81,12 @@ __all__ = [
     "parse_stream_line",
     # Process
     "AgentProcess",
+    # Credentials
+    "CredentialProbe",
+    "CredentialStatus",
+    "build_claude_env_vars",
+    "detect_claude_auth_mode",
+    "detect_credentials",
     # Sandbox
     "CommandHandle",
     "CommandResult",

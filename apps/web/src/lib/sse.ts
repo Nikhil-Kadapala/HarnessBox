@@ -1,15 +1,27 @@
 import type { UniversalEvent } from "@/types";
 
-export async function* streamSSE(
-  url: string,
-  body: Record<string, unknown>,
-  signal?: AbortSignal,
-): AsyncGenerator<UniversalEvent> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
+export interface SSEConfig {
+  url: string;
+  method?: "GET" | "POST";
+  body?: Record<string, unknown>;
+  lastEventId?: number;
+  signal?: AbortSignal;
+}
+
+export async function* streamSSE(config: SSEConfig): AsyncGenerator<UniversalEvent> {
+  const headers: Record<string, string> = {};
+  if (config.method === "POST" || config.body) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (config.lastEventId != null) {
+    headers["Last-Event-ID"] = String(config.lastEventId);
+  }
+
+  const response = await fetch(`/api${config.url}`, {
+    method: config.method ?? (config.body ? "POST" : "GET"),
+    headers,
+    body: config.body ? JSON.stringify(config.body) : undefined,
+    signal: config.signal,
   });
 
   if (!response.ok) {

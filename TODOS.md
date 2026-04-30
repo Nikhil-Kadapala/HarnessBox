@@ -220,6 +220,62 @@ async def prompt_session(id: str, req: PromptRequest):
 
 **Timeline:** Implement Phase 1-4 immediately (graceful errors). Snapshot feature follows after.
 
+## Multi-Agent Collaboration — Agent-to-agent invocation and shared state
+
+**What:** Enable multiple coding agents (claude-code, codex) to collaborate within a single sandbox session via subprocess invocation.
+
+**Why:** Users want to leverage agent-specific strengths (e.g., "Claude, ask Codex to review what you just wrote"). Conductor already provides manual agent switching via new conversations + summary transfer, which handles user-initiated switches. This feature focuses on agent-to-agent collaboration.
+
+**Design:**
+
+**Pattern 1: Agent as subprocess (recommended, implement first)**
+- One agent invokes another as a subprocess: `await provider.run_command("codex review src/sandbox.py")`
+- Output streams back as text, incorporated into primary agent's response
+- No complex context management, no routing logic
+- Already works today (both CLIs exist in sandbox)
+
+**Pattern 2: Agent-specific tools (future enhancement)**
+```python
+@tool
+async def consult_codex(task: str, files: list[str]) -> str:
+    """Ask Codex for a second opinion or specialized task."""
+    result = await provider.run_command(f"codex {task} {' '.join(files)}")
+    return result.stdout
+
+@tool
+async def consult_claude(task: str, files: list[str]) -> str:
+    """Ask Claude Code for implementation or debugging help."""
+    result = await provider.run_command(f"claude {task} {' '.join(files)}")
+    return result.stdout
+```
+
+**Pattern 3: Multiple PersistentProcess instances (future, if needed)**
+- Track multiple agents simultaneously: `self._agents: dict[str, PersistentProcess]`
+- Active agent routing: `self._active_agent` determines which receives prompts
+- Explicit handoffs: `handoff(from_agent, to_agent, instruction)` transfers context
+- Shared state: all agents operate on same filesystem, git repo, conversation history
+
+**Implementation:**
+1. Document the subprocess invocation pattern (CLAUDE.md, README)
+2. Add example: "Claude calls Codex for code review" walkthrough
+3. (Future) Add `@tool` wrappers for common agent invocations
+4. (Future) Multi-PersistentProcess if subprocess pattern proves insufficient
+
+**Tradeoffs:**
+- Pro: Subprocess pattern is simple, works today, no new code needed
+- Pro: Shared filesystem state (git repo, files) already works
+- Pro: Clean separation: user switches via Conductor UI, agents invoke via subprocess
+- Con: Subprocess invocation is text-only (no structured output from invoked agent)
+- Con: No built-in context transfer (invoked agent starts cold)
+- Con: Multi-PersistentProcess adds complexity (context window bloat, routing logic)
+
+**Non-goals:**
+- In-conversation agent switching (Conductor handles this via new conversation + summary)
+- Automatic agent routing based on prompt content (users/agents choose explicitly)
+- Complex orchestration (keep it simple: one primary agent, subprocess for consultation)
+
+**Depends on:** User feedback on whether subprocess pattern is sufficient, or if true multi-agent concurrency is needed.
+
 ## PolicyEngine — Identity-aware security rules
 
 **What:** Add a PolicyEngine with identity-aware rule evaluation (RBAC/ABAC), replacing the flat deny-list approach.
