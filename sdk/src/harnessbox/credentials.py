@@ -82,6 +82,30 @@ def _probe_aws_credentials() -> CredentialProbe:
         return CredentialProbe(name="aws_credentials", available=False)
 
 
+def _probe_ssh_keys() -> CredentialProbe:
+    try:
+        ssh_dir = Path.home() / ".ssh"
+        if not ssh_dir.is_dir():
+            return CredentialProbe(name="ssh_keys", available=False)
+        for key_file in ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]:
+            key_path = ssh_dir / key_file
+            if key_path.is_file():
+                return CredentialProbe(name="ssh_keys", available=True)
+        return CredentialProbe(name="ssh_keys", available=False)
+    except Exception:
+        return CredentialProbe(name="ssh_keys", available=False)
+
+
+def _probe_git_credentials() -> CredentialProbe:
+    try:
+        config_path = Path.home() / ".git-credentials"
+        if config_path.is_file() and config_path.stat().st_size > 0:
+            return CredentialProbe(name="git_credentials", available=True)
+        return CredentialProbe(name="git_credentials", available=False)
+    except Exception:
+        return CredentialProbe(name="git_credentials", available=False)
+
+
 # --- Claude Code auth mode detection ---
 
 
@@ -230,6 +254,8 @@ def detect_credentials() -> CredentialStatus:
     probes.append(_probe_e2b_cli())
     probes.append(_probe_claude_code())
     probes.append(_probe_aws_credentials())
+    probes.append(_probe_ssh_keys())
+    probes.append(_probe_git_credentials())
 
     mode = detect_claude_auth_mode()
     probes.append(

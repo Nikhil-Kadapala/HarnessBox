@@ -78,6 +78,39 @@ def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
                 env_vars[key] = val
 
 
+def _get_git_auth_token() -> str | None:
+    """Resolve git auth token from GITHUB_TOKEN env var or gh CLI config."""
+    import os
+    from pathlib import Path
+
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        return token
+
+    try:
+        config_path = Path.home() / ".config" / "gh" / "hosts.yml"
+        if config_path.is_file():
+            import yaml  # type: ignore[import-untyped]
+
+            try:
+                data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if data and isinstance(data, dict):
+                    github_config = data.get("github.com")
+                    if isinstance(github_config, dict):
+                        oauth_token = github_config.get("oauth_token")
+                        if isinstance(oauth_token, str):
+                            return oauth_token
+                        cred_token = github_config.get("token")
+                        if isinstance(cred_token, str):
+                            return cred_token
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return None
+
+
 def _extract_provider_key(provider: str, env_vars: dict[str, str]) -> str | None:
     """Resolve provider API key from: request env_vars → host env → CLI config files."""
     import json
@@ -406,11 +439,16 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             base_branch = req.workspace.branch
             branch = clone_dir_name if base_branch == "main" else base_branch
 
+            # Auto-inject git auth token if not provided
+            auth_token = req.workspace.auth_token
+            if not auth_token:
+                auth_token = _get_git_auth_token()
+
             workspace = GitWorkspace(
                 remote=req.workspace.remote,
                 branch=branch,
                 base_branch=base_branch,
-                auth_token=req.workspace.auth_token,
+                auth_token=auth_token,
                 clone_depth=req.workspace.clone_depth,
                 clone_dir_name=clone_dir_name,
                 commit_on_exit=req.workspace.commit_on_exit,
