@@ -36,6 +36,7 @@ except ImportError as e:
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
+from harnessbox.lifecycle import InvalidTransitionError, SessionState
 from harnessbox.session import SessionConfig, SessionManager, SessionNotFoundError
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
@@ -45,21 +46,22 @@ _PROVIDER_KEY_NAMES: dict[str, list[str]] = {
     "e2b": ["E2B_API_KEY", "E2B_ACCESS_TOKEN"],
 }
 
-_OTHER_AGENT_KEYS: tuple[str, ...] = (
+_ENV_VAR_KEYS: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
+    "E2B_API_KEY",
+    "GITHUB_TOKEN",
     "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
 )
 
 
 def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
-    """Auto-inject host credentials the agent needs inside the sandbox.
+    """Auto-inject ALL available host credentials into the sandbox.
 
-    Reads Claude Code auth mode from ~/.claude/settings.json and builds
-    the appropriate credential set (Bedrock, Vertex, or direct API key).
-    Also injects other agent API keys (OpenAI, Gemini) from host env.
-
-    User-provided env vars always take priority (not overwritten).
+    1. Builds Claude Code auth environment (Bedrock, Vertex, or direct API key)
+    2. Injects all detected API keys from host environment
+    3. User-provided env vars always take priority (not overwritten)
     """
     import os
 
@@ -69,7 +71,7 @@ def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
     for k, v in claude_envs.items():
         env_vars.setdefault(k, v)
 
-    for key in _OTHER_AGENT_KEYS:
+    for key in _ENV_VAR_KEYS:
         if key not in env_vars:
             val = os.environ.get(key, "").strip()
             if val:
@@ -158,10 +160,36 @@ class SessionResponse(BaseModel):
     status: str
     created_at: str
     workspace_name: str | None = None
+    branch: str | None = None
+    base_branch: str | None = None
+    remote: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    ci_status: str | None = None
+    total_cost_usd: float = 0.0
+
+
+class SessionStatsResponse(BaseModel):
+    insertions: int = 0
+    deletions: int = 0
+    commit_count: int = 0
+
+
+class RenameRequest(BaseModel):
+    name: str
+
+
+class PRRequest(BaseModel):
+    title: str
+    body: str = ""
 
 
 class PromptRequest(BaseModel):
     prompt: str
+
+
+class TransitionRequest(BaseModel):
+    target_state: str
 
 
 class PermissionRequest(BaseModel):
@@ -370,14 +398,18 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             from harnessbox.names import generate_workspace_name
             from harnessbox.workspace import GitWorkspace
 
-            # Auto-generate city name if not provided
             clone_dir_name = req.workspace.clone_dir_name
             if clone_dir_name is None:
                 clone_dir_name = generate_workspace_name()
 
+            # Default working branch to the city name, branching off the base
+            base_branch = req.workspace.branch
+            branch = clone_dir_name if base_branch == "main" else base_branch
+
             workspace = GitWorkspace(
                 remote=req.workspace.remote,
-                branch=req.workspace.branch,
+                branch=branch,
+                base_branch=base_branch,
                 auth_token=req.workspace.auth_token,
                 clone_depth=req.workspace.clone_depth,
                 clone_dir_name=clone_dir_name,
@@ -414,26 +446,27 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
         except Exception as exc:
             logger.exception("Failed to create session")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _session_response(info)
+
+    def _session_response(info: Any) -> SessionResponse:
         return SessionResponse(
             session_id=info.session_id,
             harness=info.harness,
             status=info.status,
             created_at=info.created_at,
             workspace_name=info.workspace_name,
+            branch=info.branch,
+            base_branch=info.base_branch,
+            remote=info.remote,
+            pr_url=info.pr_url,
+            pr_number=info.pr_number,
+            ci_status=info.ci_status,
+            total_cost_usd=info.total_cost_usd,
         )
 
     @app.get("/v1/sessions", response_model=list[SessionResponse])
     async def list_sessions() -> list[SessionResponse]:
-        return [
-            SessionResponse(
-                session_id=s.session_id,
-                harness=s.harness,
-                status=s.status,
-                created_at=s.created_at,
-                workspace_name=s.workspace_name,
-            )
-            for s in mgr.list_sessions()
-        ]
+        return [_session_response(s) for s in mgr.list_sessions()]
 
     @app.get("/v1/sessions/{session_id}", response_model=SessionResponse)
     async def get_session(session_id: str) -> SessionResponse:
@@ -441,13 +474,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             info = mgr.get_session(session_id)
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
-        return SessionResponse(
-            session_id=info.session_id,
-            harness=info.harness,
-            status=info.status,
-            created_at=info.created_at,
-            workspace_name=info.workspace_name,
-        )
+        return _session_response(info)
 
     @app.delete("/v1/sessions/{session_id}", status_code=204)
     async def destroy_session(session_id: str) -> Response:
@@ -457,6 +484,205 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return Response(status_code=204)
 
+    @app.post("/v1/sessions/{session_id}/pause", response_model=SessionResponse)
+    async def pause_session(session_id: str) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        if info.status not in ("active", "streaming"):
+            raise HTTPException(
+                status_code=409, detail=f"Cannot pause session in state: {info.status}"
+            )
+
+        try:
+            # Only call sandbox.pause() if not already paused at sandbox level
+            if info.sandbox._state == SessionState.ACTIVE:
+                # Stop agent process before pausing sandbox
+                if info.sandbox._agent_process:
+                    try:
+                        await info.sandbox._agent_process.stop()
+                    except Exception:
+                        pass
+                    info.sandbox._agent_process = None
+                # Pause sandbox and store ID for resume
+                info.sandbox._paused_sandbox_id = await info.sandbox.pause()
+            info.status = SessionState.PAUSED.value
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return _session_response(info)
+
+    @app.post("/v1/sessions/{session_id}/resume", response_model=SessionResponse)
+    async def resume_session(session_id: str) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        if info.status != "paused":
+            raise HTTPException(
+                status_code=409, detail=f"Cannot resume session in state: {info.status}"
+            )
+
+        # Set status to active. The actual sandbox resume + agent restart
+        # happens lazily in _ensure_agent_ready() on the next prompt.
+        info.status = SessionState.ACTIVE.value
+        return _session_response(info)
+
+    @app.post("/v1/sessions/{session_id}/stop", status_code=204)
+    async def stop_session(session_id: str) -> Response:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        await info.sandbox.kill()
+        info.status = SessionState.FAILED.value
+        return Response(status_code=204)
+
+    @app.post("/v1/sessions/{session_id}/rename", response_model=SessionResponse)
+    async def rename_session(session_id: str, req: RenameRequest) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        workspace = info.sandbox._workspace
+        if workspace and hasattr(workspace, "rename_branch"):
+            try:
+                from harnessbox.workspace import GitWorkspace
+
+                assert isinstance(workspace, GitWorkspace)
+                provider = info.sandbox.provider
+                ws_root = info.sandbox._harness_config.workspace_root
+                await workspace.rename_branch(provider, ws_root, req.name)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        info.branch = req.name
+        info.workspace_name = req.name
+        return _session_response(info)
+
+    @app.post("/v1/sessions/{session_id}/pr", response_model=SessionResponse)
+    async def create_pr(session_id: str, req: PRRequest) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        workspace = info.sandbox._workspace
+        if not workspace or not hasattr(workspace, "create_pr"):
+            raise HTTPException(status_code=400, detail="Session has no git workspace")
+
+        try:
+            from harnessbox.workspace import GitWorkspace
+
+            assert isinstance(workspace, GitWorkspace)
+            provider = info.sandbox.provider
+            ws_root = info.sandbox._harness_config.workspace_root
+            result = await workspace.create_pr(provider, ws_root, req.title, req.body)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        info.pr_url = result.get("url")
+        # Transition to in_review
+        try:
+            mgr.transition_session(session_id, "in_review")
+        except Exception:
+            pass
+
+        return _session_response(info)
+
+    @app.post("/v1/sessions/{session_id}/pr/refresh", response_model=SessionResponse)
+    async def refresh_pr_status(session_id: str) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        workspace = info.sandbox._workspace
+        if not workspace or not hasattr(workspace, "check_pr_status") or not info.pr_url:
+            return _session_response(info)
+
+        try:
+            from harnessbox.workspace import GitWorkspace
+
+            assert isinstance(workspace, GitWorkspace)
+            provider = info.sandbox.provider
+            ws_root = info.sandbox._harness_config.workspace_root
+            pr_data = await workspace.check_pr_status(provider, ws_root)
+        except Exception:
+            logger.debug("Failed to check PR status for session %s", session_id, exc_info=True)
+            return _session_response(info)
+
+        if pr_data:
+            info.ci_status = pr_data.get("ci_status")
+            info.pr_number = pr_data.get("number")
+            if pr_data.get("merged"):
+                try:
+                    mgr.transition_session(session_id, "merged")
+                except Exception:
+                    pass
+
+        return _session_response(info)
+
+    _NON_PROMPTABLE = frozenset({"merged", "failed", "archived", "ended", "backlog", "ending"})
+
+    @app.post("/v1/sessions/{session_id}/transition", response_model=SessionResponse)
+    async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        try:
+            SessionState(req.target_state)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown state: {req.target_state}"
+            ) from exc
+
+        try:
+            info = mgr.transition_session(session_id, req.target_state)
+        except InvalidTransitionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Invalid transition: {exc.current.value} → {exc.target.value}",
+            ) from exc
+
+        return _session_response(info)
+
+    @app.get("/v1/sessions/{session_id}/stats", response_model=SessionStatsResponse)
+    async def get_session_stats(session_id: str) -> SessionStatsResponse:
+        try:
+            info = mgr.get_session(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        workspace = info.sandbox._workspace
+        if not workspace or not hasattr(workspace, "diff_stat"):
+            return SessionStatsResponse()
+
+        try:
+            from harnessbox.workspace import GitWorkspace
+
+            assert isinstance(workspace, GitWorkspace)
+            provider = info.sandbox.provider
+            ws_root = info.sandbox._harness_config.workspace_root
+            diff = await workspace.diff_stat(provider, ws_root)
+            commits = await workspace.commit_count(provider, ws_root)
+        except Exception:
+            logger.debug("Failed to fetch stats for session %s", session_id, exc_info=True)
+            return SessionStatsResponse()
+
+        return SessionStatsResponse(
+            insertions=diff["insertions"],
+            deletions=diff["deletions"],
+            commit_count=commits,
+        )
+
     @app.post("/v1/sessions/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
         try:
@@ -464,14 +690,13 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        # Reject prompts to ended sessions
-        if info.status == "ended":
+        if info.status in _NON_PROMPTABLE:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "error": "SESSION_NOT_ACTIVE",
                     "status": info.status,
-                    "message": "This session has ended. Create a new session to continue.",
+                    "message": "This session cannot accept prompts in its current state.",
                 },
             )
 
