@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -56,6 +57,7 @@ class GitWorkspace:
         remote: str,
         *,
         branch: str = "main",
+        base_branch: str | None = None,
         commit_on_exit: bool = False,
         commit_message: str | None = None,
         clone_depth: int | None = None,
@@ -71,6 +73,7 @@ class GitWorkspace:
             raise ValueError("remote URL must not be empty")
         self.remote = remote
         self.branch = branch
+        self.base_branch = base_branch or branch
         self.commit_on_exit = commit_on_exit
         self.commit_message = commit_message
         self.clone_depth = clone_depth
@@ -189,7 +192,7 @@ class GitWorkspace:
         await provider.git_clone(
             self.remote,
             workspace_root,
-            branch=self.branch,
+            branch=self.base_branch,
             depth=self.clone_depth,
             username="x-access-token" if self._auth_token else None,
             password=self._auth_token,
@@ -201,6 +204,20 @@ class GitWorkspace:
         await self._run_git(
             provider, f"config --global safe.directory {workspace_root}", cwd=workspace_root
         )
+        if self._auth_token:
+            await self._run_git(
+                provider,
+                f"remote set-url origin {self._clean_remote()}",
+                cwd=workspace_root,
+            )
+            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
+            await self._run_git(
+                provider, f"config credential.helper '{helper_cmd}'", cwd=workspace_root
+            )
+        if self.branch != self.base_branch:
+            await self._run_git(
+                provider, f"checkout -b {self.branch}", cwd=workspace_root
+            )
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:
             self._initial_sha = sha_result.stdout.strip()
@@ -245,18 +262,25 @@ class GitWorkspace:
         depth_flag = f"--depth {self.clone_depth}" if self.clone_depth else ""
         result = await self._run_git(
             provider,
-            f"fetch origin {self.branch} {depth_flag}".strip(),
+            f"fetch origin {self.base_branch} {depth_flag}".strip(),
             cwd=workspace_root,
         )
         if result.exit_code != 0:
             retryable = not self._is_auth_or_notfound(result.stderr)
             raise _CloneError(f"git fetch failed: {result.stderr}", retryable=retryable)
 
-        result = await self._run_git(
-            provider,
-            f"checkout -b {self.branch} origin/{self.branch}",
-            cwd=workspace_root,
-        )
+        if self.branch != self.base_branch:
+            result = await self._run_git(
+                provider,
+                f"checkout -b {self.branch} origin/{self.base_branch}",
+                cwd=workspace_root,
+            )
+        else:
+            result = await self._run_git(
+                provider,
+                f"checkout -b {self.branch} origin/{self.branch}",
+                cwd=workspace_root,
+            )
         if result.exit_code != 0:
             raise _CloneError(f"git checkout failed: {result.stderr}", retryable=False)
 
@@ -269,7 +293,7 @@ class GitWorkspace:
             raise _CloneError(f"git remote set-url failed: {result.stderr}", retryable=False)
 
         if self._auth_token:
-            helper_cmd = f"!echo password={self._auth_token}"
+            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
             result = await self._run_git(
                 provider,
                 f"config credential.helper '{helper_cmd}'",
@@ -357,7 +381,7 @@ class GitWorkspace:
             self._fire_event(self._on_commit, sha=sha, message=msg)
 
         if self._auth_token:
-            helper_cmd = f"!echo password={self._auth_token}"
+            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
             await self._run_git(
                 provider,
                 f"config credential.helper '{helper_cmd}'",
@@ -407,19 +431,158 @@ class GitWorkspace:
             raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
         self._last_snapshot = name
 
-    async def diff(self, provider: SandboxProvider, workspace_root: str) -> str:
-        """Return unified diff of changes since clone (or last snapshot restore)."""
-        clone_target = (
+    async def create_pr(
+        self,
+        provider: SandboxProvider,
+        workspace_root: str,
+        title: str,
+        body: str = "",
+    ) -> dict[str, str]:
+        """Commit, push, and create a GitHub PR via gh CLI. Returns {"url": "..."}."""
+        clone_target = self._clone_target(workspace_root)
+
+        # Commit and push any pending changes
+        if hasattr(provider, "git_add"):
+            await self._native_commit_push(provider, clone_target)
+        else:
+            await self._shell_commit_push(provider, clone_target)
+
+        if self.push_error:
+            raise RuntimeError(f"Push failed, cannot create PR: {self.push_error}")
+
+        # Set GH_TOKEN for gh CLI authentication
+        env_cmd = ""
+        if self._auth_token:
+            env_cmd = f"GH_TOKEN={shlex.quote(self._auth_token)} "
+
+        safe_title = shlex.quote(title)
+        safe_body = shlex.quote(body)
+        safe_base = shlex.quote(self.base_branch)
+        safe_head = shlex.quote(self.branch)
+
+        result = await provider.run_command(
+            f"{env_cmd}gh pr create --title {safe_title} --body {safe_body} "
+            f"--base {safe_base} --head {safe_head}",
+            cwd=clone_target,
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"PR creation failed: {result.stderr}")
+
+        pr_url = result.stdout.strip()
+        return {"url": pr_url}
+
+    async def check_pr_status(
+        self,
+        provider: SandboxProvider,
+        workspace_root: str,
+    ) -> dict[str, Any]:
+        """Check PR status via gh CLI. Returns {state, merged, ci_status, url, number}."""
+        clone_target = self._clone_target(workspace_root)
+
+        env_cmd = ""
+        if self._auth_token:
+            env_cmd = f"GH_TOKEN={shlex.quote(self._auth_token)} "
+
+        safe_branch = shlex.quote(self.branch)
+        result = await provider.run_command(
+            f"{env_cmd}gh pr view {safe_branch} --json state,merged,url,number,statusCheckRollup",
+            cwd=clone_target,
+        )
+        if result.exit_code != 0:
+            return {}
+
+        import json
+
+        try:
+            data = json.loads(result.stdout)
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+        checks = data.get("statusCheckRollup", [])
+        ci_status = None
+        if checks:
+            conclusions = [c.get("conclusion", "").upper() for c in checks if c.get("conclusion")]
+            if all(c == "SUCCESS" for c in conclusions):
+                ci_status = "success"
+            elif any(c == "FAILURE" for c in conclusions):
+                ci_status = "failure"
+            else:
+                ci_status = "pending"
+
+        return {
+            "state": data.get("state", "").lower(),
+            "merged": data.get("merged", False),
+            "ci_status": ci_status,
+            "url": data.get("url", ""),
+            "number": data.get("number"),
+        }
+
+    async def rename_branch(
+        self, provider: SandboxProvider, workspace_root: str, new_name: str
+    ) -> None:
+        """Rename the current branch in the sandbox."""
+        clone_target = self._clone_target(workspace_root)
+        old_name = self.branch
+        result = await self._run_git(
+            provider,
+            f"branch -m {shlex.quote(old_name)} {shlex.quote(new_name)}",
+            cwd=clone_target,
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"Branch rename failed: {result.stderr}")
+        self.branch = new_name
+
+    def _clone_target(self, workspace_root: str) -> str:
+        return (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
+
+    def _diff_ref(self) -> str:
         if self._last_snapshot:
-            ref = f"harnessbox-snap-{self._last_snapshot}"
-        elif self._initial_sha:
-            ref = self._initial_sha
-        else:
-            ref = "HEAD"
+            return f"harnessbox-snap-{self._last_snapshot}"
+        if self._initial_sha:
+            return self._initial_sha
+        return "HEAD"
+
+    async def diff(self, provider: SandboxProvider, workspace_root: str) -> str:
+        """Return unified diff of changes since clone (or last snapshot restore)."""
+        clone_target = self._clone_target(workspace_root)
+        ref = self._diff_ref()
         result = await self._run_git(provider, f"diff {ref}", cwd=clone_target)
         return result.stdout if result.exit_code == 0 else ""
+
+    async def diff_stat(self, provider: SandboxProvider, workspace_root: str) -> dict[str, int]:
+        """Return insertions/deletions since clone."""
+        clone_target = self._clone_target(workspace_root)
+        ref = self._diff_ref()
+        result = await self._run_git(provider, f"diff --shortstat {ref}", cwd=clone_target)
+        if result.exit_code != 0 or not result.stdout.strip():
+            return {"insertions": 0, "deletions": 0}
+        return _parse_shortstat(result.stdout)
+
+    async def commit_count(self, provider: SandboxProvider, workspace_root: str) -> int:
+        """Return number of commits since clone."""
+        clone_target = self._clone_target(workspace_root)
+        ref = self._diff_ref()
+        result = await self._run_git(provider, f"rev-list --count {ref}..HEAD", cwd=clone_target)
+        if result.exit_code != 0:
+            return 0
+        try:
+            return int(result.stdout.strip())
+        except ValueError:
+            return 0
+
+
+def _parse_shortstat(output: str) -> dict[str, int]:
+    """Parse 'git diff --shortstat' output."""
+    ins = del_ = 0
+    for part in output.split(","):
+        part = part.strip()
+        if "insertion" in part:
+            ins = int(part.split()[0])
+        elif "deletion" in part:
+            del_ = int(part.split()[0])
+    return {"insertions": ins, "deletions": del_}
 
 
 class _CloneError(Exception):
