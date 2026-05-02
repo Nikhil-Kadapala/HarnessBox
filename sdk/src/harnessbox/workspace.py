@@ -210,9 +210,17 @@ class GitWorkspace:
                 f"remote set-url origin {self._clean_remote()}",
                 cwd=workspace_root,
             )
-            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
+            cred_file = f"{workspace_root}/.git-credentials"
+            cred_url = self._clean_remote().replace(
+                "https://", f"https://x-access-token:{self._auth_token}@"
+            )
+            await provider.run_command(
+                f"echo '{cred_url}' > {cred_file}", cwd=workspace_root
+            )
             await self._run_git(
-                provider, f"config credential.helper '{helper_cmd}'", cwd=workspace_root
+                provider,
+                f"config credential.helper 'store --file {cred_file}'",
+                cwd=workspace_root,
             )
         if self.branch != self.base_branch:
             await self._run_git(
@@ -293,7 +301,7 @@ class GitWorkspace:
             raise _CloneError(f"git remote set-url failed: {result.stderr}", retryable=False)
 
         if self._auth_token:
-            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
+            helper_cmd = f"!printf 'username=x-access-token\\npassword={self._auth_token}\\n'"
             result = await self._run_git(
                 provider,
                 f"config credential.helper '{helper_cmd}'",
@@ -381,7 +389,7 @@ class GitWorkspace:
             self._fire_event(self._on_commit, sha=sha, message=msg)
 
         if self._auth_token:
-            helper_cmd = f"!echo username=x-access-token\\npassword={self._auth_token}"
+            helper_cmd = f"!printf 'username=x-access-token\\npassword={self._auth_token}\\n'"
             await self._run_git(
                 provider,
                 f"config credential.helper '{helper_cmd}'",

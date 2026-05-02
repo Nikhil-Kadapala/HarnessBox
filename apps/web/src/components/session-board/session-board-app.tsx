@@ -1,131 +1,57 @@
-/**
- * Session Board — Kanban-style view of HarnessBox sessions
- *
- * Ported from Cursor's Agent Kanban with adaptations for HarnessBox.
- * Provides:
- * - Grouped columns (status, repository, date)
- * - Session cards with status, repo, artifacts
- * - Search and filtering
- * - Create session dialog
- */
-
 import * as React from "react"
 import {
-  ArrowClockwiseIcon,
-  CaretLeftIcon,
-  CaretRightIcon,
-  CirclesFourIcon,
-  ClockIcon,
+  ArrowCounterClockwiseIcon,
+  ArchiveIcon,
   GitBranchIcon,
-  ImageSquareIcon,
-  KanbanIcon,
+  GitPullRequestIcon,
   MagnifyingGlassIcon,
-  PlusIcon,
+  PauseIcon,
+  StopIcon,
 } from "@phosphor-icons/react"
+import { Loader2, RefreshCw } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import { fetchSessions } from "@/lib/sessions/client"
-import type {
-  GroupBy,
-  SessionCard,
-  SidebarFilter,
-} from "@/lib/sessions/types"
+  fetchSessions,
+  fetchSessionStats,
+  transitionSession,
+  pauseSession,
+  resumeSession,
+  stopSession,
+  createPR,
+} from "@/lib/sessions/client"
+import { KANBAN_COLUMNS, getColumnForState } from "@/lib/sessions/columns"
+import type { SessionCard, SessionStats } from "@/lib/sessions/types"
 import { cn } from "@/lib/utils"
 
-type IconComponent = React.ElementType
-
-type GroupOption = {
-  id: GroupBy
-  label: string
-  icon: IconComponent
+interface SessionBoardAppProps {
+  onSelectSession?: (sessionId: string) => void
 }
 
-type SelectableGroupOption = GroupOption & {
-  selectable: boolean
-}
-
-const defaultGroupBy: GroupBy = "status"
-
-const groupOptions: GroupOption[] = [
-  { id: "status", label: "Status", icon: CirclesFourIcon },
-  { id: "repository", label: "Repository", icon: KanbanIcon },
-  { id: "createdAt", label: "Created date", icon: ClockIcon },
-]
-
-const dateBucketOrder = new Map([
-  ["Today", 0],
-  ["Yesterday", 1],
-  ["This week", 2],
-  ["This month", 3],
-  ["Older", 4],
-  ["No date", 5],
-])
-
-const sidebarFilters: {
-  id: SidebarFilter
-  label: string
-  icon: IconComponent
-}[] = [
-  { id: "all", label: "All sessions", icon: CirclesFourIcon },
-  { id: "recentlyActive", label: "Recently active", icon: ClockIcon },
-  { id: "paused", label: "Paused", icon: GitBranchIcon },
-  { id: "failed", label: "Failed", icon: ImageSquareIcon },
-]
-
-const boardLoadingColumns: {
-  id: string
-  title: string
-  icon: IconComponent
-  cards: number
-}[] = [
-  { id: "creating", title: "Creating", icon: CirclesFourIcon, cards: 2 },
-  { id: "active", title: "Active", icon: ClockIcon, cards: 3 },
-  { id: "paused", title: "Paused", icon: KanbanIcon, cards: 1 },
-]
-
-const loadingCardLineWidths = [
-  ["w-11/12", "w-2/3"],
-  ["w-4/5", "w-1/2"],
-  ["w-3/4", "w-5/6"],
-] as const
-
-export function SessionBoardApp() {
+export function SessionBoardApp({ onSelectSession }: SessionBoardAppProps) {
   const [sessions, setSessions] = React.useState<SessionCard[]>([])
-  const [groupBy, setGroupBy] = React.useState<GroupBy>(defaultGroupBy)
-  const [sidebarFilter, setSidebarFilter] = React.useState<SidebarFilter>("all")
   const [query, setQuery] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false)
 
   const loadBoard = React.useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const loadedSessions = await fetchSessions()
-      setSessions(loadedSessions)
-    } catch (loadError) {
-      setError(errorMessage(loadError, "Failed to load sessions."))
+      setSessions(await fetchSessions())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sessions.")
     } finally {
       setIsLoading(false)
     }
@@ -135,628 +61,462 @@ export function SessionBoardApp() {
     loadBoard()
   }, [loadBoard])
 
-  const selectableGroupOptions = React.useMemo(
-    () => getSelectableGroupOptions(sessions),
-    [sessions]
+  const withOptimistic = React.useCallback(
+    async (sessionId: string, optimisticStatus: string, action: () => Promise<void>) => {
+      const prev = sessions
+      setSessions((cur) =>
+        cur.map((s) => (s.id === sessionId ? { ...s, status: optimisticStatus } : s)),
+      )
+      try {
+        await action()
+      } catch (err) {
+        setSessions(prev)
+        setError(err instanceof Error ? err.message : "Action failed.")
+      }
+    },
+    [sessions],
   )
-  const selectedGroupBy = isSelectableGroupBy(groupBy, selectableGroupOptions)
-    ? groupBy
-    : defaultGroupBy
 
-  const searchedSessions = searchSessions(sessions, query)
-  const visibleSessions = filterSessionsBySidebar(searchedSessions, sidebarFilter)
-  const showBoardLoading = isLoading && sessions.length === 0 && visibleSessions.length === 0
-  const sidebarItems = sidebarFilters.map((item) => ({
-    ...item,
-    count: filterSessionsBySidebar(searchedSessions, item.id).length,
-  }))
-  const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupBy)
-  const SelectedGroupIcon = selectedGroupOption?.icon
-  const groups = groupSessions(visibleSessions, selectedGroupBy)
+  const handleTransition = React.useCallback(
+    (sessionId: string, targetState: string) =>
+      withOptimistic(sessionId, targetState, () => transitionSession(sessionId, targetState).then(() => {})),
+    [withOptimistic],
+  )
+
+  const handlePause = React.useCallback(
+    (sessionId: string) =>
+      withOptimistic(sessionId, "paused", () => pauseSession(sessionId).then(() => {})),
+    [withOptimistic],
+  )
+
+  const handleResume = React.useCallback(
+    (sessionId: string) =>
+      withOptimistic(sessionId, "active", () => resumeSession(sessionId).then(() => {})),
+    [withOptimistic],
+  )
+
+  const handleStop = React.useCallback(
+    (sessionId: string) =>
+      withOptimistic(sessionId, "failed", () => stopSession(sessionId)),
+    [withOptimistic],
+  )
+
+  const handleCreatePR = React.useCallback(
+    async (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId)
+      const title = session?.title ?? "Agent changes"
+      const prev = sessions
+      setSessions((cur) =>
+        cur.map((s) => (s.id === sessionId ? { ...s, status: "in_review" } : s)),
+      )
+      try {
+        const updated = await createPR(sessionId, title)
+        setSessions((cur) =>
+          cur.map((s) => (s.id === sessionId ? { ...s, ...updated } : s)),
+        )
+      } catch (err) {
+        setSessions(prev)
+        setError(err instanceof Error ? err.message : "PR creation failed.")
+      }
+    },
+    [sessions],
+  )
+
+  const visible = searchSessions(sessions, query)
+  const showLoading = isLoading && sessions.length === 0
+
+  const columns = React.useMemo(
+    () =>
+      KANBAN_COLUMNS.map((col) => ({
+        ...col,
+        sessions: visible.filter((s) => getColumnForState(s.status) === col.id),
+      })),
+    [visible],
+  )
 
   return (
-    <div className="flex h-screen min-h-0 bg-background text-foreground">
-      <aside
-        className={cn(
-          "hidden shrink-0 border-r bg-sidebar/70 transition-[width] duration-200 lg:flex lg:flex-col",
-          isSidebarCollapsed ? "w-16" : "w-64"
-        )}
-      >
-        <div
-          className={cn(
-            "flex h-14 items-center px-3",
-            isSidebarCollapsed ? "justify-center" : "gap-2"
-          )}
-        >
-          {isSidebarCollapsed ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsSidebarCollapsed(false)}
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-            >
-              <CaretRightIcon />
-            </Button>
-          ) : (
-            <>
-              <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <KanbanIcon aria-hidden="true" className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">Session Board</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  HarnessBox Sessions
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsSidebarCollapsed(true)}
-                aria-label="Collapse sidebar"
-                title="Collapse sidebar"
-              >
-                <CaretLeftIcon />
-              </Button>
-            </>
-          )}
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+        <div className="relative flex min-w-48 flex-1 items-center">
+          <MagnifyingGlassIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 size-4 text-muted-foreground"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search sessions..."
+            className="h-8 border-0 bg-muted/60 pl-8"
+          />
         </div>
-        <Separator />
-        <nav
-          className={cn(
-            "flex flex-1 flex-col gap-1 text-sm",
-            isSidebarCollapsed ? "items-center p-2" : "p-3"
+
+        <Button variant="outline" size="sm" onClick={loadBoard} disabled={isLoading} className="cursor-pointer">
+          {isLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
           )}
-          aria-label="Session filters"
-        >
-          {sidebarItems.map((item) => (
-            <SidebarItem
-              key={item.id}
-              active={sidebarFilter === item.id}
-              collapsed={isSidebarCollapsed}
-              count={item.count}
-              icon={item.icon}
-              label={item.label}
-              onSelect={() => setSidebarFilter(item.id)}
-            />
-          ))}
-        </nav>
-      </aside>
+          {isLoading ? "Refreshing..." : "Refresh"}
+        </Button>
+      </header>
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-          <div className="relative flex min-w-48 flex-1 items-center">
-            <MagnifyingGlassIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute left-2.5 size-4 text-muted-foreground"
-            />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search sessions and repos..."
-              className="h-8 border-0 bg-muted/60 pl-8"
-            />
-          </div>
-
-          <Select
-            value={selectedGroupBy}
-            onValueChange={(value) => {
-              if (isSelectableGroupBy(value, selectableGroupOptions)) {
-                setGroupBy(value)
-              } else {
-                setGroupBy(defaultGroupBy)
-              }
-            }}
+      {error && (
+        <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          {error}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-2 h-auto p-0 text-destructive underline"
+            onClick={() => setError(null)}
           >
-            <SelectTrigger aria-label="Group sessions" className="w-[180px] h-8">
-              {SelectedGroupIcon ? (
-                <SelectedGroupIcon
-                  aria-hidden="true"
-                  className="text-muted-foreground size-4"
+            Dismiss
+          </Button>
+        </div>
+      )}
+
+      <section className="flex min-h-0 flex-1">
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex min-h-full gap-3 p-4">
+            {showLoading ? (
+              <BoardLoadingSkeleton />
+            ) : (
+              columns.map((col) => (
+                <KanbanColumn
+                  key={col.id}
+                  id={col.id}
+                  title={col.title}
+                  sessions={col.sessions}
+                  onSelectSession={onSelectSession}
+                  actions={{
+                    onTransition: handleTransition,
+                    onPause: handlePause,
+                    onResume: handleResume,
+                    onStop: handleStop,
+                    onCreatePR: handleCreatePR,
+                  }}
                 />
-              ) : null}
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectGroup>
-                {selectableGroupOptions.map((option) => (
-                  <SelectItem
-                    key={option.id}
-                    value={option.id}
-                    disabled={!option.selectable}
-                  >
-                    <GroupOptionContent option={option} />
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-
-          <div className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground xl:flex">
-            <span>{visibleSessions.length} shown</span>
-            {isLoading ? (
-              <Badge variant="secondary">Syncing</Badge>
-            ) : (
-              <Badge variant="outline">Live data</Badge>
+              ))
             )}
           </div>
-          <div className="shrink-0 xl:hidden">
-            {isLoading ? (
-              <Badge variant="secondary">Syncing</Badge>
-            ) : (
-              <Badge variant="outline">Live data</Badge>
-            )}
-          </div>
-
-          <Button variant="outline" size="sm" onClick={loadBoard} disabled={isLoading}>
-            <ArrowClockwiseIcon className="size-4" />
-            Refresh
-          </Button>
-          <Button size="sm">
-            <PlusIcon className="size-4" />
-            New session
-          </Button>
-        </header>
-
-        {error ? (
-          <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-
-        <section className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="flex min-h-full gap-3 p-4">
-              {groups.length > 0 ? (
-                groups.map((group) => (
-                  <BoardColumn
-                    key={group.id}
-                    title={group.title}
-                    icon={selectedGroupOption?.icon ?? CirclesFourIcon}
-                    sessions={group.sessions}
-                  />
-                ))
-              ) : showBoardLoading ? (
-                <BoardLoadingSkeleton />
-              ) : (
-                <EmptyBoard />
-              )}
-            </div>
-          </ScrollArea>
-        </section>
-      </main>
+        </ScrollArea>
+      </section>
     </div>
   )
 }
 
-function BoardColumn({
+interface CardActions {
+  onTransition: (sessionId: string, targetState: string) => void
+  onPause: (sessionId: string) => void
+  onResume: (sessionId: string) => void
+  onStop: (sessionId: string) => void
+  onCreatePR: (sessionId: string) => void
+}
+
+function KanbanColumn({
+  id,
   title,
-  icon: Icon,
   sessions,
+  onSelectSession,
+  actions,
 }: {
+  id: string
   title: string
-  icon: IconComponent
   sessions: SessionCard[]
+  onSelectSession?: (sessionId: string) => void
+  actions: CardActions
 }) {
   return (
-    <section className="flex w-80 shrink-0 flex-col rounded-xl bg-muted/20">
-      <header className="flex items-center justify-between px-3 py-2">
-        <div className="flex items-center gap-2">
-          <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-          <h2 className="truncate text-sm font-medium">{title}</h2>
-        </div>
-        <Badge variant="secondary">{sessions.length}</Badge>
+    <section className="flex w-72 shrink-0 flex-col">
+      <header className="flex items-center justify-center gap-2 px-3 py-2">
+        <ColumnDot columnId={id} />
+        <h2 className="text-sm font-medium">{title}</h2>
+        <Badge variant="secondary" className="text-xs">
+          {sessions.length}
+        </Badge>
       </header>
-      <div className="flex flex-col gap-2 p-2">
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-3">
         {sessions.map((session) => (
-          <SessionCardPreview key={session.id} session={session} />
+          <SessionCardItem
+            key={session.id}
+            session={session}
+            columnId={id}
+            onSelect={onSelectSession ? () => onSelectSession(session.id) : undefined}
+            actions={actions}
+          />
         ))}
+        {sessions.length === 0 && (
+          <p className="py-6 text-center text-xs text-muted-foreground">No sessions</p>
+        )}
       </div>
     </section>
   )
 }
 
-function SessionCardPreview({ session }: { session: SessionCard }) {
-  const hasCardContent = Boolean(session.latestMessage || session.artifacts.length > 0)
+const LIVE_COLUMNS = new Set(["in_progress", "in_review"])
+
+function SessionCardItem({
+  session,
+  columnId,
+  onSelect,
+  actions,
+}: {
+  session: SessionCard
+  columnId: string
+  onSelect?: () => void
+  actions: CardActions
+}) {
+  const [stats, setStats] = React.useState<SessionStats | null>(null)
+
+  React.useEffect(() => {
+    if (!LIVE_COLUMNS.has(columnId)) return
+    let cancelled = false
+    fetchSessionStats(session.id).then((s) => {
+      if (!cancelled) setStats(s)
+    })
+    return () => { cancelled = true }
+  }, [session.id, columnId])
+
+  const hasStats = stats && (stats.insertions > 0 || stats.deletions > 0 || stats.commit_count > 0)
 
   return (
     <Card
       size="sm"
-      className="gap-3 bg-card/70 ring-border/60 transition-colors hover:bg-card/90"
+      className={cn(
+        "gap-2 bg-card/70 ring-border/60 transition-colors hover:bg-card/90",
+        onSelect && "cursor-pointer",
+      )}
+      onClick={onSelect}
     >
-      <CardHeader className="gap-2">
-        <div className="flex items-start justify-between gap-3">
-          <CardTitle className="line-clamp-2">{session.title}</CardTitle>
+      <CardHeader className="gap-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <CardTitle className="line-clamp-1 text-sm">
+            {session.title}
+          </CardTitle>
           <StatusBadge status={session.status} />
         </div>
-        <CardDescription className="flex items-center gap-1.5 truncate text-xs">
-          <GitBranchIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate">
-            {session.repository || session.workspaceName || "No workspace"}
-          </span>
-        </CardDescription>
+        {session.branch && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <GitBranchIcon aria-hidden="true" className="size-3 shrink-0" />
+            <span className="truncate">{session.branch}</span>
+            {session.baseBranch && session.baseBranch !== session.branch && (
+              <span className="text-[10px] text-muted-foreground/60">← {session.baseBranch}</span>
+            )}
+          </div>
+        )}
       </CardHeader>
-      {hasCardContent ? (
-        <CardContent className="flex flex-col gap-3">
-          {session.latestMessage ? (
-            <p className="line-clamp-2 text-sm text-muted-foreground">
-              {session.latestMessage}
-            </p>
-          ) : null}
+
+      {session.latestMessage && (
+        <CardContent>
+          <p className="line-clamp-2 text-xs text-muted-foreground">
+            {session.latestMessage}
+          </p>
         </CardContent>
-      ) : null}
+      )}
+
       <CardFooter className="flex-wrap justify-between gap-2 border-t-0 bg-transparent text-xs text-muted-foreground">
-        <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
-        <span className="text-muted-foreground">{session.harness}</span>
+        <div className="flex items-center gap-2">
+          <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
+          {hasStats && (
+            <>
+              <span className="text-green-600">+{stats.insertions}</span>
+              <span className="text-red-500">-{stats.deletions}</span>
+              {stats.commit_count > 0 && (
+                <span>{stats.commit_count} {stats.commit_count === 1 ? "commit" : "commits"}</span>
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {session.ciStatus && <CIStatusDot status={session.ciStatus} />}
+          {session.prUrl && (
+            <a
+              href={session.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-foreground hover:underline"
+            >
+              <GitPullRequestIcon className="size-3" />
+            </a>
+          )}
+          {session.totalCostUsd != null && session.totalCostUsd > 0 && (
+            <span className="font-mono">${session.totalCostUsd.toFixed(2)}</span>
+          )}
+          <ColumnAction
+            columnId={columnId}
+            session={session}
+            actions={actions}
+          />
+        </div>
       </CardFooter>
     </Card>
   )
 }
 
-function BoardLoadingSkeleton() {
+function ColumnAction({
+  columnId,
+  session,
+  actions,
+}: {
+  columnId: string
+  session: SessionCard
+  actions: CardActions
+}) {
+  const btn = "h-5 px-1.5 text-[10px]"
+
+  if (columnId === "in_progress") {
+    const isPaused = session.status === "paused"
+    return (
+      <div className="flex items-center gap-1">
+        {isPaused ? (
+          <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onResume(session.id)}>
+            <ArrowCounterClockwiseIcon className="size-3" />
+            Resume
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onPause(session.id)}>
+              <PauseIcon className="size-3" />
+            </Button>
+            <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onStop(session.id)}>
+              <StopIcon className="size-3" />
+            </Button>
+            <Button variant="outline" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "in_review")}>
+              Review
+            </Button>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (columnId === "in_review") {
+    return (
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "active")}>
+          <ArrowCounterClockwiseIcon className="size-3" />
+        </Button>
+        {!session.prUrl && (
+          <Button variant="outline" size="sm" className={btn} onClick={() => actions.onCreatePR(session.id)}>
+            <GitPullRequestIcon className="size-3" />
+            PR
+          </Button>
+        )}
+      </div>
+    )
+  }
+
+  if (columnId === "merged") {
+    return (
+      <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "archived")}>
+        <ArchiveIcon className="size-3" />
+        Archive
+      </Button>
+    )
+  }
+
+  return null
+}
+
+function CIStatusDot({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    success: "bg-green-500",
+    failure: "bg-red-500",
+    pending: "bg-yellow-500",
+  }
   return (
     <div
-      role="status"
-      aria-live="polite"
-      aria-label="Loading sessions"
-      className="flex min-h-[60vh] flex-1 gap-3"
-    >
-      <span className="sr-only">Loading sessions</span>
-      {boardLoadingColumns.map((column) => {
-        const Icon = column.icon
-
-        return (
-          <section
-            key={column.id}
-            className="flex w-80 shrink-0 flex-col rounded-xl border bg-muted/20 shadow-sm"
-          >
-            <header className="flex items-center justify-between px-3 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="flex size-5 items-center justify-center rounded-md bg-background/70 text-muted-foreground">
-                  <Icon aria-hidden="true" className="size-3.5" />
-                </span>
-                <div
-                  className="h-3 w-20 animate-pulse rounded-full bg-muted"
-                  aria-hidden="true"
-                />
-              </div>
-              <div
-                className="h-5 w-8 animate-pulse rounded-full bg-background/80 ring-1 ring-border/60"
-                aria-hidden="true"
-              />
-            </header>
-            <div className="flex flex-col gap-2 p-2">
-              {Array.from({ length: column.cards }).map((_, cardIndex) => {
-                const [titleWidth] =
-                  loadingCardLineWidths[cardIndex % loadingCardLineWidths.length]
-
-                return (
-                  <Card
-                    key={`${column.id}-${cardIndex}`}
-                    size="sm"
-                    className="gap-3 bg-card/70 ring-border/60"
-                  >
-                    <CardHeader className="gap-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 flex-1 flex-col gap-2">
-                          <div
-                            className={cn(
-                              "h-3 animate-pulse rounded-full bg-muted",
-                              titleWidth
-                            )}
-                            aria-hidden="true"
-                          />
-                          <div
-                            className="h-3 w-7/12 animate-pulse rounded-full bg-muted/70"
-                            aria-hidden="true"
-                          />
-                        </div>
-                        <div
-                          className="h-5 w-16 animate-pulse rounded-full bg-muted/80"
-                          aria-hidden="true"
-                        />
-                      </div>
-                    </CardHeader>
-                    <CardFooter className="flex-wrap justify-between gap-2 border-t-0 bg-transparent">
-                      <div
-                        className="h-2.5 w-12 animate-pulse rounded-full bg-muted"
-                        aria-hidden="true"
-                      />
-                      <div
-                        className="h-2.5 w-8 animate-pulse rounded-full bg-muted/70"
-                        aria-hidden="true"
-                      />
-                    </CardFooter>
-                  </Card>
-                )
-              })}
-            </div>
-          </section>
-        )
-      })}
-    </div>
-  )
-}
-
-function GroupOptionContent({ option }: { option: SelectableGroupOption }) {
-  const Icon = option.icon
-
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <Icon aria-hidden="true" className="shrink-0 text-muted-foreground size-4" />
-      <span className="truncate">{groupOptionLabel(option)}</span>
-    </span>
-  )
-}
-
-function SidebarItem({
-  active,
-  collapsed = false,
-  count,
-  icon: Icon,
-  label,
-  onSelect,
-}: {
-  active: boolean
-  collapsed?: boolean
-  count: number
-  icon: IconComponent
-  label: string
-  onSelect: () => void
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      aria-label={collapsed ? `${label}: ${count}` : undefined}
-      onClick={onSelect}
-      title={collapsed ? `${label}: ${count}` : undefined}
-      className={cn(
-        "relative flex w-full items-center gap-2 rounded-lg text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0",
-        collapsed ? "size-11 justify-center p-0" : "px-2 py-1.5 text-left",
-        active && "bg-sidebar-accent text-sidebar-accent-foreground"
-      )}
-    >
-      <Icon aria-hidden="true" />
-      {collapsed ? (
-        <Badge
-          variant={active ? "secondary" : "outline"}
-          className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-[0.65rem]"
-        >
-          {count}
-        </Badge>
-      ) : (
-        <>
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          <Badge variant={active ? "secondary" : "outline"}>{count}</Badge>
-        </>
-      )}
-    </button>
-  )
-}
-
-function EmptyBoard() {
-  return (
-    <div className="flex min-h-[50vh] flex-1 items-center justify-center">
-      <Card className="w-full max-w-md text-center">
-        <CardHeader>
-          <CardTitle>No sessions found</CardTitle>
-          <CardDescription>
-            Create a session or adjust your search to populate the board.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button>
-            <PlusIcon className="size-4" />
-            New session
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
+      className={cn("size-2 rounded-full", colors[status] ?? "bg-muted-foreground")}
+      title={`CI: ${status}`}
+    />
   )
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const normalized = status.toLowerCase()
+  const n = status.toLowerCase()
   const variant =
-    normalized.includes("fail") || normalized.includes("error")
+    n.includes("fail") || n.includes("error")
       ? "destructive"
-      : normalized.includes("active") || normalized.includes("streaming")
+      : n === "active" || n === "starting" || n === "streaming"
         ? "secondary"
-        : normalized === "ended"
-          ? "outline"
-          : "outline"
+        : "outline"
 
-  return <Badge variant={variant}>{formatStatusLabel(status)}</Badge>
-}
-
-function groupSessions(sessions: SessionCard[], groupBy: GroupBy) {
-  const groups = new Map<string, SessionCard[]>()
-
-  for (const session of sessions) {
-    const title = groupTitle(session, groupBy)
-    const group = groups.get(title) ?? []
-    group.push(session)
-    groups.set(title, group)
-  }
-
-  const entries = Array.from(groups.entries())
-  if (groupBy === "createdAt") {
-    entries.sort(
-      ([leftTitle], [rightTitle]) => dateBucketRank(leftTitle) - dateBucketRank(rightTitle)
-    )
-  }
-
-  return entries.map(([title, group]) => ({
-    id: `${groupBy}-${title}`,
-    title,
-    sessions: group,
-  }))
-}
-
-function dateBucketRank(title: string) {
-  return dateBucketOrder.get(title) ?? dateBucketOrder.size
-}
-
-function groupTitle(session: SessionCard, groupBy: GroupBy) {
-  if (groupBy === "createdAt") {
-    return dateBucket(session.createdAt)
-  }
-
-  const value = session[groupBy]
-  if (groupBy === "status" && typeof value === "string" && value.trim()) {
-    return formatStatusLabel(value)
-  }
-
-  if (groupBy === "repository") {
-    return session.repository || session.workspaceName || "No workspace"
-  }
-
-  return typeof value === "string" && value.trim() ? value : "Unassigned"
-}
-
-function searchSessions(sessions: SessionCard[], query: string) {
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) {
-    return sessions
-  }
-
-  return sessions.filter((session) =>
-    [
-      session.title,
-      session.status,
-      session.repository,
-      session.branch,
-      session.harness,
-      session.workspaceName,
-      session.latestMessage,
-    ]
-      .filter(Boolean)
-      .some((value) => value?.toLowerCase().includes(normalizedQuery))
+  return (
+    <Badge variant={variant} className="shrink-0 text-[10px]">
+      {formatStatusLabel(status)}
+    </Badge>
   )
 }
 
-function filterSessionsBySidebar(sessions: SessionCard[], filter: SidebarFilter) {
-  if (filter === "recentlyActive") {
-    return sessions.filter((session) =>
-      isRecentlyActive(session.updatedAt ?? session.createdAt)
-    )
+function ColumnDot({ columnId }: { columnId: string }) {
+  const colors: Record<string, string> = {
+    backlog: "bg-muted-foreground/40",
+    in_progress: "bg-blue-500",
+    in_review: "bg-yellow-500",
+    merged: "bg-green-500",
+    archived: "bg-muted-foreground",
   }
-
-  if (filter === "paused") {
-    return sessions.filter((session) => session.status.toLowerCase() === "paused")
-  }
-
-  if (filter === "failed") {
-    return sessions.filter((session) =>
-      ["error", "failed"].includes(session.status.toLowerCase())
-    )
-  }
-
-  return sessions
+  return (
+    <div className={cn("size-2 rounded-full", colors[columnId] ?? "bg-muted-foreground")} />
+  )
 }
 
-function isRecentlyActive(value: string | undefined) {
-  if (!value) {
-    return false
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return false
-  }
-
-  const diffMs = Date.now() - date.getTime()
-  return diffMs >= 0 && diffMs <= 86_400_000
+function BoardLoadingSkeleton() {
+  return (
+    <>
+      {KANBAN_COLUMNS.map((col) => (
+        <section key={col.id} className="flex w-72 shrink-0 flex-col">
+          <header className="flex items-center justify-between px-3 py-2">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-5 w-6 rounded-full" />
+          </header>
+          <div className="flex flex-col gap-2 p-2">
+            {[0, 1].map((i) => (
+              <Card key={i} size="sm" className="gap-3 bg-card/70 ring-border/60">
+                <CardHeader className="gap-2">
+                  <Skeleton className="h-3 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                </CardHeader>
+                <CardFooter className="border-t-0 bg-transparent">
+                  <Skeleton className="h-2.5 w-12" />
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ))}
+    </>
+  )
 }
 
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback
+function searchSessions(sessions: SessionCard[], query: string): SessionCard[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return sessions
+  return sessions.filter((s) =>
+    [s.title, s.status, s.repository, s.branch, s.harness, s.workspaceName, s.latestMessage]
+      .filter(Boolean)
+      .some((v) => v?.toLowerCase().includes(q)),
+  )
 }
 
-function getSelectableGroupOptions(_sessions: SessionCard[]): SelectableGroupOption[] {
-  return groupOptions.map((option) => ({
-    ...option,
-    selectable: true, // All options always selectable
-  }))
-}
-
-function groupOptionLabel(option: SelectableGroupOption) {
-  return option.selectable ? option.label : `${option.label} (no data)`
-}
-
-function isSelectableGroupBy(
-  value: string | null,
-  options: SelectableGroupOption[]
-): value is GroupBy {
-  return options.some((option) => option.id === value && option.selectable)
-}
-
-function titleCase(value: string) {
+function formatStatusLabel(value: string): string {
+  const n = value.trim().toLowerCase()
+  if (!n || n === "unknown") return "No status"
   return value
     .replace(/[_-]/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\b\w/g, (l) => l.toUpperCase())
 }
 
-function formatStatusLabel(value: string) {
-  const normalized = value.trim().toLowerCase()
-  if (!normalized || normalized === "unknown") {
-    return "No status"
-  }
-
-  return titleCase(value)
-}
-
-function dateBucket(value: string | undefined) {
-  if (!value) {
-    return "No date"
-  }
-
+function formatRelativeTime(value: string | undefined): string {
+  if (!value) return "No activity"
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return "No date"
-  }
-
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffDays = Math.floor(diffMs / 86_400_000)
-
-  if (diffDays <= 0) {
-    return "Today"
-  }
-  if (diffDays === 1) {
-    return "Yesterday"
-  }
-  if (diffDays < 7) {
-    return "This week"
-  }
-  if (diffDays < 30) {
-    return "This month"
-  }
-  return "Older"
-}
-
-function formatRelativeTime(value: string | undefined) {
-  if (!value) {
-    return "No activity"
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return "No activity"
-  }
+  if (Number.isNaN(date.getTime())) return "No activity"
 
   const diffMs = Date.now() - date.getTime()
   const minutes = Math.max(1, Math.floor(diffMs / 60_000))
-  if (minutes < 60) {
-    return `${minutes}m ago`
-  }
+  if (minutes < 60) return `${minutes}m ago`
 
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) {
-    return `${hours}h ago`
-  }
+  if (hours < 24) return `${hours}h ago`
 
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  return `${Math.floor(hours / 24)}d ago`
 }

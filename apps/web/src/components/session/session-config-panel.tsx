@@ -22,9 +22,10 @@ interface SessionConfigPanelProps {
   onSubmit: (config: CreateSessionRequest) => void;
   onCancel: () => void;
   disabled?: boolean;
+  defaultRepoUrl?: string;
 }
 
-export function SessionConfigPanel({ onSubmit, onCancel, disabled }: SessionConfigPanelProps) {
+export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUrl }: SessionConfigPanelProps) {
   const { harnesses, providers, guards, loading: discoveryLoading } = useDiscovery();
 
   const storedDefaults = getStoredValue("defaults", {
@@ -54,9 +55,9 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled }: SessionConf
   const [deniedTools, setDeniedTools] = useState("");
 
   const detectedRepo = getStoredValue<DetectedWorkspace | null>("repository", null);
-  const hasDetectedRepo = !!detectedRepo;
+  const hasDetectedRepo = !!detectedRepo || !!defaultRepoUrl;
   const [workspaceOpen, setWorkspaceOpen] = useState(hasDetectedRepo);
-  const [repoUrl, setRepoUrl] = useState(detectedRepo?.remote ?? "");
+  const [repoUrl, setRepoUrl] = useState(defaultRepoUrl ?? detectedRepo?.remote ?? "");
   const [branch, setBranch] = useState(detectedRepo?.default_branch ?? "main");
   const [authToken, setAuthToken] = useState("");
   const [cloneDepth, setCloneDepth] = useState("");

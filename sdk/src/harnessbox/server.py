@@ -79,33 +79,24 @@ def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
 
 
 def _get_git_auth_token() -> str | None:
-    """Resolve git auth token from GITHUB_TOKEN env var or gh CLI config."""
+    """Resolve git auth token from GITHUB_TOKEN env var or gh CLI."""
     import os
-    from pathlib import Path
+    import subprocess
 
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if token:
         return token
 
     try:
-        config_path = Path.home() / ".config" / "gh" / "hosts.yml"
-        if config_path.is_file():
-            import yaml  # type: ignore[import-untyped]
-
-            try:
-                data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                if data and isinstance(data, dict):
-                    github_config = data.get("github.com")
-                    if isinstance(github_config, dict):
-                        oauth_token = github_config.get("oauth_token")
-                        if isinstance(oauth_token, str):
-                            return oauth_token
-                        cred_token = github_config.get("token")
-                        if isinstance(cred_token, str):
-                            return cred_token
-            except Exception:
-                pass
-    except Exception:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
     return None

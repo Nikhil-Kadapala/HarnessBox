@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from harnessbox.providers import CommandResult
-from harnessbox.workspace import GitWorkspace, Workspace
+from harnessbox.workspace import GitWorkspace, Workspace, _parse_shortstat
 
 from .conftest import MockProvider
 
@@ -474,5 +474,305 @@ class TestGitWorkspaceDiff:
 
         result = await ws.diff(git_provider, "/workspace")
         assert "changes since v1" in result
+
+
+class TestParseShortstat:
+    def test_full_output(self):
+        out = " 3 files changed, 142 insertions(+), 23 deletions(-)\n"
+        assert _parse_shortstat(out) == {"insertions": 142, "deletions": 23}
+
+    def test_insertions_only(self):
+        out = " 1 file changed, 10 insertions(+)\n"
+        assert _parse_shortstat(out) == {"insertions": 10, "deletions": 0}
+
+    def test_deletions_only(self):
+        out = " 2 files changed, 5 deletions(-)\n"
+        assert _parse_shortstat(out) == {"insertions": 0, "deletions": 5}
+
+    def test_empty_string(self):
+        assert _parse_shortstat("") == {"insertions": 0, "deletions": 0}
+
+    def test_single_file_single_insertion(self):
+        out = " 1 file changed, 1 insertion(+)\n"
+        assert _parse_shortstat(out) == {"insertions": 1, "deletions": 0}
+
+
+class TestGitWorkspaceDiffStat:
+    @pytest.fixture
+    def git_provider(self):
+        p = _GitMockProvider()
+        return p
+
+    @pytest.mark.asyncio
+    async def test_diff_stat_returns_counts(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws._initial_sha = "abc123"
+
+        git_provider.set_git_response(
+            "diff --shortstat abc123",
+            CommandResult(
+                exit_code=0,
+                stdout=" 3 files changed, 50 insertions(+), 12 deletions(-)\n",
+                stderr="",
+            ),
+        )
+
+        result = await ws.diff_stat(git_provider, "/workspace")
+        assert result == {"insertions": 50, "deletions": 12}
+
+    @pytest.mark.asyncio
+    async def test_diff_stat_empty_when_no_changes(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws._initial_sha = "abc123"
+
+        git_provider.set_git_response(
+            "diff --shortstat abc123",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+
+        result = await ws.diff_stat(git_provider, "/workspace")
+        assert result == {"insertions": 0, "deletions": 0}
+
+    @pytest.mark.asyncio
+    async def test_diff_stat_with_clone_dir(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git", clone_dir_name="tokyo"
+        )
+        ws._initial_sha = "abc123"
+
+        git_provider.set_git_response(
+            "diff --shortstat abc123",
+            CommandResult(
+                exit_code=0,
+                stdout=" 1 file changed, 5 insertions(+)\n",
+                stderr="",
+            ),
+        )
+
+        result = await ws.diff_stat(git_provider, "/workspace")
+        assert result == {"insertions": 5, "deletions": 0}
+
+
+class TestGitWorkspaceCommitCount:
+    @pytest.fixture
+    def git_provider(self):
+        return _GitMockProvider()
+
+    @pytest.mark.asyncio
+    async def test_commit_count(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws._initial_sha = "abc123"
+
+        git_provider.set_git_response(
+            "rev-list --count abc123..HEAD",
+            CommandResult(exit_code=0, stdout="7\n", stderr=""),
+        )
+
+        result = await ws.commit_count(git_provider, "/workspace")
+        assert result == 7
+
+    @pytest.mark.asyncio
+    async def test_commit_count_zero_on_failure(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws._initial_sha = "abc123"
+
+        git_provider.set_git_response(
+            "rev-list --count abc123..HEAD",
+            CommandResult(exit_code=1, stdout="", stderr="error"),
+        )
+
+        result = await ws.commit_count(git_provider, "/workspace")
+        assert result == 0
+
+
+class TestGitWorkspaceCreatePR:
+    @pytest.fixture
+    def git_provider(self):
+        return _GitMockProvider()
+
+    @pytest.mark.asyncio
+    async def test_create_pr_happy_path(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+            auth_token="ghp_test",
+        )
+
+        # Mock: no changes to commit
+        git_provider.set_git_response(
+            "status --porcelain",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+        # Mock: gh pr create success
+        git_provider.set_git_response(
+            "gh pr create",
+            CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/42\n", stderr=""),
+        )
+
+        result = await ws.create_pr(git_provider, "/workspace", title="test PR")
+        assert result["url"] == "https://github.com/test/repo/pull/42"
+
+    @pytest.mark.asyncio
+    async def test_create_pr_gh_fails(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        git_provider.set_git_response(
+            "status --porcelain",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+        git_provider.set_git_response(
+            "gh pr create",
+            CommandResult(exit_code=1, stdout="", stderr="already exists"),
+        )
+
+        with pytest.raises(RuntimeError, match="PR creation failed"):
+            await ws.create_pr(git_provider, "/workspace", title="test PR")
+
+    @pytest.mark.asyncio
+    async def test_create_pr_shlex_escapes_title(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        git_provider.set_git_response(
+            "status --porcelain",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+        git_provider.set_git_response(
+            "gh pr create",
+            CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/1\n", stderr=""),
+        )
+
+        # Title with quotes should not break
+        result = await ws.create_pr(git_provider, "/workspace", title="fix the user's profile")
+        assert "url" in result
+
+
+class TestGitWorkspaceCheckPRStatus:
+    @pytest.fixture
+    def git_provider(self):
+        return _GitMockProvider()
+
+    @pytest.mark.asyncio
+    async def test_check_pr_status_merged(self, git_provider):
+        import json
+
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        pr_json = json.dumps({
+            "state": "MERGED",
+            "merged": True,
+            "url": "https://github.com/test/repo/pull/42",
+            "number": 42,
+            "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+        })
+        git_provider.set_git_response(
+            "gh pr view",
+            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
+        )
+
+        result = await ws.check_pr_status(git_provider, "/workspace")
+        assert result["merged"] is True
+        assert result["ci_status"] == "success"
+        assert result["number"] == 42
+
+    @pytest.mark.asyncio
+    async def test_check_pr_status_no_pr(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        git_provider.set_git_response(
+            "gh pr view",
+            CommandResult(exit_code=1, stdout="", stderr="no pull requests found"),
+        )
+
+        result = await ws.check_pr_status(git_provider, "/workspace")
+        assert result == {}
+
+class TestGitWorkspaceRenameBranch:
+    @pytest.fixture
+    def git_provider(self):
+        return _GitMockProvider()
+
+    @pytest.mark.asyncio
+    async def test_rename_branch(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        git_provider.set_git_response(
+            "branch -m",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+
+        await ws.rename_branch(git_provider, "/workspace", "feat/new-feature")
+        assert ws.branch == "feat/new-feature"
+
+    @pytest.mark.asyncio
+    async def test_rename_branch_failure(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        git_provider.set_git_response(
+            "branch -m",
+            CommandResult(exit_code=1, stdout="", stderr="error: refname not found"),
+        )
+
+        with pytest.raises(RuntimeError, match="Branch rename failed"):
+            await ws.rename_branch(git_provider, "/workspace", "bad-name")
+        assert ws.branch == "tokyo"
+
+
+class TestGitWorkspaceCheckPRStatus:
+    @pytest.fixture
+    def git_provider(self):
+        return _GitMockProvider()
+
+    @pytest.mark.asyncio
+    async def test_check_pr_status_ci_failure(self, git_provider):
+        import json
+
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        pr_json = json.dumps({
+            "state": "OPEN",
+            "merged": False,
+            "url": "https://github.com/test/repo/pull/42",
+            "number": 42,
+            "statusCheckRollup": [
+                {"conclusion": "SUCCESS"},
+                {"conclusion": "FAILURE"},
+            ],
+        })
+        git_provider.set_git_response(
+            "gh pr view",
+            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
+        )
+
+        result = await ws.check_pr_status(git_provider, "/workspace")
+        assert result["ci_status"] == "failure"
 
 

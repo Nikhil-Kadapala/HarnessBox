@@ -98,15 +98,25 @@ export interface SessionResponse {
   status: string;
   created_at: string;
   workspace_name?: string;
+  branch?: string;
+  base_branch?: string;
+  remote?: string;
 }
 
 // --- Multi-session state ---
 
 export type SessionStatus =
+  | "backlog"
   | "creating"
+  | "starting"
   | "active"
   | "streaming"
   | "paused"
+  | "in_review"
+  | "ending"
+  | "merged"
+  | "failed"
+  | "archived"
   | "ended"
   | "error";
 
@@ -118,6 +128,9 @@ export interface SessionEntry {
   events: UniversalEvent[];
   error: string | null;
   workspaceName?: string;
+  branch?: string;
+  baseBranch?: string;
+  remote?: string;
 }
 
 // --- View switching ---

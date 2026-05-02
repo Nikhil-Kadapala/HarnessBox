@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from harnessbox.lifecycle import InvalidTransitionError
 from harnessbox.session import SessionConfig, SessionManager, SessionNotFoundError
 from harnessbox.streaming import EventType
 
@@ -157,3 +158,75 @@ class TestSessionManager:
 
         assert len(events) == 1
         assert events[0].delta == "hello"
+
+
+class TestTransitionSession:
+    @pytest.mark.asyncio
+    async def test_valid_transition(self) -> None:
+        mgr = SessionManager()
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            await mgr.create_session(SessionConfig(), session_id="s-1")
+
+        info = mgr.transition_session("s-1", "in_review")
+        assert info.status == "in_review"
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_raises(self) -> None:
+        mgr = SessionManager()
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            await mgr.create_session(SessionConfig(), session_id="s-1")
+
+        with pytest.raises(InvalidTransitionError):
+            mgr.transition_session("s-1", "merged")
+
+    def test_transition_unknown_session_raises(self) -> None:
+        mgr = SessionManager()
+        with pytest.raises(SessionNotFoundError):
+            mgr.transition_session("nope", "in_review")
+
+
+class TestFindByRepoBranch:
+    @pytest.mark.asyncio
+    async def test_find_matching_session(self) -> None:
+        mgr = SessionManager()
+
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            ws = MagicMock()
+            ws.remote = "https://github.com/test/repo.git"
+            ws.branch = "tokyo"
+            instance._workspace = ws
+            await mgr.create_session(
+                SessionConfig(workspace=ws), session_id="s-1"
+            )
+
+        result = mgr.find_by_repo_branch("https://github.com/test/repo.git", "tokyo")
+        assert result is not None
+        assert result.session_id == "s-1"
+
+    @pytest.mark.asyncio
+    async def test_find_no_match(self) -> None:
+        mgr = SessionManager()
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch("harnessbox.session.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            await mgr.create_session(SessionConfig(), session_id="s-1")
+
+        result = mgr.find_by_repo_branch("https://github.com/other/repo.git", "main")
+        assert result is None

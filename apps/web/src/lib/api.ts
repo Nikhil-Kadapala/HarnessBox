@@ -12,17 +12,29 @@ import type {
 const BASE = "/api";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  console.log(`fetchJSON: starting ${path}`);
   const res = await fetch(`${BASE}${path}`, init);
+  console.log(`fetchJSON: ${path} status ${res.status}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`${res.status}: ${text || res.statusText}`);
   }
-  return res.json() as Promise<T>;
+  const data = await res.json();
+  console.log(`fetchJSON(${path}) raw response:`, data, "type:", typeof data, "isArray:", Array.isArray(data));
+  return data as T;
 }
 
 export async function fetchCredentials(): Promise<CredentialProbe[]> {
-  const data = await fetchJSON<{ probes: CredentialProbe[] }>("/v1/credentials/status");
-  return data.probes;
+  const data = await fetchJSON<{ probes: CredentialProbe[] } | CredentialProbe[]>("/v1/credentials/status");
+  // Handle both wrapped response {probes: [...]} and direct array
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && typeof data === "object" && "probes" in data) {
+    return data.probes;
+  }
+  console.warn("Unexpected credentials response format:", data);
+  return [];
 }
 
 export async function fetchHarnesses(): Promise<HarnessInfo[]> {

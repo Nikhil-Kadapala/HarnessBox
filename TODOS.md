@@ -2,6 +2,66 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
+## Session Board — Lifecycle Actions Per Column
+
+**What:** Each kanban column should have distinct card actions beyond the current "Review" and "Archive" buttons.
+
+**Why:** Users need to control session lifecycle directly from the board without switching to a terminal view.
+
+**Actions by column:**
+- **In Progress** → `Pause`, `View Logs`, `Stop`
+- **In Review** → `Open PR`, `View Diff`, `Re-run`, `Discard`
+- **Merged** → `Delete Branch`, `View PR`, `Clone as new session`
+- **Archived** → `Restore`, `Delete Permanently`
+
+"Clone as new session" on merged cards lets users iterate on shipped features without starting from scratch.
+
+**Depends on:** Kanban board (shipped), backend pause/stop endpoints, PR integration.
+
+## Session Board — Backlog as Creation Queue
+
+**What:** Make Backlog a first-class creation surface where users queue task descriptions that agents pick up when compute is available.
+
+**Why:** Turns the board into an async work queue rather than just a status tracker. Users describe what they want done, sessions spawn when sandbox capacity is free.
+
+**Design:**
+- New `BacklogItem` model: `{ description, harness, repo, branch, priority, created_at }`
+- `POST /v1/backlog` to create items, `GET /v1/backlog` to list
+- Scheduler picks items off the queue and calls `create_session()` when capacity allows
+- Items move from Backlog → In Progress automatically on spawn
+
+**Depends on:** Kanban board (shipped), capacity management, session creation flow.
+
+## Session Board — CI Status Integration
+
+**What:** Show CI pass/fail status inline on session cards via GitHub webhook integration.
+
+**Why:** Users need to know if agent code passes CI without leaving the board.
+
+**Design:** GitHub webhook listener that receives `check_suite` and `check_run` events, maps them to sessions via branch name, stores status on `SessionInfo`.
+
+**Depends on:** PR integration, webhook infrastructure.
+
+## Session Board — Auto-Archive on Merge
+
+**What:** Automatically move sessions to Archived when their PR is merged, via GitHub webhook.
+
+**Why:** Eliminates manual cleanup. Once a PR merges, the session's work is done.
+
+**Design:** GitHub `pull_request.closed` webhook with `merged=true` triggers `transition_session(id, "archived")`. Branch deletion optional (configurable).
+
+**Depends on:** PR integration, webhook infrastructure, CI status integration.
+
+## Session Board — Stale Session Warning
+
+**What:** Sessions in "In Progress" for >24h without a commit get a warning badge.
+
+**Why:** Prompts users to check if an agent is stuck or idle.
+
+**Design:** Track `last_commit_at` on `SessionInfo`. Periodic check (or on board load) compares against threshold. Show ⚠️ badge on stale cards.
+
+**Depends on:** Commit tracking (diff stat/commit count work), board refresh.
+
 ## Runtime Tool Installation — User-selectable developer tools
 
 **What:** Let users choose which tools to install at sandbox startup from a curated list of common developer tools and runtimes.

@@ -4,6 +4,7 @@ import {
   destroySession as apiDestroySession,
   listSessions,
 } from "@/lib/api";
+import { renameSession as apiRenameSession } from "@/lib/sessions/client";
 import { streamSSE } from "@/lib/sse";
 import type {
   CreateSessionRequest,
@@ -22,7 +23,8 @@ type Action =
   | { type: "set_status"; sessionId: string; status: SessionStatus }
   | { type: "set_error"; sessionId: string; error: string }
   | { type: "append_event"; sessionId: string; event: UniversalEvent }
-  | { type: "clear_events"; sessionId: string };
+  | { type: "clear_events"; sessionId: string }
+  | { type: "rename_session"; sessionId: string; name: string };
 
 function sessionsReducer(state: SessionMap, action: Action): SessionMap {
   const next = new Map(state);
@@ -64,6 +66,13 @@ function sessionsReducer(state: SessionMap, action: Action): SessionMap {
       const entry = next.get(action.sessionId);
       if (entry) {
         next.set(action.sessionId, { ...entry, events: [] });
+      }
+      return next;
+    }
+    case "rename_session": {
+      const entry = next.get(action.sessionId);
+      if (entry) {
+        next.set(action.sessionId, { ...entry, workspaceName: action.name });
       }
       return next;
     }
@@ -116,6 +125,9 @@ export function useSessionManager() {
                 events: [],
                 error: null,
                 workspaceName: s.workspace_name,
+                branch: s.branch,
+                baseBranch: s.base_branch,
+                remote: s.remote,
               },
             });
           }
@@ -140,6 +152,9 @@ export function useSessionManager() {
           events: [],
           error: null,
           workspaceName: res.workspace_name,
+          branch: res.branch,
+          baseBranch: res.base_branch,
+          remote: res.remote,
         };
         dispatch({ type: "add_session", entry });
         setActiveSessionId(res.session_id);
@@ -203,6 +218,10 @@ export function useSessionManager() {
           signal: controller.signal,
         })) {
           dispatch({ type: "append_event", sessionId, event });
+          if (event.event_type === "error" && event.error_message) {
+            dispatch({ type: "set_error", sessionId, error: event.error_message });
+            continue;
+          }
           const newStatus = statusFromEvent(event);
           if (newStatus && newStatus !== "streaming") {
             dispatch({ type: "set_status", sessionId, status: newStatus });
@@ -250,6 +269,18 @@ export function useSessionManager() {
     [activeSessionId, sessions],
   );
 
+  const renameSession = useCallback(
+    async (sessionId: string, name: string) => {
+      try {
+        await apiRenameSession(sessionId, name);
+      } catch {
+        return;
+      }
+      dispatch({ type: "rename_session", sessionId, name });
+    },
+    [],
+  );
+
   return {
     sessions,
     activeSessionId,
@@ -260,5 +291,6 @@ export function useSessionManager() {
     sendPrompt,
     stopStreaming,
     destroySession: destroySessionById,
+    renameSession,
   };
 }

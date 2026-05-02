@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from harnessbox.lifecycle import InvalidTransitionError, SessionState, validate_transition
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import UniversalEvent
@@ -64,6 +65,13 @@ class SessionInfo:
     created_at: str
     status: str = "active"
     workspace_name: str | None = None
+    branch: str | None = None
+    base_branch: str | None = None
+    remote: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    ci_status: str | None = None
+    total_cost_usd: float = 0.0
 
 
 class SessionNotFoundError(KeyError):
@@ -115,8 +123,19 @@ class SessionManager:
         await sandbox.setup()
 
         workspace_name = None
-        if config.workspace and hasattr(config.workspace, "worktree_name"):
-            workspace_name = config.workspace.worktree_name
+        branch = None
+        base_branch = None
+        if config.workspace:
+            if hasattr(config.workspace, "clone_dir_name"):
+                workspace_name = config.workspace.clone_dir_name
+            if hasattr(config.workspace, "branch"):
+                branch = config.workspace.branch
+            if hasattr(config.workspace, "base_branch"):
+                base_branch = config.workspace.base_branch
+
+        remote = None
+        if config.workspace and hasattr(config.workspace, "remote"):
+            remote = config.workspace.remote
 
         info = SessionInfo(
             session_id=sid,
@@ -124,6 +143,9 @@ class SessionManager:
             harness=config.harness,
             created_at=datetime.now(timezone.utc).isoformat(),
             workspace_name=workspace_name,
+            branch=branch,
+            base_branch=base_branch,
+            remote=remote,
         )
         self._sessions[sid] = info
         self._locks[sid] = lock
@@ -142,21 +164,41 @@ class SessionManager:
         info = self.get_session(session_id)
         async with self._locks[session_id]:
             async for event in info.sandbox.run_prompt_events(prompt):
-                # Check for sandbox death
                 if (
                     event.event_type == "error"
                     and event.metadata.get("error_code") == "SANDBOX_DEAD"
                 ):
-                    # Mark session as ended (sandbox is dead)
-                    info.status = "ended"
+                    info.status = SessionState.FAILED.value
+
+                if event.cost_usd is not None:
+                    info.total_cost_usd = event.cost_usd
 
                 yield event
+
+    def find_by_repo_branch(self, remote: str, branch: str) -> SessionInfo | None:
+        """Find a session matching a repo remote URL and branch name."""
+        for info in self._sessions.values():
+            ws = info.sandbox._workspace
+            if ws and hasattr(ws, "remote") and hasattr(ws, "branch"):
+                if ws.remote == remote and ws.branch == branch:
+                    return info
+        return None
+
+    def transition_session(self, session_id: str, target_state: str) -> SessionInfo:
+        """Transition session to a new state with validation."""
+        info = self.get_session(session_id)
+        current = SessionState(info.status)
+        target = SessionState(target_state)
+        if not validate_transition(current, target):
+            raise InvalidTransitionError(current, target)
+        info.status = target.value
+        return info
 
     async def destroy_session(self, session_id: str) -> None:
         info = self.get_session(session_id)
         async with self._locks[session_id]:
             await info.sandbox.kill()
-            info.status = "ended"
+            info.status = SessionState.FAILED.value
         self._sessions.pop(session_id, None)
         self._locks.pop(session_id, None)
 

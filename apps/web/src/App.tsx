@@ -1,6 +1,12 @@
 import { useCallback, useState } from "react";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppHeader } from "@/components/layout/app-header";
 import { SessionView } from "@/components/session/session-view";
@@ -13,13 +19,21 @@ import type { ActiveView, CreateSessionRequest } from "@/types";
 
 export default function App() {
   const manager = useSessionManager();
-  const [view, setView] = useState<ActiveView>("new-session");
+  const [view, setView] = useState<ActiveView>("board");
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [prefillRepoUrl, setPrefillRepoUrl] = useState<string | undefined>();
 
-  const handleNewSession = useCallback(() => {
-    setView("new-session");
+  const handleNewSession = useCallback((repoUrl?: string) => {
+    setPrefillRepoUrl(repoUrl);
     setCreateError(null);
+    setSheetOpen(true);
+  }, []);
+
+  const handleCloseSheet = useCallback(() => {
+    setSheetOpen(false);
+    setPrefillRepoUrl(undefined);
   }, []);
 
   const handleCreateSession = useCallback(
@@ -35,6 +49,7 @@ export default function App() {
           }
         }
         await manager.createSession({ ...config, env_vars: mergedEnv });
+        handleCloseSheet();
         setView("session");
       } catch (err) {
         setCreateError(err instanceof Error ? err.message : "Failed to create session");
@@ -42,7 +57,7 @@ export default function App() {
         setIsCreating(false);
       }
     },
-    [manager],
+    [manager, handleCloseSheet],
   );
 
   const handleSelectSession = useCallback(
@@ -89,38 +104,23 @@ export default function App() {
           onDestroySession={manager.destroySession}
         />
         <SidebarInset>
-          <AppHeader session={manager.activeSession} onNewSession={handleNewSession} />
+          {view !== "board" && (
+            <AppHeader session={manager.activeSession} onRenameSession={manager.renameSession} />
+          )}
           <div className="flex flex-1 flex-col min-h-0">
             {view === "settings" && (
               <SettingsPanel
                 onClose={() => {
                   if (manager.activeSession) setView("session");
-                  else setView("new-session");
+                  else setView("board");
                 }}
               />
-            )}
-            {view === "new-session" && (
-              <>
-                {createError && (
-                  <div className="mx-4 mt-2 rounded border border-destructive/50 bg-destructive/10 px-3 py-2">
-                    <span className="text-xs text-destructive">{createError}</span>
-                  </div>
-                )}
-                <SessionConfigPanel
-                  onSubmit={handleCreateSession}
-                  onCancel={() => {
-                    if (manager.activeSession) setView("session");
-                  }}
-                  disabled={isCreating}
-                />
-              </>
             )}
             {view === "session" && manager.activeSession && (
               <SessionView
                 session={manager.activeSession}
                 onSendPrompt={handleSendPrompt}
                 onStop={handleStop}
-                onNewSession={handleNewSession}
               />
             )}
             {view === "session" && !manager.activeSession && (
@@ -128,7 +128,7 @@ export default function App() {
                 <div className="text-center space-y-2">
                   <p className="text-sm text-muted-foreground">No active session</p>
                   <button
-                    onClick={handleNewSession}
+                    onClick={() => handleNewSession()}
                     className="text-sm text-accent hover:underline"
                   >
                     Create one
@@ -136,9 +136,28 @@ export default function App() {
                 </div>
               </div>
             )}
-            {view === "board" && <SessionBoardApp />}
+            {view === "board" && <SessionBoardApp onSelectSession={handleSelectSession} />}
           </div>
         </SidebarInset>
+
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetContent side="right" className="sm:max-w-xl w-full overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>New Session</SheetTitle>
+            </SheetHeader>
+            {createError && (
+              <div className="mx-4 rounded border border-destructive/50 bg-destructive/10 px-3 py-2">
+                <span className="text-xs text-destructive">{createError}</span>
+              </div>
+            )}
+            <SessionConfigPanel
+              onSubmit={handleCreateSession}
+              onCancel={handleCloseSheet}
+              disabled={isCreating}
+              defaultRepoUrl={prefillRepoUrl}
+            />
+          </SheetContent>
+        </Sheet>
       </SidebarProvider>
     </TooltipProvider>
   );

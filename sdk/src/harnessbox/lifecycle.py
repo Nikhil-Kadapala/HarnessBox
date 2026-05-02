@@ -6,21 +6,31 @@ from enum import Enum
 
 
 class SessionState(str, Enum):
+    BACKLOG = "backlog"
     STARTING = "starting"
     ACTIVE = "active"
     PAUSED = "paused"
+    IN_REVIEW = "in_review"
     ENDING = "ending"
     MERGED = "merged"
     FAILED = "failed"
+    ARCHIVED = "archived"
 
 
 VALID_TRANSITIONS: dict[SessionState, frozenset[SessionState]] = {
+    SessionState.BACKLOG: frozenset({SessionState.STARTING, SessionState.ARCHIVED}),
     SessionState.STARTING: frozenset({SessionState.ACTIVE, SessionState.FAILED}),
-    SessionState.ACTIVE: frozenset({SessionState.PAUSED, SessionState.ENDING, SessionState.FAILED}),
+    SessionState.ACTIVE: frozenset(
+        {SessionState.PAUSED, SessionState.ENDING, SessionState.IN_REVIEW, SessionState.FAILED}
+    ),
     SessionState.PAUSED: frozenset({SessionState.ACTIVE, SessionState.ENDING, SessionState.FAILED}),
+    SessionState.IN_REVIEW: frozenset(
+        {SessionState.ACTIVE, SessionState.ENDING, SessionState.MERGED, SessionState.ARCHIVED}
+    ),
     SessionState.ENDING: frozenset({SessionState.MERGED, SessionState.FAILED}),
-    SessionState.MERGED: frozenset(),
-    SessionState.FAILED: frozenset(),
+    SessionState.MERGED: frozenset({SessionState.ARCHIVED}),
+    SessionState.FAILED: frozenset({SessionState.ARCHIVED}),
+    SessionState.ARCHIVED: frozenset(),
 }
 
 

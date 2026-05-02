@@ -1,13 +1,14 @@
-import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GitBranch, Pencil, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { SessionEntry, UniversalEvent } from "@/types";
 
 interface AppHeaderProps {
   session: SessionEntry | null;
-  onNewSession: () => void;
+  onRenameSession?: (sessionId: string, newName: string) => void;
 }
 
 interface SessionStats {
@@ -48,29 +49,49 @@ function extractStats(events: UniversalEvent[]): SessionStats | null {
   return null;
 }
 
-const statusVariants: Record<string, { label: string; className: string }> = {
-  creating: { label: "creating...", className: "bg-warning/20 text-warning" },
-  active: { label: "ready", className: "bg-accent/20 text-accent" },
-  streaming: {
-    label: "streaming",
-    className: "bg-accent/20 text-accent animate-pulse",
-  },
-  paused: {
-    label: "paused",
-    className: "bg-muted text-muted-foreground",
-  },
-  ended: {
-    label: "ended",
-    className: "bg-muted text-muted-foreground",
-  },
-  error: { label: "error", className: "bg-destructive/20 text-destructive" },
-};
+export function AppHeader({ session, onRenameSession }: AppHeaderProps) {
+  const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
-export function AppHeader({ session, onNewSession }: AppHeaderProps) {
   const stats = useMemo(
     () => (session ? extractStats(session.events) : null),
     [session],
   );
+
+  const displayName = session?.workspaceName ?? session?.id.slice(0, 8);
+
+  const handleCopy = useCallback(() => {
+    if (!displayName) return;
+    navigator.clipboard.writeText(displayName);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [displayName]);
+
+  const startEditing = useCallback(() => {
+    setEditValue(displayName ?? "");
+    setEditing(true);
+  }, [displayName]);
+
+  const confirmEdit = useCallback(() => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== displayName && session && onRenameSession) {
+      onRenameSession(session.id, trimmed);
+    }
+    setEditing(false);
+  }, [editValue, displayName, session, onRenameSession]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+  }, []);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
 
   return (
     <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between gap-2 border-b px-4 bg-background/95 backdrop-blur-sm">
@@ -78,24 +99,43 @@ export function AppHeader({ session, onNewSession }: AppHeaderProps) {
         <SidebarTrigger />
         <Separator className="h-4" orientation="vertical" />
         {session ? (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono text-foreground">
-              {session.harness}
-            </span>
-            <Badge variant="secondary" className="text-[10px] font-mono">
-              {session.id.slice(0, 8)}
-            </Badge>
-            {(() => {
-              const v = statusVariants[session.status] ?? statusVariants.active;
-              return (
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] ${v.className}`}
+          <div className="group/header flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
+            {editing ? (
+              <Input
+                ref={inputRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmEdit();
+                  if (e.key === "Escape") cancelEdit();
+                }}
+                onBlur={confirmEdit}
+                className="h-7 w-48 text-sm font-medium"
+              />
+            ) : (
+              <>
+                <span className="text-sm font-medium text-foreground">
+                  {displayName}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 cursor-pointer text-muted-foreground hover:text-foreground opacity-0 group-hover/header:opacity-100 transition-opacity"
+                  onClick={startEditing}
                 >
-                  {v.label}
-                </Badge>
-              );
-            })()}
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 cursor-pointer text-muted-foreground hover:text-foreground opacity-0 group-hover/header:opacity-100 transition-opacity"
+                  onClick={handleCopy}
+                >
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </>
+            )}
           </div>
         ) : (
           <span className="text-xs text-muted-foreground">No active session</span>
@@ -126,14 +166,6 @@ export function AppHeader({ session, onNewSession }: AppHeaderProps) {
             </span>
           </>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={onNewSession}
-        >
-          New Session
-        </Button>
       </div>
     </header>
   );

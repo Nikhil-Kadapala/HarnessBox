@@ -1,15 +1,3 @@
-/**
- * Session Board Types
- *
- * These types power the kanban-style session board UI, adapted from
- * Cursor's Agent Kanban pattern. Maps HarnessBox sessions to visual
- * cards with status, repo, artifacts, and metadata.
- */
-
-export type GroupBy = "status" | "repository" | "createdAt"
-
-export type SidebarFilter = "all" | "recentlyActive" | "paused" | "failed"
-
 export interface SessionCard {
   id: string
   title: string
@@ -18,25 +6,22 @@ export interface SessionCard {
   repository?: string
   repositoryUrl?: string
   branch?: string
+  baseBranch?: string
   createdBy?: string
   createdAt: string
   updatedAt?: string
   latestMessage?: string
   workspaceName?: string
-  artifacts: ArtifactPreview[]
+  prUrl?: string
+  prNumber?: number
+  ciStatus?: string
+  totalCostUsd?: number
 }
 
-export interface ArtifactPreview {
-  path: string
-  name: string
-  size?: number
-  contentType?: string
-  mediaUrl?: string
-  previewKind: "image" | "video" | "file"
-}
-
-export interface SessionListResponse {
-  sessions: SessionCard[]
+export interface SessionStats {
+  insertions: number
+  deletions: number
+  commit_count: number
 }
 
 export interface CreateSessionInput {
@@ -46,8 +31,4 @@ export interface CreateSessionInput {
   branch?: string
   env_vars?: Record<string, string>
   skip_permissions?: boolean
-}
-
-export interface CreateSessionResponse {
-  session: SessionCard
 }
