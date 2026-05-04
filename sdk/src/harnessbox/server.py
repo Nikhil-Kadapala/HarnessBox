@@ -1,21 +1,22 @@
-"""HTTP/SSE transport layer for HarnessBox sessions.
+"""HTTP/SSE transport layer for HarnessBox workspaces.
 
-Exposes session management and agent event streaming over HTTP.
+Exposes workspace management and agent event streaming over HTTP.
 Install with ``pip install harnessbox[server]`` for dependencies.
 
     uvicorn harnessbox.server:create_app --factory --port 8000
 
 Endpoints:
-    GET    /v1/workspace/name        — generate workspace name
-    GET    /v1/workspace/detect      — detect repo from path
-    POST   /v1/sessions              — create session
-    GET    /v1/sessions              — list sessions
-    GET    /v1/sessions/{id}         — get session info
-    DELETE /v1/sessions/{id}         — destroy session
-    POST   /v1/sessions/{id}/prompt  — send prompt, SSE response
-    GET    /v1/sessions/{id}/events  — subscribe to live events (SSE)
-    GET    /v1/sessions/{id}/history — stream historical events from storage
-    POST   /v1/sessions/{id}/permission — respond to permission request
+    GET    /v1/workspace/name              — generate workspace name
+    GET    /v1/workspace/detect            — detect repo from path
+    POST   /v1/workspaces                  — create workspace
+    GET    /v1/workspaces                  — list workspaces
+    GET    /v1/workspaces/{id}             — get workspace info
+    DELETE /v1/workspaces/{id}             — destroy workspace
+    GET    /v1/workspaces/{id}/conversations — list conversations
+    POST   /v1/workspaces/{id}/prompt      — send prompt, SSE response
+    GET    /v1/workspaces/{id}/events      — subscribe to live events (SSE)
+    GET    /v1/workspaces/{id}/history     — stream historical events from storage
+    POST   /v1/workspaces/{id}/permission  — respond to permission request
 """
 
 from __future__ import annotations
@@ -450,7 +451,7 @@ def create_app(
 
     # ----- Session endpoints -----
 
-    @app.post("/v1/sessions", response_model=SessionResponse, status_code=201)
+    @app.post("/v1/workspaces", response_model=SessionResponse, status_code=201)
     async def create_session(req: CreateSessionRequest) -> SessionResponse:
         env_vars = dict(req.env_vars)
         _inject_host_env_vars(env_vars)
@@ -543,11 +544,11 @@ def create_app(
             total_cost_usd=info.total_cost_usd,
         )
 
-    @app.get("/v1/sessions", response_model=list[SessionResponse])
+    @app.get("/v1/workspaces", response_model=list[SessionResponse])
     async def list_sessions() -> list[SessionResponse]:
         return [_session_response(s) for s in mgr.list_workspaces()]
 
-    @app.get("/v1/sessions/{session_id}", response_model=SessionResponse)
+    @app.get("/v1/workspaces/{session_id}", response_model=SessionResponse)
     async def get_session(session_id: str) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -555,7 +556,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return _session_response(info)
 
-    @app.delete("/v1/sessions/{session_id}", status_code=204)
+    @app.delete("/v1/workspaces/{session_id}", status_code=204)
     async def destroy_session(session_id: str) -> Response:
         try:
             await mgr.destroy_workspace(session_id)
@@ -563,7 +564,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return Response(status_code=204)
 
-    @app.get("/v1/sessions/{session_id}/conversations")
+    @app.get("/v1/workspaces/{session_id}/conversations")
     async def list_conversations(session_id: str) -> dict[str, Any]:
         """List conversations for a workspace."""
         try:
@@ -576,7 +577,7 @@ def create_app(
             return {"conversations": conversations}
         return {"conversations": []}
 
-    @app.post("/v1/sessions/{session_id}/pause", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/pause", response_model=SessionResponse)
     async def pause_session(session_id: str) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -606,7 +607,7 @@ def create_app(
 
         return _session_response(info)
 
-    @app.post("/v1/sessions/{session_id}/resume", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/resume", response_model=SessionResponse)
     async def resume_session(session_id: str) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -623,7 +624,7 @@ def create_app(
         info.status = WorkspaceState.ACTIVE.value
         return _session_response(info)
 
-    @app.post("/v1/sessions/{session_id}/stop", status_code=204)
+    @app.post("/v1/workspaces/{session_id}/stop", status_code=204)
     async def stop_session(session_id: str) -> Response:
         try:
             info = mgr.get_workspace(session_id)
@@ -634,7 +635,7 @@ def create_app(
         info.status = WorkspaceState.FAILED.value
         return Response(status_code=204)
 
-    @app.post("/v1/sessions/{session_id}/rename", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/rename", response_model=SessionResponse)
     async def rename_session(session_id: str, req: RenameRequest) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -657,7 +658,7 @@ def create_app(
         info.workspace_name = req.name
         return _session_response(info)
 
-    @app.post("/v1/sessions/{session_id}/pr", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/pr", response_model=SessionResponse)
     async def create_pr(session_id: str, req: PRRequest) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -687,7 +688,7 @@ def create_app(
 
         return _session_response(info)
 
-    @app.post("/v1/sessions/{session_id}/pr/refresh", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/pr/refresh", response_model=SessionResponse)
     async def refresh_pr_status(session_id: str) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -722,7 +723,7 @@ def create_app(
 
     _NON_PROMPTABLE = frozenset({"merged", "failed", "archived", "ended", "backlog", "ending"})
 
-    @app.post("/v1/sessions/{session_id}/transition", response_model=SessionResponse)
+    @app.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
     async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -746,7 +747,7 @@ def create_app(
 
         return _session_response(info)
 
-    @app.get("/v1/sessions/{session_id}/stats", response_model=SessionStatsResponse)
+    @app.get("/v1/workspaces/{session_id}/stats", response_model=SessionStatsResponse)
     async def get_session_stats(session_id: str) -> SessionStatsResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -775,7 +776,7 @@ def create_app(
             commit_count=commits,
         )
 
-    @app.post("/v1/sessions/{session_id}/prompt")
+    @app.post("/v1/workspaces/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
         try:
             info = mgr.get_workspace(session_id)
@@ -820,7 +821,7 @@ def create_app(
 
         return EventSourceResponse(event_generator())
 
-    @app.get("/v1/sessions/{session_id}/events")
+    @app.get("/v1/workspaces/{session_id}/events")
     async def stream_events(session_id: str, request: Request) -> EventSourceResponse:
         """Subscribe to live events from an active session (SSE)."""
         try:
@@ -847,7 +848,7 @@ def create_app(
 
         return EventSourceResponse(event_generator(), ping=15)
 
-    @app.get("/v1/sessions/{session_id}/history")
+    @app.get("/v1/workspaces/{session_id}/history")
     async def stream_history(
         session_id: str,
         after_sequence: int = 0,
@@ -903,7 +904,7 @@ def create_app(
 
         return EventSourceResponse(event_generator(), ping=15)
 
-    @app.post("/v1/sessions/{session_id}/permission")
+    @app.post("/v1/workspaces/{session_id}/permission")
     async def respond_permission(session_id: str, req: PermissionRequest) -> dict[str, str]:
         try:
             info = mgr.get_workspace(session_id)

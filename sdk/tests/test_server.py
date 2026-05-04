@@ -30,7 +30,7 @@ class TestCreateSession:
             instance.sandbox_id = "sb-1"
 
             resp = client.post(
-                "/v1/sessions",
+                "/v1/workspaces",
                 json={"harness": "claude-code", "session_id": "test-1"},
             )
 
@@ -43,7 +43,7 @@ class TestCreateSession:
 
 class TestListSessions:
     def test_list_empty(self, client: TestClient) -> None:
-        resp = client.get("/v1/sessions")
+        resp = client.get("/v1/workspaces")
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -51,10 +51,10 @@ class TestListSessions:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
-            client.post("/v1/sessions", json={"session_id": "s-2"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-2"})
 
-        resp = client.get("/v1/sessions")
+        resp = client.get("/v1/workspaces")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -65,14 +65,14 @@ class TestGetSession:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.get("/v1/sessions/s-1")
+        resp = client.get("/v1/workspaces/s-1")
         assert resp.status_code == 200
         assert resp.json()["session_id"] == "s-1"
 
     def test_get_not_found(self, client: TestClient) -> None:
-        resp = client.get("/v1/sessions/nonexistent")
+        resp = client.get("/v1/workspaces/nonexistent")
         assert resp.status_code == 404
 
 
@@ -82,16 +82,16 @@ class TestDestroySession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.delete("/v1/sessions/s-1")
+        resp = client.delete("/v1/workspaces/s-1")
         assert resp.status_code == 204
 
-        resp = client.get("/v1/sessions/s-1")
+        resp = client.get("/v1/workspaces/s-1")
         assert resp.status_code == 404
 
     def test_destroy_not_found(self, client: TestClient) -> None:
-        resp = client.delete("/v1/sessions/nonexistent")
+        resp = client.delete("/v1/workspaces/nonexistent")
         assert resp.status_code == 404
 
 
@@ -155,7 +155,7 @@ class TestListGuards:
 class TestCORS:
     def test_cors_headers_present(self, client: TestClient) -> None:
         resp = client.options(
-            "/v1/sessions",
+            "/v1/workspaces",
             headers={
                 "Origin": "http://localhost:5173",
                 "Access-Control-Request-Method": "POST",
@@ -172,7 +172,7 @@ class TestCreateSessionExpanded:
             instance.sandbox_id = "sb-1"
 
             resp = client.post(
-                "/v1/sessions",
+                "/v1/workspaces",
                 json={
                     "session_id": "sp-1",
                     "security_policy": {
@@ -191,7 +191,7 @@ class TestCreateSessionExpanded:
             instance.sandbox_id = "sb-1"
 
             resp = client.post(
-                "/v1/sessions",
+                "/v1/workspaces",
                 json={
                     "session_id": "ws-1",
                     "workspace": {
@@ -204,7 +204,7 @@ class TestCreateSessionExpanded:
 
     def test_invalid_security_policy(self, client: TestClient) -> None:
         resp = client.post(
-            "/v1/sessions",
+            "/v1/workspaces",
             json={
                 "security_policy": {
                     "denied_tools": "not-a-list",
@@ -215,7 +215,7 @@ class TestCreateSessionExpanded:
 
     def test_invalid_workspace_missing_remote(self, client: TestClient) -> None:
         resp = client.post(
-            "/v1/sessions",
+            "/v1/workspaces",
             json={
                 "workspace": {
                     "branch": "main",
@@ -228,7 +228,7 @@ class TestCreateSessionExpanded:
 class TestPromptSession:
     def test_prompt_not_found(self, client: TestClient) -> None:
         resp = client.post(
-            "/v1/sessions/nonexistent/prompt",
+            "/v1/workspaces/nonexistent/prompt",
             json={"prompt": "hello"},
         )
         assert resp.status_code == 404
@@ -237,9 +237,9 @@ class TestPromptSession:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.post("/v1/sessions/s-1/prompt", json={})
+        resp = client.post("/v1/workspaces/s-1/prompt", json={})
         assert resp.status_code == 422
 
 
@@ -249,9 +249,9 @@ class TestPauseSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.post("/v1/sessions/s-1/pause")
+        resp = client.post("/v1/workspaces/s-1/pause")
         assert resp.status_code == 200
         assert resp.json()["status"] == "paused"
 
@@ -260,16 +260,16 @@ class TestPauseSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-1")
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
         # Pause first
-        client.post("/v1/sessions/s-1/pause")
+        client.post("/v1/workspaces/s-1/pause")
         # Pause again should fail
-        resp = client.post("/v1/sessions/s-1/pause")
+        resp = client.post("/v1/workspaces/s-1/pause")
         assert resp.status_code == 409
 
     def test_pause_not_found(self, client: TestClient) -> None:
-        resp = client.post("/v1/sessions/nonexistent/pause")
+        resp = client.post("/v1/workspaces/nonexistent/pause")
         assert resp.status_code == 404
 
 
@@ -281,10 +281,10 @@ class TestResumeSession:
             instance.pause = AsyncMock(return_value="sb-paused-1")
             instance.resume = AsyncMock()
             instance._paused_sandbox_id = "sb-paused-1"
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        client.post("/v1/sessions/s-1/pause")
-        resp = client.post("/v1/sessions/s-1/resume")
+        client.post("/v1/workspaces/s-1/pause")
+        resp = client.post("/v1/workspaces/s-1/resume")
         assert resp.status_code == 200
         assert resp.json()["status"] == "active"
 
@@ -292,13 +292,13 @@ class TestResumeSession:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.post("/v1/sessions/s-1/resume")
+        resp = client.post("/v1/workspaces/s-1/resume")
         assert resp.status_code == 409
 
     def test_resume_not_found(self, client: TestClient) -> None:
-        resp = client.post("/v1/sessions/nonexistent/resume")
+        resp = client.post("/v1/workspaces/nonexistent/resume")
         assert resp.status_code == 404
 
 
@@ -308,13 +308,13 @@ class TestStopSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.post("/v1/sessions/s-1/stop")
+        resp = client.post("/v1/workspaces/s-1/stop")
         assert resp.status_code == 204
 
     def test_stop_not_found(self, client: TestClient) -> None:
-        resp = client.post("/v1/sessions/nonexistent/stop")
+        resp = client.post("/v1/workspaces/nonexistent/stop")
         assert resp.status_code == 404
 
 
@@ -323,12 +323,12 @@ class TestTransitionSession:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/sessions", json={"session_id": session_id})
+            client.post("/v1/workspaces", json={"session_id": session_id})
 
     def test_valid_transition(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "in_review"},
         )
         assert resp.status_code == 200
@@ -337,7 +337,7 @@ class TestTransitionSession:
     def test_invalid_transition_returns_409(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "merged"},
         )
         assert resp.status_code == 409
@@ -345,14 +345,14 @@ class TestTransitionSession:
     def test_unknown_state_returns_400(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "imaginary"},
         )
         assert resp.status_code == 400
 
     def test_unknown_session_returns_404(self, client: TestClient) -> None:
         resp = client.post(
-            "/v1/sessions/nonexistent/transition",
+            "/v1/workspaces/nonexistent/transition",
             json={"target_state": "in_review"},
         )
         assert resp.status_code == 404
@@ -360,17 +360,17 @@ class TestTransitionSession:
     def test_chained_transitions(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "in_review"},
         )
         assert resp.status_code == 200
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "merged"},
         )
         assert resp.status_code == 200
         resp = client.post(
-            "/v1/sessions/s-1/transition",
+            "/v1/workspaces/s-1/transition",
             json={"target_state": "archived"},
         )
         assert resp.status_code == 200
@@ -383,10 +383,10 @@ class TestRenameSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._workspace = None
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
         resp = client.post(
-            "/v1/sessions/s-1/rename",
+            "/v1/workspaces/s-1/rename",
             json={"name": "feat/new-feature"},
         )
         assert resp.status_code == 200
@@ -396,7 +396,7 @@ class TestRenameSession:
 
     def test_rename_not_found(self, client: TestClient) -> None:
         resp = client.post(
-            "/v1/sessions/nonexistent/rename",
+            "/v1/workspaces/nonexistent/rename",
             json={"name": "new-name"},
         )
         assert resp.status_code == 404
@@ -404,7 +404,7 @@ class TestRenameSession:
 
 class TestSessionStats:
     def test_stats_not_found(self, client: TestClient) -> None:
-        resp = client.get("/v1/sessions/nonexistent/stats")
+        resp = client.get("/v1/workspaces/nonexistent/stats")
         assert resp.status_code == 404
 
     def test_stats_returns_defaults_without_workspace(self, client: TestClient) -> None:
@@ -412,9 +412,9 @@ class TestSessionStats:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._workspace = None
-            client.post("/v1/sessions", json={"session_id": "s-1"})
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
 
-        resp = client.get("/v1/sessions/s-1/stats")
+        resp = client.get("/v1/workspaces/s-1/stats")
         assert resp.status_code == 200
         data = resp.json()
         assert data["insertions"] == 0

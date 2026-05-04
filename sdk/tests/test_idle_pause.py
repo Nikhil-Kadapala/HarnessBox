@@ -223,7 +223,7 @@ class TestServerTimeoutFields:
             instance.sandbox_id = "sb-1"
 
             resp = client.post(
-                "/v1/sessions",
+                "/v1/workspaces",
                 json={
                     "session_id": "t-1",
                     "sandbox_timeout": 3600,
@@ -247,7 +247,7 @@ class TestServerTimeoutFields:
             instance.sandbox_id = "sb-1"
 
             resp = client.post(
-                "/v1/sessions",
+                "/v1/workspaces",
                 json={
                     "session_id": "t-2",
                     "sandbox_timeout": 300,
