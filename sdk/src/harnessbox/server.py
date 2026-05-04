@@ -563,6 +563,19 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return Response(status_code=204)
 
+    @app.get("/v1/sessions/{session_id}/conversations")
+    async def list_conversations(session_id: str) -> dict[str, Any]:
+        """List conversations for a workspace."""
+        try:
+            mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        if mgr._storage:
+            conversations = await mgr._storage.get_conversations(workspace_id=session_id)
+            return {"conversations": conversations}
+        return {"conversations": []}
+
     @app.post("/v1/sessions/{session_id}/pause", response_model=SessionResponse)
     async def pause_session(session_id: str) -> SessionResponse:
         try:
