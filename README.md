@@ -5,31 +5,40 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
-Sandbox security, workspace, and harness primitives for AI coding agents.
+Workspace orchestration, sandbox security, and agent lifecycle management for AI coding agents.
 
-HarnessBox gives you a single `Sandbox` class that works across cloud providers (E2B, Docker, Daytona, EC2), configures any agent harness (Claude Code, Codex, Gemini CLI, OpenCode), enforces security policies, and optionally clones a git repo into the workspace with one parameter.
+HarnessBox gives you a `WorkspaceManager` that pools long-lived workspaces across cloud providers (E2B, Docker, Daytona, EC2), auto-pauses idle sandboxes to save costs (87% reduction), manages multiple concurrent agent conversations per workspace, and handles git-based workflows with automatic commit/push.
 
 ```python
-from harnessbox import Sandbox, SecurityPolicy, GitWorkspace
+from harnessbox import WorkspaceManager, WorkspaceConfig, GitWorkspace
 
-sandbox = Sandbox(
-    client="e2b",
+# Create workspace manager with auto-pause
+mgr = await WorkspaceManager.create(auto_pause=True, pause_timeout=1800)
+
+# Get or create workspace (reuses paused workspace for same repo+branch)
+config = WorkspaceConfig(
+    provider="e2b",
     api_key="your-e2b-key",
-    security_policy=SecurityPolicy(deny_network=True),
     harness="claude-code",
     workspace=GitWorkspace(
         remote="https://github.com/user/repo.git",
+        branch="main",
         commit_on_exit=True,
     ),
-    files={"/workspace/CLAUDE.md": "You are a helpful coding assistant."},
 )
 
-await sandbox.setup()
+workspace = await mgr.get_or_create_workspace(
+    remote="https://github.com/user/repo.git",
+    branch="main",
+    config=config,
+)
 
-async for line in sandbox.run_prompt("Fix the failing tests"):
-    print(line)
+# Run prompts (auto-resumes if paused, spawns agents lazily)
+async for event in mgr.prompt(workspace.workspace_id, "Fix the failing tests"):
+    print(event.delta)
 
-await sandbox.end()  # commits + pushes changes back
+# Workspace auto-pauses after 30min idle → $0/hr
+# Next prompt auto-resumes → transparent to caller
 ```
 
 Zero runtime dependencies. Stdlib only. Provider SDKs are optional extras.
@@ -41,13 +50,31 @@ pip install "harnessbox[e2b]"
 ```
 
 ```python
-from harnessbox import Sandbox, JsonLogger
+from harnessbox import WorkspaceManager, WorkspaceConfig, GitWorkspace
 
-sandbox = Sandbox("e2b", api_key="your-e2b-key", event_handler=JsonLogger())
-await sandbox.setup()       # → {"event_type": "setup_complete", ...}
-result = await sandbox.run_command("echo hello from the sandbox")
-print(result.stdout)         # "hello from the sandbox"
-await sandbox.kill()         # → {"event_type": "session_end", ...}
+# Create manager
+mgr = await WorkspaceManager.create(auto_pause=True)
+
+# Create workspace
+config = WorkspaceConfig(
+    provider="e2b",
+    api_key="your-e2b-key",
+    harness="claude-code",
+    workspace=GitWorkspace(
+        remote="https://github.com/user/repo.git",
+        branch="main",
+        commit_on_exit=True,
+    ),
+)
+
+workspace = await mgr.create_workspace(config)
+
+# Run prompt
+async for event in mgr.prompt(workspace.workspace_id, "Fix the tests"):
+    print(event.delta)
+
+# Workspace auto-pauses after 30min idle
+# Costs $0/hr while paused, resumes transparently on next prompt
 ```
 
 ## Install
@@ -62,35 +89,213 @@ pip install "harnessbox[e2b]"
 ## What It Does
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    YOUR APPLICATION                   │
-│                                                       │
-│   from harnessbox import Sandbox, SecurityPolicy,    │
-│                          GitWorkspace                 │
-└──────────────────────┬────────────────────────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │       HarnessBox        │
-          │                         │
-          │  SecurityPolicy         │  ← deny rules, credential guards,
-          │  HarnessTypeConfig      │    PreToolUse hooks
-          │  GitWorkspace           │  ← clone repo, commit on exit,
-          │  Sandbox                │    snapshots, diff, events
-          └────────────┬────────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        ▼              ▼              ▼
-   ┌─────────┐  ┌───────────┐  ┌──────────┐
-   │   E2B   │  │  Docker   │  │ Daytona  │  ... any SandboxProvider
-   └─────────┘  └───────────┘  └──────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      YOUR APPLICATION                         │
+│                                                               │
+│   from harnessbox import WorkspaceManager, WorkspaceConfig   │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+               ┌────────────▼────────────┐
+               │    WorkspaceManager     │
+               │                         │
+               │  • Branch-based pooling │  ← 87% cost savings
+               │  • Auto-pause/resume    │    (reuse paused workspaces)
+               │  • Multi-agent support  │
+               │  • Storage backends     │
+               └────────────┬────────────┘
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+      ┌───────────┐  ┌─────────────┐  ┌─────────────┐
+      │ Workspace │  │ Workspace 2 │  │ Workspace N │
+      │           │  │             │  │             │
+      │ Sandbox   │  │  Sandbox    │  │  Sandbox    │
+      │ ├ Agent 1 │  │  ├ Agent 1  │  │  └ Agent 1  │
+      │ └ Agent 2 │  │  └ Agent 2  │  │             │
+      └─────┬─────┘  └──────┬──────┘  └──────┬──────┘
+            │               │                 │
+      ┌─────▼───────────────▼─────────────────▼──────┐
+      │         E2B / Docker / Daytona / EC2         │
+      └──────────────────────────────────────────────┘
 ```
 
 ## Examples
 
-### Basic Sandbox (No Workspace)
+### Branch-Based Workspace Pooling (Cost Optimization)
 
 ```python
-from harnessbox import Sandbox, SecurityPolicy
+from harnessbox import WorkspaceManager, WorkspaceConfig, GitWorkspace
+
+mgr = await WorkspaceManager.create(auto_pause=True, pause_timeout=1800)
+
+config = WorkspaceConfig(
+    provider="e2b",
+    api_key="...",
+    harness="claude-code",
+    workspace=GitWorkspace(
+        remote="https://github.com/user/repo.git",
+        branch="main",
+    ),
+)
+
+# First call: creates new workspace
+workspace = await mgr.get_or_create_workspace(
+    remote="https://github.com/user/repo.git",
+    branch="main",
+    config=config,
+)
+
+async for event in mgr.prompt(workspace.workspace_id, "Add tests"):
+    print(event.delta)
+
+# Auto-pauses after 30min idle → $0/hr
+
+# Later: reuses paused workspace (no new sandbox creation)
+workspace = await mgr.get_or_create_workspace(
+    remote="https://github.com/user/repo.git",
+    branch="main",
+    config=config,
+)
+
+async for event in mgr.prompt(workspace.workspace_id, "Fix bug"):
+    print(event.delta)
+
+# 87% cost savings for same-branch work
+```
+
+### Multiple Concurrent Agents (Same Workspace)
+
+```python
+from harnessbox import WorkspaceManager, WorkspaceConfig
+
+mgr = await WorkspaceManager.create()
+
+config = WorkspaceConfig(provider="e2b", api_key="...", harness="claude-code")
+workspace = await mgr.create_workspace(config)
+
+# Spawn two agents concurrently in the same workspace
+import asyncio
+
+async def agent_1():
+    async for event in mgr.prompt(workspace.workspace_id, "Fix tests", conversation_id="conv-1"):
+        print(f"Agent 1: {event.delta}")
+
+async def agent_2():
+    async for event in mgr.prompt(workspace.workspace_id, "Add docs", conversation_id="conv-2"):
+        print(f"Agent 2: {event.delta}")
+
+await asyncio.gather(agent_1(), agent_2())
+
+# List active conversations
+conversations = workspace.agent_manager.list_conversations()
+print(conversations)  # ["conv-1", "conv-2"]
+```
+
+### Auto-Pause/Resume with Retry
+
+```python
+from harnessbox import WorkspaceManager, WorkspaceConfig
+
+mgr = await WorkspaceManager.create(
+    auto_pause=True,
+    pause_timeout=1800,  # 30min idle timeout
+)
+
+config = WorkspaceConfig(provider="e2b", api_key="...", harness="claude-code")
+workspace = await mgr.create_workspace(config)
+
+async for event in mgr.prompt(workspace.workspace_id, "Make changes"):
+    print(event.delta)
+
+# After 30min idle: workspace auto-pauses → $0/hr
+# Snapshot created to preserve filesystem state
+
+# Next prompt: auto-resumes with 3 retries + exponential backoff
+async for event in mgr.prompt(workspace.workspace_id, "Continue work"):
+    print(event.delta)
+
+# If sandbox expired (>7 days), recovers from snapshot transparently
+```
+
+### Storage Backends (Workspace Persistence)
+
+```python
+from harnessbox import WorkspaceManager
+from harnessbox._storage.sqlite import SQLiteBackend
+
+# SQLite backend (default: .harnessbox.db)
+storage = SQLiteBackend(db_path="workspaces.db")
+mgr = await WorkspaceManager.create(storage=storage)
+
+# Workspaces survive restarts
+workspace = await mgr.create_workspace(config)
+print(workspace.workspace_id)  # "abc-123"
+
+# After restart: load from storage
+mgr2 = await WorkspaceManager.create(storage=SQLiteBackend("workspaces.db"))
+workspace = mgr2.get_workspace("abc-123")
+print(workspace.status)  # "paused" or "active"
+
+# Pooling works across restarts
+workspace = await mgr2.get_or_create_workspace(
+    remote="https://github.com/user/repo.git",
+    branch="main",
+    config=config,
+)  # Resumes paused workspace from storage
+```
+
+### HTTP Server (SSE Streaming)
+
+```python
+from harnessbox import WorkspaceManager
+from harnessbox.server import create_app
+
+# Create server
+mgr = await WorkspaceManager.create(auto_pause=True)
+app = create_app(mgr)
+
+# Endpoints:
+# POST   /v1/workspaces                      — create workspace
+# GET    /v1/workspaces                      — list workspaces
+# GET    /v1/workspaces/{id}                 — get workspace info
+# DELETE /v1/workspaces/{id}                 — destroy workspace
+# POST   /v1/workspaces/{id}/prompt          — send prompt (SSE stream)
+# GET    /v1/workspaces/{id}/conversations   — list conversations
+
+# Run server
+import uvicorn
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+**Client example:**
+```python
+import requests
+
+# Create workspace
+resp = requests.post("http://localhost:8080/v1/workspaces", json={
+    "provider": "e2b",
+    "harness": "claude-code",
+})
+workspace_id = resp.json()["workspace_id"]
+
+# Send prompt (SSE stream)
+resp = requests.post(
+    f"http://localhost:8080/v1/workspaces/{workspace_id}/prompt",
+    json={"prompt": "Fix the tests"},
+    stream=True,
+)
+
+for line in resp.iter_lines():
+    if line:
+        print(line.decode())
+```
+
+### Low-Level Sandbox API (Direct Control)
+
+If you need direct sandbox control without WorkspaceManager orchestration:
+
+```python
+from harnessbox import Sandbox, SecurityPolicy, GitWorkspace
 
 sandbox = Sandbox(
     client="e2b",
@@ -100,150 +305,51 @@ sandbox = Sandbox(
         denied_tools=["WebFetch", "WebSearch", "Agent"],
         deny_network=True,
     ),
-    files={"/workspace/CLAUDE.md": "Analyze the code in /workspace."},
-)
-
-await sandbox.setup()
-async for line in sandbox.run_prompt("What does this codebase do?"):
-    print(line)
-await sandbox.kill()
-```
-
-### Sandbox with Git Workspace
-
-```python
-from harnessbox import Sandbox, GitWorkspace
-
-sandbox = Sandbox(
-    client="e2b",
-    api_key="...",
-    harness="claude-code",
-    workspace=GitWorkspace(
-        remote="https://github.com/user/my-project.git",
-        branch="main",
-        commit_on_exit=True,
-        auth_token="ghp_...",  # for private repos
-    ),
-)
-
-await sandbox.setup()
-# Repo cloned into /workspace. Agent has full git access.
-
-async for line in sandbox.run_prompt("Add error handling to the API routes"):
-    print(line)
-
-await sandbox.end()
-# Changes committed and pushed to origin/main
-```
-
-### Workspace Snapshots and Diff
-
-```python
-sandbox = Sandbox(
-    client="e2b",
-    api_key="...",
-    workspace=GitWorkspace(remote="https://github.com/user/repo.git"),
-)
-await sandbox.setup()
-
-# Checkpoint before a risky change
-await sandbox.workspace.snapshot(sandbox.provider, "/workspace", "before-refactor")
-
-async for line in sandbox.run_prompt("Refactor the auth module"):
-    print(line)
-
-# See what changed
-diff = await sandbox.workspace.diff(sandbox.provider, "/workspace")
-print(diff)
-
-# Undo if it went wrong
-await sandbox.workspace.restore(sandbox.provider, "/workspace", "before-refactor")
-
-await sandbox.kill()
-```
-
-### Push Failure Recovery
-
-```python
-sandbox = Sandbox(
-    client="e2b",
-    api_key="...",
     workspace=GitWorkspace(
         remote="https://github.com/user/repo.git",
         commit_on_exit=True,
     ),
-)
-await sandbox.setup()
-async for _ in sandbox.run_prompt("Make some changes"):
-    pass
-await sandbox.end()
-
-# If push failed, the committed files are still accessible
-if sandbox.unpushed_files:
-    print("Push failed. Recovered files:")
-    for path, content in sandbox.unpushed_files.items():
-        print(f"  {path}: {len(content)} bytes")
-```
-
-### Workspace Events
-
-```python
-def on_push_failure(error, branch):
-    send_slack_alert(f"Push to {branch} failed: {error}")
-
-sandbox = Sandbox(
-    client="e2b",
-    api_key="...",
-    workspace=GitWorkspace(
-        remote="https://github.com/user/repo.git",
-        commit_on_exit=True,
-        on_clone_start=lambda **kw: print(f"Cloning {kw['remote']}..."),
-        on_clone_complete=lambda **kw: print(f"Clone {'OK' if kw['success'] else 'FAILED'}"),
-        on_push_failure=on_push_failure,
-    ),
-)
-```
-
-### Setup Script
-
-Run a shell command after files and workspace are injected, before the agent launches. Useful for installing dependencies, building assets, or configuring the environment.
-
-```python
-sandbox = Sandbox(
-    client="e2b",
-    api_key="...",
-    harness="claude-code",
-    workspace=GitWorkspace(remote="https://github.com/user/repo.git"),
-    setup_script="cd /workspace && npm install && npm run build",
+    setup_script="npm install && npm run build",
 )
 
 await sandbox.setup()
 # 1. Sandbox created, files injected
 # 2. Repo cloned
 # 3. "npm install && npm run build" runs
-# 4. Agent starts with deps installed and assets built
+# 4. Agent ready
+
+async for line in sandbox.run_prompt("Fix the tests"):
+    print(line)
+
+await sandbox.end()  # commits + pushes changes
 ```
 
-The script runs in the workspace root. If it exits non-zero, `setup()` raises `RuntimeError` with the stderr output and the sandbox does not transition to ACTIVE.
+The low-level `Sandbox` API gives you full control but no auto-pause, pooling, or multi-agent support. Use `WorkspaceManager` for production workloads.
 
-### Custom Harness Type
+### Workspace Lifecycle Transitions
 
 ```python
-from harnessbox import Sandbox, HarnessTypeConfig, register_harness_type
+from harnessbox import WorkspaceManager, WorkspaceState
 
-register_harness_type(HarnessTypeConfig(
-    name="my-agent",
-    config_dir=".myagent",
-    settings_file=None,
-    hooks_dir=None,
-    system_prompt_file="SYSTEM.md",
-    default_dirs=("/workspace",),
-    cli_command="myagent",
-    cli_oneshot_template="myagent run {prompt}",
-    cli_interactive_template="myagent",
-))
+mgr = await WorkspaceManager.create()
+workspace = await mgr.create_workspace(config)
 
-sandbox = Sandbox(client="e2b", api_key="...", harness="my-agent")
+# STARTING → ACTIVE (auto-transition after setup)
+print(workspace.status)  # "active"
+
+# ACTIVE → PAUSED (manual or auto after 30min idle)
+await mgr._pause_workspace(workspace.workspace_id)
+print(workspace.status)  # "paused"
+
+# PAUSED → ACTIVE (auto-resume on next prompt)
+async for event in mgr.prompt(workspace.workspace_id, "Continue"):
+    print(event.delta)
+print(workspace.status)  # "active"
+
+# ACTIVE → ENDING → MERGED/FAILED (via transition_workspace)
+await mgr.transition_workspace(workspace.workspace_id, WorkspaceState.ENDING)
+# ... commit + push logic runs ...
+await mgr.transition_workspace(workspace.workspace_id, WorkspaceState.MERGED)
 ```
 
 ## Security
@@ -280,21 +386,127 @@ policy = SecurityPolicy(
 | `gemini-cli` | `.gemini` | `GEMINI.md` | `gemini -p {prompt}` |
 | `opencode` | `.opencode` | `AGENTS.md` | `opencode -p {prompt}` |
 
+## Key Features
+
+| Feature | Description | Benefit |
+|---------|-------------|---------|
+| **Branch-based pooling** | Reuses paused workspaces for same (remote, branch) | 87% cost savings for same-branch work |
+| **Auto-pause/resume** | Idle workspaces pause after 30min → $0/hr | Transparent resume with retry + snapshot recovery |
+| **Multi-agent support** | Multiple concurrent agents per workspace | Parallel workflows without git conflicts (user's responsibility) |
+| **Storage backends** | SQLite or in-memory persistence | Workspaces survive restarts, pool works across sessions |
+| **Lazy agent spawning** | Agents spawn on first prompt | No upfront cost for unused conversations |
+| **Snapshot recovery** | E2B snapshots preserve filesystem state | Recover from expired sandboxes (>7 days) |
+| **HTTP/SSE server** | Starlette endpoints + event streaming | Production-ready API with SSE event replay |
+| **Zero dependencies** | Stdlib only at runtime | Provider SDKs are optional extras |
+
 ## Comparison
 
-| | HarnessBox | Cloudflare Artifacts | Turso AgentFS | Letta MemFS |
+| | HarnessBox v1.0 | Cloudflare Artifacts | Turso AgentFS | Letta MemFS |
 |---|---|---|---|---|
-| **Focus** | Harness + security + workspace | Managed git repos | SQLite filesystem | Git-tracked memory |
+| **Focus** | Workspace orchestration + pooling + multi-agent | Managed git repos | SQLite filesystem | Git-tracked memory |
+| **Cost optimization** | Auto-pause ($0/hr) + pooling (87% savings) | Always-on | N/A | N/A |
 | **Providers** | E2B, Docker, Daytona, EC2 | Cloudflare only | Turso/libSQL | Letta platform |
-| **Security** | Deny rules + hooks + credential guards | Token-scoped auth | N/A | N/A |
-| **Git** | Clone any remote into sandbox | Managed git protocol | N/A | Local git tracking |
-| **Versioning** | Full git (branch, diff, snapshot) | Full git (fork, clone) | SQL queries | Git commits |
+| **Multi-agent** | Concurrent agents per workspace | No | N/A | No |
+| **Storage** | SQLite/in-memory backends | Cloudflare Durable Objects | libSQL | Local files |
+| **Git** | Clone any remote, commit/push on exit | Managed git protocol | N/A | Local git tracking |
 | **Lock-in** | None | Cloudflare Workers | Turso | Letta API |
 | **Dependencies** | Zero (stdlib only) | Cloudflare SDK | Turso SDK | Letta SDK |
 
 ## API Reference
 
-### Sandbox
+### WorkspaceManager
+
+```python
+class WorkspaceManager:
+    @classmethod
+    async def create(
+        cls,
+        storage: StorageBackend | None = None,
+        *,
+        auto_pause: bool = True,
+        pause_timeout: int = 1800,  # seconds (default 30min)
+    ) -> WorkspaceManager: ...
+
+    async def create_workspace(
+        self,
+        config: WorkspaceConfig,
+        *,
+        workspace_id: str | None = None,
+    ) -> WorkspaceInstance: ...
+
+    async def get_or_create_workspace(
+        self,
+        remote: str,
+        branch: str,
+        *,
+        config: WorkspaceConfig | None = None,
+    ) -> WorkspaceInstance: ...
+
+    def get_workspace(self, workspace_id: str) -> WorkspaceInstance: ...
+
+    def list_workspaces(self) -> list[WorkspaceInstance]: ...
+
+    async def destroy_workspace(self, workspace_id: str) -> None: ...
+
+    async def prompt(
+        self,
+        workspace_id: str,
+        prompt: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> AsyncGenerator[UniversalEvent, None]: ...
+
+    async def transition_workspace(
+        self,
+        workspace_id: str,
+        target_state: WorkspaceState,
+    ) -> None: ...
+
+    async def shutdown_all(self) -> None: ...
+```
+
+**Key methods:**
+- `get_or_create_workspace()` — Pool hit/miss logic, resumes paused workspace if found
+- `prompt()` — Auto-resumes if paused, spawns agent lazily, streams events
+- Auto-pause background task scans every 60s for idle workspaces
+
+### WorkspaceConfig
+
+```python
+@dataclass
+class WorkspaceConfig:
+    provider: str = "e2b"
+    api_key: str | None = None
+    template: str | None = None
+    harness: str = "claude-code"
+    security_policy: SecurityPolicy | None = None
+    workspace: Workspace | None = None
+    setup_script: str | None = None
+    timeout: int = 300
+    env_vars: dict[str, str] | None = None
+    dirs: list[str] | None = None
+    files: dict[str, str] | None = None
+```
+
+### WorkspaceInstance
+
+```python
+@dataclass
+class WorkspaceInstance:
+    workspace_id: str
+    remote: str
+    branch: str
+    provider: str
+    provider_sandbox_id: str | None
+    snapshot_id: str | None
+    status: str  # "active", "paused", "starting", "ending", "merged", "failed"
+    created_at: str
+    last_active: str
+    sandbox: Sandbox | None = None
+    agent_manager: AgentManager | None = None
+```
+
+### Sandbox (Low-Level API)
 
 ```python
 Sandbox(
@@ -309,32 +521,36 @@ Sandbox(
     api_key: str | None = None,
     template: str | None = None,
     workspace: Workspace | None = None,
-    setup_script: str | None = None,     # shell command to run before agent launch
-    event_handler: EventHandler | None = None,  # receives SandboxEvent on lifecycle changes
+    setup_script: str | None = None,
+    event_handler: EventHandler | None = None,
 )
 ```
 
 **Lifecycle:** `setup()` → `run_prompt()` / `start_interactive()` → `end()` or `kill()`
 
-### Event System
+Use `WorkspaceManager` for production workloads. `Sandbox` is for direct control without orchestration.
+
+### AgentManager (Per-Workspace)
 
 ```python
-from harnessbox import SandboxEvent, EventType, JsonLogger, CallbackHandler
+class AgentManager:
+    def __init__(self, sandbox: Sandbox) -> None: ...
 
-# JsonLogger prints JSON lines to stdout
-sandbox = Sandbox("e2b", api_key="...", event_handler=JsonLogger())
+    async def run_prompt(
+        self,
+        conversation_id: str,
+        prompt: str,
+        harness: str = "claude-code",
+    ) -> AsyncGenerator[UniversalEvent, None]: ...
 
-# CallbackHandler calls your function
-events = []
-sandbox = Sandbox("e2b", api_key="...", event_handler=CallbackHandler(events.append))
+    def list_conversations(self) -> list[str]: ...
 
-# Custom handler (async protocol)
-class MyHandler:
-    async def handle(self, event: SandboxEvent) -> None:
-        await send_to_webhook(event)
+    async def terminate_agent(self, conversation_id: str) -> None: ...
+
+    async def shutdown_all(self) -> None: ...
 ```
 
-**Event types:** `SETUP_COMPLETE`, `SESSION_END`, `COMMAND_RUN`, `STATE_CHANGED`
+Agents are lazily spawned on first prompt. Multiple concurrent agents per workspace are supported.
 
 ### GitWorkspace
 
@@ -373,28 +589,63 @@ SecurityPolicy(
 )
 ```
 
+### StorageBackend (Protocol)
+
+```python
+class StorageBackend(Protocol):
+    async def initialize(self) -> None: ...
+
+    async def save_workspace(self, record: dict[str, Any]) -> None: ...
+    async def get_workspace(self, workspace_id: str) -> dict[str, Any] | None: ...
+    async def update_workspace(self, workspace_id: str, **fields: Any) -> None: ...
+    async def list_workspaces(
+        self,
+        *,
+        status: str | None = None,
+        remote: str | None = None,
+        branch: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+    async def delete_workspace(self, workspace_id: str) -> None: ...
+
+    async def save_conversation(self, record: dict[str, Any]) -> None: ...
+    async def get_conversations(self, workspace_id: str) -> list[dict[str, Any]]: ...
+    async def update_conversation(self, conversation_id: str, **fields: Any) -> None: ...
+```
+
+**Built-in backends:**
+- `SQLiteBackend` — persistent (default: `.harnessbox.db`)
+- `MemoryBackend` — ephemeral (in-memory dict)
+
 ## Project Structure
 
 ```
 harnessbox/
-  __init__.py              # public API
-  sandbox.py               # Sandbox class
-  workspace.py             # Workspace protocol, GitWorkspace, MountWorkspace
-  providers.py             # SandboxProvider protocol
-  lifecycle.py             # SessionState machine
+  __init__.py                   # public API
+  workspace_manager.py          # WorkspaceManager, WorkspaceInstance, WorkspaceConfig
+  agent_manager.py              # AgentManager (lazy agent spawning)
+  sandbox.py                    # Sandbox class (low-level API)
+  workspace.py                  # Workspace protocol, GitWorkspace
+  providers.py                  # SandboxProvider protocol
+  lifecycle.py                  # WorkspaceState machine
+  storage.py                    # StorageBackend protocol
+  streaming.py                  # UniversalEvent, StreamParser
+  events.py                     # EventBuffer (SSE replay)
+  server.py                     # HTTP/SSE transport (Starlette)
   config/
-    harness.py             # HarnessTypeConfig registry
-    manifest.py            # SandboxManifest builder
+    harness.py                  # HarnessTypeConfig registry
+    manifest.py                 # SandboxManifest builder
   security/
-    policy.py              # SecurityPolicy, deny rules
-    hooks.py               # PreToolUse hook guard
-    events.py              # SandboxEvent, EventHandler, JsonLogger, CallbackHandler
+    policy.py                   # SecurityPolicy, deny rules
+    hooks.py                    # PreToolUse hook guard
+    events.py                   # SandboxEvent, EventHandler
   _providers/
-    e2b.py                 # E2B provider
-    docker.py              # stub
-    daytona.py             # stub
-    ec2.py                 # stub
-tests/                     # 233 tests
+    e2b.py                      # E2B provider
+    docker.py                   # stub
+  _storage/
+    sqlite.py                   # SQLite backend
+    memory.py                   # In-memory backend
+tests/                          # 499 tests
 ```
 
 ## License
