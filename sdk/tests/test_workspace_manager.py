@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
-from harnessbox.lifecycle import InvalidTransitionError
+from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
 from .conftest import MockProvider
@@ -236,3 +239,132 @@ class TestFindByRepoBranch:
 
         result = mgr.find_by_repo_branch("https://github.com/other/repo.git", "main")
         assert result is None
+
+
+class TestWorkspacePooling:
+    """Test branch-based workspace pooling."""
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_creates_when_no_match(self):
+        """Should create new workspace when no paused workspace matches."""
+        from harnessbox.workspace import GitWorkspace
+
+        mgr = WorkspaceManager()
+        workspace = GitWorkspace(
+            remote="https://github.com/user/repo.git",
+            branch="main",
+        )
+        config = WorkspaceConfig(workspace=workspace)
+
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
+             patch("harnessbox.workspace_manager.AgentManager"):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance._skip_permissions = False
+            instance._cwd = "/workspace"
+            instance._workspace = workspace
+
+            result = await mgr.get_or_create_workspace(
+                "https://github.com/user/repo.git",
+                "main",
+                config=config,
+            )
+
+        assert result.remote == "https://github.com/user/repo.git"
+        assert result.branch == "main"
+        assert result.status == WorkspaceState.ACTIVE.value
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_resumes_paused_in_memory(self):
+        """Should resume paused workspace if found in memory."""
+        from harnessbox.workspace import GitWorkspace
+
+        mgr = WorkspaceManager()
+        workspace = GitWorkspace(
+            remote="https://github.com/user/repo.git",
+            branch="main",
+        )
+        config = WorkspaceConfig(workspace=workspace)
+
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
+             patch("harnessbox.workspace_manager.AgentManager") as MockAgentManager:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.pause = AsyncMock(return_value="paused-id")
+            instance.resume = AsyncMock()
+            instance.create_snapshot = AsyncMock(return_value="snapshot-123")
+            instance._skip_permissions = False
+            instance._cwd = "/workspace"
+            instance._workspace = workspace
+
+            agent_mgr_instance = MockAgentManager.return_value
+            agent_mgr_instance.shutdown_all = AsyncMock()
+
+            # Create workspace
+            info = await mgr.create_workspace(config, workspace_id="w-1")
+
+            # Pause it
+            await mgr._pause_workspace("w-1")
+            assert info.status == WorkspaceState.PAUSED.value
+
+            # Pool hit: get_or_create should resume
+            result = await mgr.get_or_create_workspace(
+                info.remote,
+                info.branch,
+                config=config,
+            )
+
+        assert result.workspace_id == "w-1"
+        assert result.status == WorkspaceState.ACTIVE.value
+        instance.resume.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_requires_config_when_no_match(self):
+        """Should raise ValueError if no match found and config is None."""
+        mgr = WorkspaceManager()
+
+        with pytest.raises(ValueError, match="No paused workspace found"):
+            await mgr.get_or_create_workspace(
+                "https://github.com/user/repo.git",
+                "main",
+                config=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_loads_from_storage_when_not_in_memory(self):
+        """Should hydrate and resume workspace from storage if not in memory."""
+        from harnessbox._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=False)
+
+        # Add a paused workspace directly to storage (not in memory)
+        await storage.save_workspace({
+            "workspace_id": "w-storage",
+            "remote": "https://github.com/user/repo.git",
+            "branch": "feature-branch",
+            "provider": "e2b",
+            "provider_sandbox_id": "storage-sandbox",
+            "snapshot_id": "storage-snapshot",
+            "harness": "claude-code",
+            "status": WorkspaceState.PAUSED.value,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active": datetime.now(timezone.utc).isoformat(),
+            "config_json": '{"timeout": 300, "skip_permissions": false}',
+        })
+
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
+             patch("harnessbox.workspace_manager.AgentManager"):
+            instance = MockSandbox.return_value
+            instance.resume = AsyncMock()
+
+            # Pool hit from storage: should hydrate and resume
+            result = await mgr.get_or_create_workspace(
+                "https://github.com/user/repo.git",
+                "feature-branch",
+            )
+
+        assert result.workspace_id == "w-storage"
+        assert result.status == WorkspaceState.ACTIVE.value
+        instance.resume.assert_called_once_with("storage-sandbox")

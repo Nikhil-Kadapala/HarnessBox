@@ -454,6 +454,116 @@ class WorkspaceManager:
                 return info
         return None
 
+    async def get_or_create_workspace(
+        self,
+        remote: str,
+        branch: str,
+        *,
+        config: WorkspaceConfig | None = None,
+        workspace_id: str | None = None,
+    ) -> WorkspaceInstance:
+        """Get existing paused workspace or create new one.
+
+        Searches for PAUSED workspace matching (remote, branch). If found,
+        resumes it. Otherwise creates new workspace.
+
+        Args:
+            remote: Git remote URL
+            branch: Git branch name
+            config: WorkspaceConfig (required if creating new workspace)
+            workspace_id: Optional workspace_id for new workspace
+
+        Returns:
+            WorkspaceInstance (either resumed or newly created)
+
+        Raises:
+            ValueError: If no match found and config is None
+        """
+        # Check in-memory pool first
+        for info in self._workspaces.values():
+            if (
+                info.status == WorkspaceState.PAUSED.value
+                and info.remote == remote
+                and info.branch == branch
+            ):
+                logger.info(f"Pool hit: resuming workspace {info.workspace_id} for {remote}@{branch}")
+                await self._resume_workspace(info.workspace_id)
+                return info
+
+        # Check storage (historical paused workspaces)
+        if self._storage:
+            candidates = await self._storage.list_workspaces(
+                status=WorkspaceState.PAUSED.value,
+                remote=remote,
+                branch=branch,
+                limit=1,
+            )
+            if candidates:
+                record = candidates[0]
+                wid = record["workspace_id"]
+
+                logger.info(f"Pool hit from storage: hydrating workspace {wid} for {remote}@{branch}")
+
+                # Hydrate workspace instance
+                info = await self._hydrate_workspace(record)
+                self._workspaces[wid] = info
+                self._locks[wid] = asyncio.Lock()
+
+                await self._resume_workspace(wid)
+                return info
+
+        # No match, create new
+        if config is None:
+            raise ValueError(
+                f"No paused workspace found for {remote}@{branch} and config not provided. "
+                "Cannot create new workspace."
+            )
+
+        logger.info(f"Pool miss: creating new workspace for {remote}@{branch}")
+        return await self.create_workspace(config, workspace_id=workspace_id)
+
+    async def _hydrate_workspace(self, record: dict[str, Any]) -> WorkspaceInstance:
+        """Recreate WorkspaceInstance from storage record.
+
+        Note: Does NOT call setup() — sandbox already exists, will resume on demand.
+        """
+        # Parse config_json
+        config_dict = json.loads(record.get("config_json", "{}"))
+
+        # Recreate Sandbox (will resume on first use)
+        sandbox = Sandbox(
+            client=record["provider"],
+            harness=record["harness"],
+            timeout=config_dict.get("timeout", 300),
+            skip_permissions=config_dict.get("skip_permissions", False),
+            template=config_dict.get("template"),
+        )
+        # IMPORTANT: Do not call sandbox.setup() — sandbox already exists
+
+        # Create AgentManager
+        agent_mgr = AgentManager(sandbox)
+
+        return WorkspaceInstance(
+            workspace_id=record["workspace_id"],
+            remote=record.get("remote", ""),
+            branch=record.get("branch", ""),
+            provider=record["provider"],
+            provider_sandbox_id=record.get("provider_sandbox_id"),
+            snapshot_id=record.get("snapshot_id"),
+            status=record["status"],
+            created_at=record["created_at"],
+            last_active=record.get("last_active", record["created_at"]),
+            harness=record["harness"],
+            sandbox=sandbox,
+            agent_manager=agent_mgr,
+            workspace_name=record.get("workspace_name"),
+            base_branch=record.get("base_branch"),
+            pr_url=record.get("pr_url"),
+            pr_number=record.get("pr_number"),
+            ci_status=record.get("ci_status"),
+            total_cost_usd=record.get("total_cost_usd", 0.0),
+        )
+
     def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace to a new state with validation.
 
