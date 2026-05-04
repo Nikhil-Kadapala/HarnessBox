@@ -13,7 +13,8 @@ Endpoints:
     GET    /v1/sessions/{id}         — get session info
     DELETE /v1/sessions/{id}         — destroy session
     POST   /v1/sessions/{id}/prompt  — send prompt, SSE response
-    GET    /v1/sessions/{id}/events  — subscribe to events (SSE)
+    GET    /v1/sessions/{id}/events  — subscribe to live events (SSE)
+    GET    /v1/sessions/{id}/history — stream historical events from storage
     POST   /v1/sessions/{id}/permission — respond to permission request
 """
 
@@ -36,8 +37,9 @@ except ImportError as e:
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
-from harnessbox.lifecycle import InvalidTransitionError, SessionState
-from harnessbox.session import SessionConfig, SessionManager, SessionNotFoundError
+from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState
+from harnessbox.storage import StorageBackend
+from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
 logger = logging.getLogger("harnessbox.server")
@@ -226,13 +228,61 @@ class PermissionRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def create_app(*, manager: SessionManager | None = None) -> FastAPI:
-    """Create a FastAPI app wired to the given SessionManager."""
-    mgr = manager or SessionManager()
+def create_app(
+    *,
+    manager: WorkspaceManager | None = None,
+    storage: str | StorageBackend | None = None,
+) -> FastAPI:
+    """Create a FastAPI app with optional persistent storage.
+
+    Args:
+        manager: Existing WorkspaceManager instance (or None to create).
+        storage: Storage backend name ("memory", "sqlite") or instance.
+                 If None, sessions are in-memory only (lost on restart).
+
+    Returns:
+        FastAPI app ready to run with uvicorn.
+
+    Example:
+        >>> app = create_app(storage="sqlite")
+        >>> # OR
+        >>> from harnessbox._storage import get_storage_backend
+        >>> backend_cls = get_storage_backend("sqlite")
+        >>> storage = backend_cls(path="~/.harnessbox/sessions.db")
+        >>> app = create_app(storage=storage)
+    """
+    # Resolve storage backend by name if string
+    resolved_storage: StorageBackend | None = None
+    if isinstance(storage, str):
+        from harnessbox._storage import get_storage_backend
+
+        backend_cls = get_storage_backend(storage)
+        resolved_storage = backend_cls()
+    elif storage is not None:
+        resolved_storage = storage
+
+    # If manager provided, use it; otherwise create one with storage
+    if manager is not None:
+        mgr = manager
+    else:
+        # Create manager synchronously, initialize in lifespan
+        mgr = WorkspaceManager(storage=resolved_storage)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        # Initialize storage and load sessions
+        if mgr._storage:
+            await mgr._storage.initialize()
+            await mgr.load_sessions()
+            logger.info("Storage initialized and sessions loaded")
+
         yield
+
+        # Shutdown: close storage
+        if mgr._storage:
+            await mgr._storage.close()
+            logger.info("Storage closed")
+
         await mgr.shutdown_all()
 
     app = FastAPI(
@@ -456,7 +506,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
                 session_timeout,
             )
 
-        config = SessionConfig(
+        config = WorkspaceConfig(
             provider=req.provider,
             api_key=api_key,
             harness=req.harness,
@@ -471,7 +521,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             session_timeout=session_timeout,
         )
         try:
-            info = await mgr.create_session(config, session_id=req.session_id)
+            info = await mgr.create_workspace(config, workspace_id=req.session_id)
         except Exception as exc:
             logger.exception("Failed to create session")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -479,7 +529,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
     def _session_response(info: Any) -> SessionResponse:
         return SessionResponse(
-            session_id=info.session_id,
+            session_id=info.workspace_id,
             harness=info.harness,
             status=info.status,
             created_at=info.created_at,
@@ -495,29 +545,29 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
     @app.get("/v1/sessions", response_model=list[SessionResponse])
     async def list_sessions() -> list[SessionResponse]:
-        return [_session_response(s) for s in mgr.list_sessions()]
+        return [_session_response(s) for s in mgr.list_workspaces()]
 
     @app.get("/v1/sessions/{session_id}", response_model=SessionResponse)
     async def get_session(session_id: str) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return _session_response(info)
 
     @app.delete("/v1/sessions/{session_id}", status_code=204)
     async def destroy_session(session_id: str) -> Response:
         try:
-            await mgr.destroy_session(session_id)
-        except SessionNotFoundError as exc:
+            await mgr.destroy_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
         return Response(status_code=204)
 
     @app.post("/v1/sessions/{session_id}/pause", response_model=SessionResponse)
     async def pause_session(session_id: str) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         if info.status not in ("active", "streaming"):
@@ -527,7 +577,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
         try:
             # Only call sandbox.pause() if not already paused at sandbox level
-            if info.sandbox._state == SessionState.ACTIVE:
+            if info.sandbox._state == WorkspaceState.ACTIVE:
                 # Stop agent process before pausing sandbox
                 if info.sandbox._agent_process:
                     try:
@@ -537,7 +587,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
                     info.sandbox._agent_process = None
                 # Pause sandbox and store ID for resume
                 info.sandbox._paused_sandbox_id = await info.sandbox.pause()
-            info.status = SessionState.PAUSED.value
+            info.status = WorkspaceState.PAUSED.value
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -546,8 +596,8 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/resume", response_model=SessionResponse)
     async def resume_session(session_id: str) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         if info.status != "paused":
@@ -557,25 +607,25 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
         # Set status to active. The actual sandbox resume + agent restart
         # happens lazily in _ensure_agent_ready() on the next prompt.
-        info.status = SessionState.ACTIVE.value
+        info.status = WorkspaceState.ACTIVE.value
         return _session_response(info)
 
     @app.post("/v1/sessions/{session_id}/stop", status_code=204)
     async def stop_session(session_id: str) -> Response:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         await info.sandbox.kill()
-        info.status = SessionState.FAILED.value
+        info.status = WorkspaceState.FAILED.value
         return Response(status_code=204)
 
     @app.post("/v1/sessions/{session_id}/rename", response_model=SessionResponse)
     async def rename_session(session_id: str, req: RenameRequest) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         workspace = info.sandbox._workspace
@@ -597,8 +647,8 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/pr", response_model=SessionResponse)
     async def create_pr(session_id: str, req: PRRequest) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         workspace = info.sandbox._workspace
@@ -618,7 +668,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
         info.pr_url = result.get("url")
         # Transition to in_review
         try:
-            mgr.transition_session(session_id, "in_review")
+            mgr.transition_workspace(session_id, "in_review")
         except Exception:
             pass
 
@@ -627,8 +677,8 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/pr/refresh", response_model=SessionResponse)
     async def refresh_pr_status(session_id: str) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         workspace = info.sandbox._workspace
@@ -651,7 +701,7 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
             info.pr_number = pr_data.get("number")
             if pr_data.get("merged"):
                 try:
-                    mgr.transition_session(session_id, "merged")
+                    mgr.transition_workspace(session_id, "merged")
                 except Exception:
                     pass
 
@@ -662,19 +712,19 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/transition", response_model=SessionResponse)
     async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         try:
-            SessionState(req.target_state)
+            WorkspaceState(req.target_state)
         except ValueError as exc:
             raise HTTPException(
                 status_code=400, detail=f"Unknown state: {req.target_state}"
             ) from exc
 
         try:
-            info = mgr.transition_session(session_id, req.target_state)
+            info = mgr.transition_workspace(session_id, req.target_state)
         except InvalidTransitionError as exc:
             raise HTTPException(
                 status_code=409,
@@ -686,8 +736,8 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/stats", response_model=SessionStatsResponse)
     async def get_session_stats(session_id: str) -> SessionStatsResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         workspace = info.sandbox._workspace
@@ -715,8 +765,8 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         if info.status in _NON_PROMPTABLE:
@@ -759,10 +809,17 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/events")
     async def stream_events(session_id: str, request: Request) -> EventSourceResponse:
+        """Subscribe to live events from an active session (SSE)."""
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        if info.sandbox is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Session is view-only (loaded from storage). Use GET /v1/sessions/{id}/history for historical events.",
+            )
 
         last_event_id_str = request.headers.get("last-event-id")
         last_seq = int(last_event_id_str) if last_event_id_str else None
@@ -777,11 +834,67 @@ def create_app(*, manager: SessionManager | None = None) -> FastAPI:
 
         return EventSourceResponse(event_generator(), ping=15)
 
+    @app.get("/v1/sessions/{session_id}/history")
+    async def stream_history(
+        session_id: str,
+        after_sequence: int = 0,
+        limit: int | None = None,
+    ) -> EventSourceResponse:
+        """Stream historical events from storage (incremental, O(1) memory).
+
+        Args:
+            session_id: Session whose history to retrieve.
+            after_sequence: Only return events with sequence > this value.
+            limit: Maximum number of events to return (None = unlimited).
+
+        Returns:
+            SSE stream with NDJSON events.
+
+        Note:
+            This endpoint streams from storage, not the live ring buffer.
+            For active sessions, use GET /v1/sessions/{id}/events instead.
+        """
+        # Check if session exists
+        try:
+            mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError:
+            # Session not in memory — might still be in storage
+            if not mgr._storage:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Session not found and no storage enabled",
+                )
+
+        if not mgr._storage:
+            raise HTTPException(
+                status_code=400,
+                detail="Storage not enabled. Historical events not available.",
+            )
+
+        async def event_generator() -> Any:
+            async for event_record in mgr._storage.get_events(
+                session_id, after_sequence=after_sequence, limit=limit
+            ):
+                # Deserialize event_json
+                try:
+                    event_data = json.loads(event_record["event_json"])
+                    yield {
+                        "event": "message",
+                        "id": str(event_record["sequence"]),
+                        "data": json.dumps(event_data),
+                    }
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"Malformed event_json for event {event_record['event_id']}: {e}"
+                    )
+
+        return EventSourceResponse(event_generator(), ping=15)
+
     @app.post("/v1/sessions/{session_id}/permission")
     async def respond_permission(session_id: str, req: PermissionRequest) -> dict[str, str]:
         try:
-            info = mgr.get_session(session_id)
-        except SessionNotFoundError as exc:
+            info = mgr.get_workspace(session_id)
+        except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
         agent_process = info.sandbox._agent_process
         if not agent_process:

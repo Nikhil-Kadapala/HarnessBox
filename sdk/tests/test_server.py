@@ -8,23 +8,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 from harnessbox.server import create_app
-from harnessbox.session import SessionManager
+from harnessbox.workspace_manager import WorkspaceManager
 
 
 @pytest.fixture
-def manager() -> SessionManager:
-    return SessionManager()
+def manager() -> WorkspaceManager:
+    return WorkspaceManager()
 
 
 @pytest.fixture
-def client(manager: SessionManager) -> TestClient:
+def client(manager: WorkspaceManager) -> TestClient:
     app = create_app(manager=manager)
     return TestClient(app)
 
 
 class TestCreateSession:
     def test_create_session(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
@@ -48,7 +48,7 @@ class TestListSessions:
         assert resp.json() == []
 
     def test_list_with_sessions(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             client.post("/v1/sessions", json={"session_id": "s-1"})
@@ -62,7 +62,7 @@ class TestListSessions:
 
 class TestGetSession:
     def test_get_existing(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             client.post("/v1/sessions", json={"session_id": "s-1"})
@@ -78,7 +78,7 @@ class TestGetSession:
 
 class TestDestroySession:
     def test_destroy_existing(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
@@ -166,7 +166,7 @@ class TestCORS:
 
 class TestCreateSessionExpanded:
     def test_with_security_policy(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
@@ -185,7 +185,7 @@ class TestCreateSessionExpanded:
         assert resp.status_code == 201
 
     def test_with_workspace(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
@@ -234,7 +234,7 @@ class TestPromptSession:
         assert resp.status_code == 404
 
     def test_prompt_missing_prompt(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             client.post("/v1/sessions", json={"session_id": "s-1"})
@@ -245,7 +245,7 @@ class TestPromptSession:
 
 class TestPauseSession:
     def test_pause_active_session(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
@@ -255,8 +255,8 @@ class TestPauseSession:
         assert resp.status_code == 200
         assert resp.json()["status"] == "paused"
 
-    def test_pause_non_active_returns_409(self, client: TestClient, manager: SessionManager) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+    def test_pause_non_active_returns_409(self, client: TestClient, manager: WorkspaceManager) -> None:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-1")
@@ -275,7 +275,7 @@ class TestPauseSession:
 
 class TestResumeSession:
     def test_resume_paused_session(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
@@ -289,7 +289,7 @@ class TestResumeSession:
         assert resp.json()["status"] == "active"
 
     def test_resume_non_paused_returns_409(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             client.post("/v1/sessions", json={"session_id": "s-1"})
@@ -304,7 +304,7 @@ class TestResumeSession:
 
 class TestStopSession:
     def test_stop_session(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
@@ -320,7 +320,7 @@ class TestStopSession:
 
 class TestTransitionSession:
     def _create_active_session(self, client: TestClient, session_id: str = "s-1") -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             client.post("/v1/sessions", json={"session_id": session_id})
@@ -379,7 +379,7 @@ class TestTransitionSession:
 
 class TestRenameSession:
     def test_rename_session(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._workspace = None
@@ -408,7 +408,7 @@ class TestSessionStats:
         assert resp.status_code == 404
 
     def test_stats_returns_defaults_without_workspace(self, client: TestClient) -> None:
-        with patch("harnessbox.session.Sandbox") as MockSandbox:
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._workspace = None

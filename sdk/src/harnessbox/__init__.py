@@ -18,7 +18,7 @@ from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import (
     VALID_TRANSITIONS,
     InvalidTransitionError,
-    SessionState,
+    WorkspaceState,
     validate_transition,
 )
 from harnessbox.process import AgentProcess
@@ -62,7 +62,7 @@ __all__ = [
     "GUARD_CATALOG",
     "InvalidTransitionError",
     "SecurityPolicy",
-    "SessionState",
+    "WorkspaceState",
     "VALID_TRANSITIONS",
     "build_settings",
     "merge_guard_sets",

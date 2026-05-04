@@ -12,11 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-from harnessbox._utils.timing import timed_operation
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.manifest import build_manifest
 from harnessbox.events import EventBuffer
-from harnessbox.lifecycle import InvalidTransitionError, SessionState, validate_transition
+from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.process import AgentProcess
 from harnessbox.providers import CommandResult, SandboxProvider
 from harnessbox.security.events import EventHandler, EventType, SandboxEvent
@@ -122,6 +121,8 @@ class Sandbox:
         cwd: str | None = None,
         session_timeout: int = 900,
         session_lock: asyncio.Lock | None = None,
+        storage: Any = None,  # StorageBackend | None (TYPE_CHECKING import to avoid circular)
+        session_id: str = "",
     ) -> None:
         """Create a sandbox for running AI coding agents.
 
@@ -181,14 +182,14 @@ class Sandbox:
         self._dirs = list(dirs) if dirs else []
         self._files = self._resolve_files(files, self._harness_config.workspace_root)
         self._timeout = timeout
-        self._state = SessionState.STARTING
+        self._state = WorkspaceState.STARTING
         self._workspace = workspace
         self._setup_script = setup_script
         self._event_handler = event_handler
         self._skip_permissions = skip_permissions
         self._cwd = cwd or self._harness_config.workspace_root
         self._agent_session_id: str | None = None
-        self._event_buffer = EventBuffer()
+        self._event_buffer = EventBuffer(storage=storage, session_id=session_id)
         self._agent_process: AgentProcess | None = None
         self.unpushed_files: dict[str, str] | None = None
         self._session_timeout = session_timeout
@@ -328,7 +329,7 @@ class Sandbox:
         return self._provider.sandbox_id
 
     @property
-    def state(self) -> SessionState:
+    def state(self) -> WorkspaceState:
         return self._state
 
     @property
@@ -347,7 +348,7 @@ class Sandbox:
     # State management
     # ------------------------------------------------------------------
 
-    def _transition(self, target: SessionState) -> None:
+    def _transition(self, target: WorkspaceState) -> None:
         if not validate_transition(self._state, target):
             raise InvalidTransitionError(self._state, target)
         self._state = target
@@ -539,13 +540,13 @@ class Sandbox:
         total_time = time.time() - setup_start
         _log.info(f"setup_total took {total_time:.2f}s")
 
-        self._transition(SessionState.ACTIVE)
+        self._transition(WorkspaceState.ACTIVE)
         await self._emit_event(EventType.SETUP_COMPLETE, action="setup")
         await self._push_lifecycle_event(StreamEventType.SESSION_STARTED)
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
-        if self._state in (SessionState.MERGED, SessionState.FAILED):
+        if self._state in (WorkspaceState.MERGED, WorkspaceState.FAILED):
             return
         if self._agent_process:
             try:
@@ -564,17 +565,17 @@ class Sandbox:
         try:
             await self._provider.kill()
         finally:
-            self._state = SessionState.FAILED
+            self._state = WorkspaceState.FAILED
 
     async def pause(self) -> str:
         """Pause the sandbox, preserving state. Returns sandbox_id."""
-        self._transition(SessionState.PAUSED)
+        self._transition(WorkspaceState.PAUSED)
         return await self._provider.pause()
 
     async def resume(self, sandbox_id: str) -> None:
         """Resume a paused sandbox."""
         await self._provider.resume(sandbox_id)
-        self._transition(SessionState.ACTIVE)
+        self._transition(WorkspaceState.ACTIVE)
 
     # -- Idle timer --
 
@@ -597,7 +598,7 @@ class Sandbox:
             await self._do_idle_pause()
 
     async def _do_idle_pause(self) -> None:
-        if self._state != SessionState.ACTIVE:
+        if self._state != WorkspaceState.ACTIVE:
             return
         _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
         if self._agent_process:
@@ -610,7 +611,7 @@ class Sandbox:
 
     async def end(self) -> None:
         """Gracefully end the session."""
-        self._transition(SessionState.ENDING)
+        self._transition(WorkspaceState.ENDING)
         if self._agent_process:
             try:
                 await self._agent_process.stop()
@@ -622,7 +623,7 @@ class Sandbox:
             if hasattr(self._workspace, "push_error") and self._workspace.push_error:
                 await self._recover_unpushed_files()
         await self._provider.kill()
-        self._state = SessionState.MERGED
+        self._state = WorkspaceState.MERGED
         await self._emit_event(EventType.SESSION_END, action="end")
         await self._push_lifecycle_event(StreamEventType.SESSION_ENDED)
         await self._event_buffer.close()
@@ -659,10 +660,10 @@ class Sandbox:
         For typed stream events, use ``run_prompt_events()`` instead.
         Automatically resumes the previous session if one exists.
         """
-        if self._state != SessionState.ACTIVE:
+        if self._state != WorkspaceState.ACTIVE:
             hint = (
                 " Call 'await sandbox.setup()' first."
-                if self._state == SessionState.STARTING
+                if self._state == WorkspaceState.STARTING
                 else ""
             )
             raise RuntimeError(
@@ -692,7 +693,7 @@ class Sandbox:
         Handles first start, restart after idle-pause, and restart after
         sandbox timeout (agent process died, sandbox auto-resumed by E2B).
         """
-        if self._state == SessionState.PAUSED and self._paused_sandbox_id:
+        if self._state == WorkspaceState.PAUSED and self._paused_sandbox_id:
             _log.info("Resuming paused sandbox %s", self._paused_sandbox_id)
             await self.resume(self._paused_sandbox_id)
             self._paused_sandbox_id = None
@@ -792,7 +793,7 @@ class Sandbox:
 
                 # Transition to FAILED state
                 try:
-                    self._transition(SessionState.FAILED)
+                    self._transition(WorkspaceState.FAILED)
                 except InvalidTransitionError as transition_err:
                     # Already in a terminal state (FAILED or MERGED), that's fine
                     _log.debug(
@@ -876,10 +877,10 @@ class Sandbox:
         structured conversations, use repeated ``run_prompt_events()``
         calls instead (automatic ``--resume`` support).
         """
-        if self._state != SessionState.ACTIVE:
+        if self._state != WorkspaceState.ACTIVE:
             hint = (
                 " Call 'await sandbox.setup()' first."
-                if self._state == SessionState.STARTING
+                if self._state == WorkspaceState.STARTING
                 else ""
             )
             raise RuntimeError(
