@@ -97,6 +97,17 @@ class E2BProvider:
             api_key=self._api_key,
         )
 
+    async def create_snapshot(self) -> str:
+        """Create a snapshot of the sandbox's current filesystem state.
+
+        Returns:
+            snapshot_id for later restoration
+        """
+        if self._sandbox is None:
+            raise RuntimeError("Sandbox not running")
+        snapshot = await self._sandbox.create_snapshot()
+        return snapshot.snapshot_id
+
     # -- File I/O --
 
     async def write_file(self, path: str, content: str) -> None:

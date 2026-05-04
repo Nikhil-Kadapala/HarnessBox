@@ -577,6 +577,14 @@ class Sandbox:
         await self._provider.resume(sandbox_id)
         self._transition(WorkspaceState.ACTIVE)
 
+    async def create_snapshot(self) -> str:
+        """Create a snapshot of the sandbox's current filesystem state.
+
+        Returns:
+            snapshot_id for later restoration
+        """
+        return await self._provider.create_snapshot()
+
     # -- Idle timer --
 
     def _start_idle_timer(self) -> None:

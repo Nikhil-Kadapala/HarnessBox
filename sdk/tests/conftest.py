@@ -55,6 +55,11 @@ class MockProvider:
         self._sandbox_id = sandbox_id
         self._running = True
 
+    async def create_snapshot(self) -> str:
+        if not self._running:
+            raise RuntimeError("Not running")
+        return f"snapshot-{self._sandbox_id}"
+
     async def write_file(self, path: str, content: str) -> None:
         self._files[path] = content
 

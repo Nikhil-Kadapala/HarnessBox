@@ -24,7 +24,7 @@ Issues = "https://github.com/Nikhil-Kadapala/HarnessBox/issues"
 
 [project.optional-dependencies]
 e2b = ["e2b>=1.0.0"]
-server = ["fastapi>=0.100.0", "sse-starlette>=1.0.0", "uvicorn>=0.20.0"]
+server = ["fastapi>=0.100.0", "sse-starlette>=1.0.0", "uvicorn>=0.20.0", "tenacity>=8.0.0"]
 
 [dependency-groups]
 dev = [

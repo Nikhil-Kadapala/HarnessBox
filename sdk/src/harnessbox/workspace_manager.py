@@ -37,6 +37,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Import tenacity for retry logic (optional dependency)
+try:
+    from tenacity import (
+        retry,
+        stop_after_attempt,
+        wait_exponential,
+        retry_if_exception_type,
+    )
+
+    TENACITY_AVAILABLE = True
+except ImportError:
+    TENACITY_AVAILABLE = False
+
+# Import E2B exceptions for retry detection
+try:
+    from e2b.exceptions import TimeoutException
+    from e2b_connect.client import ConnectException
+except ImportError:
+
+    class TimeoutException(Exception):  # type: ignore
+        pass
+
+    class ConnectException(Exception):  # type: ignore
+        pass
+
 
 @dataclass
 class WorkspaceConfig:
@@ -518,14 +543,14 @@ class WorkspaceManager:
                 await info.agent_manager.shutdown_all()
 
             # Create snapshot (captures filesystem including ~/.claude/sessions/)
-            # TODO: Implement sandbox.create_snapshot() method
-            # snapshot_id = await info.sandbox.create_snapshot()
-            snapshot_id = None  # Placeholder until snapshot API is implemented
+            try:
+                snapshot_id = await info.sandbox.create_snapshot()
+            except Exception as e:
+                logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
+                snapshot_id = None
 
             # Pause sandbox
-            # TODO: Implement sandbox.pause() method
-            # provider_sandbox_id = await info.sandbox.pause()
-            provider_sandbox_id = info.sandbox.sandbox_id  # Placeholder
+            provider_sandbox_id = await info.sandbox.pause()
 
             info.provider_sandbox_id = provider_sandbox_id
             info.snapshot_id = snapshot_id
@@ -542,15 +567,86 @@ class WorkspaceManager:
 
             logger.info(f"Paused workspace {workspace_id}")
 
+    def _is_sandbox_expired(self, error: Exception) -> bool:
+        """Detect if error indicates sandbox no longer exists."""
+        error_str = str(error).lower()
+        return any(
+            pattern in error_str
+            for pattern in [
+                "sandbox was not found",
+                "404",
+                "not found",
+                "does not exist",
+            ]
+        )
+
+    async def _try_resume_sandbox(self, info: WorkspaceInstance) -> None:
+        """Attempt to resume sandbox with retries.
+
+        Raises TimeoutException or ConnectException if all retries fail.
+        """
+        if not info.sandbox or not info.provider_sandbox_id:
+            raise ValueError("Cannot resume: sandbox or provider_sandbox_id is None")
+
+        if TENACITY_AVAILABLE:
+            # Use tenacity retry decorator
+            @retry(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=2, max=10),
+                retry=retry_if_exception_type((TimeoutException, ConnectException)),
+            )
+            async def _resume_with_retry() -> None:
+                await info.sandbox.resume(info.provider_sandbox_id)  # type: ignore
+
+            await _resume_with_retry()
+        else:
+            # Fallback: simple retry without tenacity
+            for attempt in range(3):
+                try:
+                    await info.sandbox.resume(info.provider_sandbox_id)  # type: ignore
+                    return
+                except (TimeoutException, ConnectException) as e:
+                    if attempt == 2:  # Last attempt
+                        raise
+                    logger.warning(f"Resume attempt {attempt + 1} failed: {e}, retrying...")
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
     async def _resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace with transparent snapshot recovery."""
         info = self.get_workspace(workspace_id)
         if info.status != WorkspaceState.PAUSED.value:
             return
 
+        if not info.sandbox:
+            raise ValueError(
+                f"Workspace {workspace_id} is view-only (no live sandbox). "
+                "Cannot resume workspaces loaded from storage."
+            )
+
         async with self._locks[workspace_id]:
-            # TODO: Implement resume with retry logic
-            # For now, just mark as active
+            try:
+                # Try to resume with retries
+                await self._try_resume_sandbox(info)
+            except (TimeoutException, ConnectException) as e:
+                # Check if sandbox expired
+                if self._is_sandbox_expired(e):
+                    if not info.snapshot_id:
+                        raise ValueError(
+                            f"Workspace {workspace_id} expired and has no snapshot"
+                        ) from e
+
+                    # Create new sandbox from snapshot
+                    logger.warning(
+                        f"Sandbox {info.provider_sandbox_id} expired, recovering from snapshot {info.snapshot_id}"
+                    )
+                    # Note: This requires creating a new Sandbox instance from snapshot
+                    # For now, we re-raise. Full snapshot recovery requires provider support.
+                    raise ValueError(
+                        f"Snapshot recovery not yet implemented. Workspace {workspace_id} is unrecoverable."
+                    ) from e
+                else:
+                    raise
+
             info.status = WorkspaceState.ACTIVE.value
             info.last_active = datetime.now(timezone.utc).isoformat()
 
