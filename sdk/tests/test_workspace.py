@@ -113,7 +113,13 @@ class TestGitWorkspaceInject:
 
         cred_cmds = [c for c in cmds if "credential.helper" in c]
         assert len(cred_cmds) == 1
-        assert "ghp_test" in cred_cmds[0]
+        assert "store --file /workspace/.git-credentials" in cred_cmds[0]
+        assert "ghp_test" not in cred_cmds[0]
+
+        cred_file_cmds = [c for c in cmds if ".git-credentials" in c and "echo" in c]
+        assert len(cred_file_cmds) == 1
+        assert "ghp_test" in cred_file_cmds[0]
+        assert "chmod 600" in cred_file_cmds[0]
 
     @pytest.mark.asyncio
     async def test_clone_with_depth(self, git_provider):
@@ -328,7 +334,8 @@ class TestGitWorkspaceExtract:
         assert "rejected" in ws.push_error
 
     @pytest.mark.asyncio
-    async def test_auth_token_reinjected_for_push(self, git_provider):
+    async def test_push_uses_persisted_credentials(self, git_provider):
+        """Push relies on .git-credentials written during inject — no token in git config."""
         git_provider.set_git_response(
             "status --porcelain",
             CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
@@ -342,8 +349,13 @@ class TestGitWorkspaceExtract:
         await ws.extract(git_provider, "/workspace")
 
         cmds = git_provider._commands
-        cred_cmds = [c for c in cmds if "credential.helper" in c and "ghp_push_token" in c]
-        assert len(cred_cmds) >= 1
+        # Token should NOT appear in any git config command during push
+        cred_cmds = [c for c in cmds if "credential.helper" in c]
+        for cmd in cred_cmds:
+            assert "ghp_push_token" not in cmd
+        # Push should still be attempted
+        push_cmds = [c for c in cmds if "push" in c]
+        assert len(push_cmds) == 1
 
 
 class TestGitWorkspaceEvents:

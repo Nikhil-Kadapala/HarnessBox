@@ -23,6 +23,8 @@ from typing import Any
 
 
 class EventType(str, Enum):
+    """Types of universal stream events emitted during an agent session."""
+
     SESSION_STARTED = "session.started"
     SESSION_ENDED = "session.ended"
     TURN_STARTED = "turn.started"
@@ -37,6 +39,8 @@ class EventType(str, Enum):
 
 
 class ItemKind(str, Enum):
+    """Classification of stream items by their role in agent output."""
+
     MESSAGE = "message"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
@@ -45,12 +49,16 @@ class ItemKind(str, Enum):
 
 
 class ItemStatus(str, Enum):
+    """Lifecycle status of a stream item."""
+
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 class ToolKind(str, Enum):
+    """Category of tool invoked by the agent."""
+
     BASH = "bash"
     FILE_CHANGE = "file_change"
     FILE_READ = "file_read"
@@ -76,6 +84,7 @@ _TOOL_KIND_MAP: dict[str, ToolKind] = {
 
 
 def classify_tool(name: str) -> ToolKind:
+    """Map a tool name to its ToolKind category."""
     return _TOOL_KIND_MAP.get(name, ToolKind.OTHER)
 
 
@@ -86,6 +95,8 @@ def classify_tool(name: str) -> ToolKind:
 
 @dataclass(frozen=True)
 class ContentPart:
+    """A single content fragment within a UniversalEvent (text, tool call, file ref)."""
+
     type: str
     text: str | None = None
     tool_name: str | None = None
@@ -126,6 +137,7 @@ class UniversalEvent:
     raw: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the event to a JSON-compatible dictionary."""
         d: dict[str, Any] = {
             "event_id": self.event_id,
             "sequence": self.sequence,
@@ -192,6 +204,7 @@ class StreamParser:
 
     @property
     def session_id(self) -> str:
+        """Return the session ID discovered from the stream."""
         return self._session_id
 
     def parse(self, line: str) -> UniversalEvent | None:

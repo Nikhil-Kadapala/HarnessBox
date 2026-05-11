@@ -43,10 +43,12 @@ class AgentProcess:
 
     @property
     def is_running(self) -> bool:
+        """Return whether the agent process is currently running."""
         return self._running
 
     @property
     def pid(self) -> int | None:
+        """Return the PID of the running agent process, or None if not started."""
         return self._pid
 
     async def start(self, command: str, cwd: str) -> None:

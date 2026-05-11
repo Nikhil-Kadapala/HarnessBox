@@ -28,6 +28,12 @@ jobs:
       - name: Type check
         run: uv run mypy .
 
+      - name: Security scan
+        run: uv run bandit -r src/harnessbox/ -c pyproject.toml
+
+      - name: Dependency audit
+        run: uv run pip-audit
+
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -49,7 +55,7 @@ jobs:
         run: uv sync
 
       - name: Test with coverage
-        run: uv run pytest tests/ -v --cov=harnessbox --cov-report=xml --cov-report=term-missing
+        run: uv run pytest tests/ -v --cov=harnessbox --cov-report=xml --cov-report=term-missing --cov-fail-under=65
 
       - name: Upload coverage
         if: matrix.python-version == '3.12'

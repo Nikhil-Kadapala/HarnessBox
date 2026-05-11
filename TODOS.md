@@ -355,3 +355,23 @@ async def consult_claude(task: str, files: list[str]) -> str:
 **Design notes:** Should use a `ContentDetector` Protocol for pluggable detectors (regex built-in, Presidio NER optional). Unclear policy question: block? redact? log-only? Defer decision until real usage patterns emerge. User feedback during v0.2.0 review: "leave content filtering to users to decide."
 
 **Depends on:** v0.2.0 event system (shipped), user feedback on whether built-in scanning is wanted.
+
+## Documentation Site — Hosted API reference via Mintlify/Fern
+
+**What:** Build a documentation site (API reference, quickstart, guides) as part of the marketing/landing page using Mintlify or Fern.
+
+**Why:** Hosted docs are a trust signal for OSS adopters. Auto-generated API references from docstrings make the SDK discoverable beyond the README.
+
+**Design notes:**
+- Unified marketing + docs site (one deploy, one brand)
+- Mintlify/Fern handle versioning, search, and mobile out of the box
+- SDK already has comprehensive docstrings on all public APIs (enforced by CI via ruff D rules)
+- Input: Google-style docstrings in `src/harnessbox/` + README examples
+
+**Tradeoffs:**
+- Pro: Better design quality and DX than self-hosted MkDocs
+- Pro: Auto-generated API reference from existing docstrings
+- Con: Vendor dependency (Mintlify/Fern are SaaS, free tiers for OSS exist)
+- Con: Requires content structure decisions (domain, navigation, branding)
+
+**Depends on:** Docstring enforcement (shipped, ruff D rules in CI), marketing site design decisions.

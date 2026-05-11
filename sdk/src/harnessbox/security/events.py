@@ -36,13 +36,16 @@ class SandboxEvent:
 class EventHandler(Protocol):
     """Protocol for receiving sandbox events."""
 
-    async def handle(self, event: SandboxEvent) -> None: ...
+    async def handle(self, event: SandboxEvent) -> None:
+        """Handle a sandbox event asynchronously."""
+        ...
 
 
 class JsonLogger:
     """Prints each event as a JSON line to stdout."""
 
     async def handle(self, event: SandboxEvent) -> None:
+        """Serialize the event as JSON and print to stdout."""
         data = asdict(event)
         data["event_type"] = event.event_type.value
         print(json.dumps(data, default=str), file=sys.stdout, flush=True)
@@ -55,6 +58,7 @@ class CallbackHandler:
         self._callback = callback
 
     async def handle(self, event: SandboxEvent) -> None:
+        """Invoke the user-provided callback with the event."""
         result = self._callback(event)
         if hasattr(result, "__await__"):
             await result

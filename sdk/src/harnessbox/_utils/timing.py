@@ -1,7 +1,7 @@
 """Timing utilities for performance instrumentation."""
 
-import time
 import logging
+import time
 from functools import wraps
 from typing import Any, Callable, TypeVar
 

@@ -29,9 +29,13 @@ class GitStatus:
 class Workspace(Protocol):
     """Protocol for workspace backends that inject files into sandboxes."""
 
-    async def inject(self, provider: SandboxProvider, workspace_root: str) -> None: ...
+    async def inject(self, provider: SandboxProvider, workspace_root: str) -> None:
+        """Inject workspace files into the sandbox at the given root."""
+        ...
 
-    async def extract(self, provider: SandboxProvider, workspace_root: str) -> None: ...
+    async def extract(self, provider: SandboxProvider, workspace_root: str) -> None:
+        """Extract workspace state from the sandbox (e.g., commit and push)."""
+        ...
 
 
 EventCallback = Callable[..., Any]
@@ -215,7 +219,8 @@ class GitWorkspace:
                 "https://", f"https://x-access-token:{self._auth_token}@"
             )
             await provider.run_command(
-                f"echo '{cred_url}' > {cred_file}", cwd=workspace_root
+                f"echo '{cred_url}' > {cred_file} && chmod 600 {cred_file}",
+                cwd=workspace_root,
             )
             await self._run_git(
                 provider,
@@ -301,14 +306,23 @@ class GitWorkspace:
             raise _CloneError(f"git remote set-url failed: {result.stderr}", retryable=False)
 
         if self._auth_token:
-            helper_cmd = f"!printf 'username=x-access-token\\npassword={self._auth_token}\\n'"
+            cred_file = f"{workspace_root}/.git-credentials"
+            cred_url = self._clean_remote().replace(
+                "https://", f"https://x-access-token:{self._auth_token}@"
+            )
+            await provider.run_command(
+                f"echo '{cred_url}' > {cred_file} && chmod 600 {cred_file}",
+                cwd=workspace_root,
+            )
             result = await self._run_git(
                 provider,
-                f"config credential.helper '{helper_cmd}'",
+                f"config credential.helper 'store --file {cred_file}'",
                 cwd=workspace_root,
             )
             if result.exit_code != 0:
-                raise _CloneError(f"git config credential.helper failed: {result.stderr}", retryable=False)
+                raise _CloneError(
+                    f"git config credential.helper failed: {result.stderr}", retryable=False
+                )
 
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:
@@ -388,14 +402,6 @@ class GitWorkspace:
             sha = commit_result.stdout.strip().split()[-1] if commit_result.stdout else ""
             self._fire_event(self._on_commit, sha=sha, message=msg)
 
-        if self._auth_token:
-            helper_cmd = f"!printf 'username=x-access-token\\npassword={self._auth_token}\\n'"
-            await self._run_git(
-                provider,
-                f"config credential.helper '{helper_cmd}'",
-                cwd=workspace_root,
-            )
-
         push_result = await self._run_git(
             provider, f"push origin {self.branch}", cwd=workspace_root
         )
@@ -404,10 +410,6 @@ class GitWorkspace:
             self._fire_event(self._on_push_failure, error=push_result.stderr, branch=self.branch)
         else:
             self._fire_event(self._on_push_success, branch=self.branch)
-            if self._auth_token:
-                await self._run_git(
-                    provider, "config --unset credential.helper", cwd=workspace_root
-                )
 
     async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
         """Create a named snapshot (lightweight git tag) at the current state."""

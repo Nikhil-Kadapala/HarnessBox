@@ -5,6 +5,9 @@ description = "Sandbox security, workspace, and harness primitives for AI coding
 readme = "../README.md"
 requires-python = ">=3.12"
 license = "MIT"
+authors = [
+    { name = "Nikhil Kadapala", email = "kadapalanikhil@gmail.com" },
+]
 dependencies = []
 keywords = ["ai", "agents", "sandbox", "security", "claude-code", "e2b", "harness"]
 classifiers = [
@@ -34,6 +37,8 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "httpx",
+    "bandit",
+    "pip-audit",
     "fastapi>=0.100.0",
     "sse-starlette>=1.0.0",
     "uvicorn>=0.20.0",
@@ -51,8 +56,15 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "I", "W", "D101", "D102", "D103"]
 ignore = ["E501"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+"examples/**/*.py" = ["D"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -79,3 +91,20 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["harnessbox"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 65
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "src/harnessbox/security"]
+skips = ["B101", "B603", "B608"]

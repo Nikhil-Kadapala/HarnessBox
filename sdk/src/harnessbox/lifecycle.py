@@ -6,6 +6,8 @@ from enum import Enum
 
 
 class WorkspaceState(str, Enum):
+    """Valid states for a sandboxed workspace lifecycle."""
+
     BACKLOG = "backlog"
     STARTING = "starting"
     ACTIVE = "active"

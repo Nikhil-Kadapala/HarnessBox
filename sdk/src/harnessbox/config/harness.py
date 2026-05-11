@@ -40,6 +40,7 @@ class HarnessTypeConfig:
 
     @property
     def supports_persistent(self) -> bool:
+        """Return whether this harness supports persistent stdin/stdout mode."""
         return self.cli_input_format_flag is not None
 
     def build_persistent_command(

@@ -31,10 +31,10 @@ try:
 except ImportError:
     # Mock exceptions if E2B is not installed (for tests with MockProvider)
     class TimeoutException(Exception):  # type: ignore
-        pass
+        """Stub for e2b.exceptions.TimeoutException when E2B is not installed."""
 
     class ConnectException(Exception):  # type: ignore
-        pass
+        """Stub for e2b_connect.client.ConnectException when E2B is not installed."""
 
 _log = logging.getLogger("harnessbox.sandbox")
 
@@ -53,12 +53,15 @@ class InteractiveSession:
 
     @property
     def pid(self) -> int:
+        """Return the PTY process ID for this interactive session."""
         return self._pid
 
     async def send(self, message: str) -> None:
+        """Send a message (with trailing newline) to the agent's stdin."""
         await self._provider.pty_send(self._pid, (message + "\n").encode())
 
     async def stream_output(self) -> AsyncGenerator[bytes, None]:
+        """Yield raw terminal output bytes until the session closes."""
         while True:
             data = await self._queue.get()
             if data is None:
@@ -66,6 +69,7 @@ class InteractiveSession:
             yield data
 
     async def close(self) -> None:
+        """Kill the PTY process and signal end-of-stream."""
         await self._provider.pty_kill(self._pid)
         self._queue.put_nowait(None)
 
@@ -322,26 +326,32 @@ class Sandbox:
 
     @property
     def provider(self) -> SandboxProvider:
+        """Return the underlying sandbox provider instance."""
         return self._provider
 
     @property
     def sandbox_id(self) -> str | None:
+        """Return the provider's sandbox ID, or None if not yet created."""
         return self._provider.sandbox_id
 
     @property
     def state(self) -> WorkspaceState:
+        """Return the current lifecycle state of the sandbox."""
         return self._state
 
     @property
     def harness_config(self) -> HarnessTypeConfig:
+        """Return the harness type configuration for this sandbox."""
         return self._harness_config
 
     @property
     def agent_session_id(self) -> str | None:
+        """Return the agent session ID once a prompt has been run."""
         return self._agent_session_id
 
     @property
     def event_buffer(self) -> EventBuffer:
+        """Return the event buffer used for SSE streaming and replay."""
         return self._event_buffer
 
     # ------------------------------------------------------------------
@@ -955,16 +965,20 @@ class Sandbox:
     # ------------------------------------------------------------------
 
     async def write_file(self, path: str, content: str) -> None:
+        """Write text content to a file in the sandbox."""
         await self._provider.write_file(path, content)
 
     async def write_files(self, files: dict[str, str]) -> None:
+        """Write multiple files to the sandbox from a path-to-content mapping."""
         for path, content in files.items():
             await self._provider.write_file(path, content)
 
     async def read_file(self, path: str) -> str:
+        """Read and return text content from a file in the sandbox."""
         return await self._provider.read_file(path)
 
     async def make_dir(self, path: str) -> None:
+        """Create a directory (and parents) in the sandbox."""
         await self._provider.make_dir(path)
 
     async def extract_files(self, directory: str, pattern: str = "*") -> dict[str, str]:

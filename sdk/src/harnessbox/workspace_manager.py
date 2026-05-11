@@ -57,10 +57,10 @@ try:
 except ImportError:
 
     class TimeoutException(Exception):  # type: ignore
-        pass
+        """Stub for e2b.exceptions.TimeoutException when E2B is not installed."""
 
     class ConnectException(Exception):  # type: ignore
-        pass
+        """Stub for e2b_connect.client.ConnectException when E2B is not installed."""
 
 
 @dataclass
@@ -165,7 +165,7 @@ class WorkspaceInstance:
 
 
 class WorkspaceNotFoundError(KeyError):
-    pass
+    """Raised when a workspace ID is not found in the manager registry."""
 
 
 class WorkspaceManager:
@@ -317,6 +317,7 @@ class WorkspaceManager:
         return info
 
     def get_workspace(self, workspace_id: str) -> WorkspaceInstance:
+        """Return the workspace instance by ID, raising WorkspaceNotFoundError if missing."""
         if workspace_id not in self._workspaces:
             raise WorkspaceNotFoundError(f"Workspace not found: {workspace_id}")
         return self._workspaces[workspace_id]
@@ -771,6 +772,7 @@ class WorkspaceManager:
             logger.info(f"Resumed workspace {workspace_id}")
 
     async def shutdown_all(self) -> None:
+        """Destroy all active workspaces and cancel background tasks."""
         # Stop auto-pause task
         if self._pause_task:
             self._pause_task.cancel()
