@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 jobs:
-  lint:
+  sdk-lint-format-type-check:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,7 +34,7 @@ jobs:
       - name: Dependency audit
         run: uv run pip-audit
 
-  test:
+  sdk-tests:
     runs-on: ubuntu-latest
     defaults:
       run:
