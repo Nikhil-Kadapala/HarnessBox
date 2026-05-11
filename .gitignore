@@ -7,6 +7,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.coverage
 *.egg
 .env
 .DS_Store
