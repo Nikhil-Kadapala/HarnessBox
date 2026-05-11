@@ -375,3 +375,16 @@ async def consult_claude(task: str, files: list[str]) -> str:
 - Con: Requires content structure decisions (domain, navigation, branding)
 
 **Depends on:** Docstring enforcement (shipped, ruff D rules in CI), marketing site design decisions.
+
+## Bandit Security Scan — Tune skip list and scope
+
+**What:** Revisit the bandit configuration to reduce the skip list and scope the scan appropriately rather than blanket-suppressing findings.
+
+**Why:** The current bandit config skips B101, B110, B311, B404, B603, B607, B608 — effectively disabling most of what bandit checks. This was done pragmatically to unblock CI, but it means bandit provides almost no value in its current state. The codebase legitimately uses `subprocess` (git/gh CLI detection), `try/except/pass` (graceful credential probing), and `random.choice` (workspace names, not crypto). These aren't bugs, but the blanket skips also hide real issues.
+
+**Design:**
+- Option A: Scope bandit to only `src/harnessbox/security/` where strict scanning matters, remove skip list
+- Option B: Use per-file `# nosec` annotations on legitimate uses, keep global skip list minimal
+- Option C: Replace bandit with a lighter tool (e.g., `ruff` security rules via `S` prefix) that integrates with existing lint
+
+**Depends on:** Codebase stabilization — do this once the module boundaries stop shifting.
