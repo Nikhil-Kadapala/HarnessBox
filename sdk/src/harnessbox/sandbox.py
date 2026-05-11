@@ -36,6 +36,7 @@ except ImportError:
     class ConnectException(Exception):  # type: ignore
         """Stub for e2b_connect.client.ConnectException when E2B is not installed."""
 
+
 _log = logging.getLogger("harnessbox.sandbox")
 
 
@@ -433,7 +434,9 @@ class Sandbox:
         installed_names = [name for name, found in installed.items() if found]
         missing_names = [name for name, found in installed.items() if not found]
 
-        _log.info(f"Pre-installed tools: {', '.join(installed_names) if installed_names else 'none'}")
+        _log.info(
+            f"Pre-installed tools: {', '.join(installed_names) if installed_names else 'none'}"
+        )
         if missing_names:
             _log.info(f"Missing tools: {', '.join(missing_names)}")
 
@@ -474,7 +477,9 @@ class Sandbox:
             workspace_start = time.time()
             await self._workspace.inject(self._provider, self._harness_config.workspace_root)
             if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
-                self._cwd = f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
+                self._cwd = (
+                    f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
+                )
             _log.info(f"workspace_inject took {time.time() - workspace_start:.2f}s")
 
         # Determine the actual working directory for manifest files
@@ -514,10 +519,7 @@ class Sandbox:
         # Phase 7: Set hook permissions
         hooks_start = time.time()
         if self._security_policy and self._harness_config.hooks_dir:
-            hook_path = (
-                f"{manifest_target_dir}/"
-                f"{self._harness_config.hooks_dir}/guard_bash.py"
-            )
+            hook_path = f"{manifest_target_dir}/{self._harness_config.hooks_dir}/guard_bash.py"
             if hook_path in manifest.files:
                 await self._provider.run_command(f"chmod +x {hook_path}")
         _log.info(f"hook_setup took {time.time() - hooks_start:.2f}s")
@@ -527,9 +529,7 @@ class Sandbox:
         if self._skill_installs and self._harness_config.skill_install_cmd:
             for skill_spec in self._skill_installs:
                 cmd = f"{self._harness_config.skill_install_cmd} {skill_spec}"
-                result = await self._provider.run_command(
-                    cmd, cwd=manifest_target_dir
-                )
+                result = await self._provider.run_command(cmd, cwd=manifest_target_dir)
                 if result.exit_code != 0:
                     raise RuntimeError(f"Skill install failed ({skill_spec}): {result.stderr}")
         _log.info(f"skill_install took {time.time() - skills_start:.2f}s")

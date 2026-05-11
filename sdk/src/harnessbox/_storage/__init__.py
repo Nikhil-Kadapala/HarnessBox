@@ -35,18 +35,14 @@ def get_storage_backend(name: str) -> type[Any]:
     """
     if name not in _STORAGE_REGISTRY:
         registered = ", ".join(_STORAGE_REGISTRY.keys())
-        raise ValueError(
-            f"Unknown storage backend: {name!r}. Registered: {registered}"
-        )
+        raise ValueError(f"Unknown storage backend: {name!r}. Registered: {registered}")
 
     module_path, class_name = _STORAGE_REGISTRY[name]
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
 
-def register_storage_backend(
-    name: str, module_path: str, class_name: str
-) -> None:
+def register_storage_backend(name: str, module_path: str, class_name: str) -> None:
     """Register a custom storage backend.
 
     Args:

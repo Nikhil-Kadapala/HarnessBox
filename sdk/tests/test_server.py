@@ -255,7 +255,9 @@ class TestPauseSession:
         assert resp.status_code == 200
         assert resp.json()["status"] == "paused"
 
-    def test_pause_non_active_returns_409(self, client: TestClient, manager: WorkspaceManager) -> None:
+    def test_pause_non_active_returns_409(
+        self, client: TestClient, manager: WorkspaceManager
+    ) -> None:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -496,5 +498,3 @@ class TestWorkspaceEndpoints:
         assert resp.status_code == 400
         detail = resp.json()["detail"]
         assert "Failed to read remote URL" in detail or "No remote.origin.url found" in detail
-
-

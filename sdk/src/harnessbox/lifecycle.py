@@ -23,11 +23,23 @@ VALID_TRANSITIONS: dict[WorkspaceState, frozenset[WorkspaceState]] = {
     WorkspaceState.BACKLOG: frozenset({WorkspaceState.STARTING, WorkspaceState.ARCHIVED}),
     WorkspaceState.STARTING: frozenset({WorkspaceState.ACTIVE, WorkspaceState.FAILED}),
     WorkspaceState.ACTIVE: frozenset(
-        {WorkspaceState.PAUSED, WorkspaceState.ENDING, WorkspaceState.IN_REVIEW, WorkspaceState.FAILED}
+        {
+            WorkspaceState.PAUSED,
+            WorkspaceState.ENDING,
+            WorkspaceState.IN_REVIEW,
+            WorkspaceState.FAILED,
+        }
     ),
-    WorkspaceState.PAUSED: frozenset({WorkspaceState.ACTIVE, WorkspaceState.ENDING, WorkspaceState.FAILED}),
+    WorkspaceState.PAUSED: frozenset(
+        {WorkspaceState.ACTIVE, WorkspaceState.ENDING, WorkspaceState.FAILED}
+    ),
     WorkspaceState.IN_REVIEW: frozenset(
-        {WorkspaceState.ACTIVE, WorkspaceState.ENDING, WorkspaceState.MERGED, WorkspaceState.ARCHIVED}
+        {
+            WorkspaceState.ACTIVE,
+            WorkspaceState.ENDING,
+            WorkspaceState.MERGED,
+            WorkspaceState.ARCHIVED,
+        }
     ),
     WorkspaceState.ENDING: frozenset({WorkspaceState.MERGED, WorkspaceState.FAILED}),
     WorkspaceState.MERGED: frozenset({WorkspaceState.ARCHIVED}),

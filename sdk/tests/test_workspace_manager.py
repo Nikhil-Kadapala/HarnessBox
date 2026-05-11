@@ -45,8 +45,10 @@ class TestWorkspaceManager:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr:
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
@@ -67,8 +69,10 @@ class TestWorkspaceManager:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -89,8 +93,10 @@ class TestWorkspaceManager:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -109,8 +115,10 @@ class TestWorkspaceManager:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr:
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
@@ -137,8 +145,10 @@ class TestWorkspaceManager:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr:
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
@@ -162,8 +172,10 @@ class TestTransitionWorkspace:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -179,8 +191,10 @@ class TestTransitionWorkspace:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -203,8 +217,10 @@ class TestFindByRepoBranch:
 
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -215,9 +231,7 @@ class TestFindByRepoBranch:
             ws.branch = "tokyo"
             ws.clone_dir_name = "repo"
 
-            await mgr.create_workspace(
-                WorkspaceConfig(workspace=ws), workspace_id="w-1"
-            )
+            await mgr.create_workspace(WorkspaceConfig(workspace=ws), workspace_id="w-1")
 
         result = mgr.find_by_repo_branch("https://github.com/test/repo.git", "tokyo")
         assert result is not None
@@ -229,8 +243,10 @@ class TestFindByRepoBranch:
 
         from unittest.mock import AsyncMock, patch
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -256,8 +272,10 @@ class TestWorkspacePooling:
         )
         config = WorkspaceConfig(workspace=workspace)
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance._skip_permissions = False
@@ -286,8 +304,10 @@ class TestWorkspacePooling:
         )
         config = WorkspaceConfig(workspace=workspace)
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager") as MockAgentManager:
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentManager,
+        ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="paused-id")
@@ -340,22 +360,26 @@ class TestWorkspacePooling:
         mgr = await WorkspaceManager.create(storage=storage, auto_pause=False)
 
         # Add a paused workspace directly to storage (not in memory)
-        await storage.save_workspace({
-            "workspace_id": "w-storage",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "feature-branch",
-            "provider": "e2b",
-            "provider_sandbox_id": "storage-sandbox",
-            "snapshot_id": "storage-snapshot",
-            "harness": "claude-code",
-            "status": WorkspaceState.PAUSED.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": '{"timeout": 300, "skip_permissions": false}',
-        })
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-storage",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "feature-branch",
+                "provider": "e2b",
+                "provider_sandbox_id": "storage-sandbox",
+                "snapshot_id": "storage-snapshot",
+                "harness": "claude-code",
+                "status": WorkspaceState.PAUSED.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": '{"timeout": 300, "skip_permissions": false}',
+            }
+        )
 
-        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox, \
-             patch("harnessbox.workspace_manager.AgentManager"):
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
             instance = MockSandbox.return_value
             instance.resume = AsyncMock()
 

@@ -100,6 +100,7 @@ class TestSandboxWithWorkspace:
             clone_dir_name="alexandria",
         )
         from harnessbox.security.policy import SecurityPolicy
+
         sb = Sandbox(
             client=ws_provider,
             workspace=ws,
@@ -112,12 +113,16 @@ class TestSandboxWithWorkspace:
         written_files = list(ws_provider._files.keys())
 
         # All manifest files should be in /workspace/alexandria/
-        assert any("/workspace/alexandria/.claude/" in f for f in written_files), \
+        assert any("/workspace/alexandria/.claude/" in f for f in written_files), (
             f"Expected .claude/ in /workspace/alexandria/, got: {written_files}"
+        )
 
         # No manifest files should be at workspace root
-        assert not any(f.startswith("/workspace/.claude/") and "/alexandria/" not in f for f in written_files), \
+        assert not any(
+            f.startswith("/workspace/.claude/") and "/alexandria/" not in f for f in written_files
+        ), (
             f"Settings should not be at workspace root, found: {[f for f in written_files if f.startswith('/workspace/.claude/')]}"
+        )
 
     @pytest.mark.asyncio
     async def test_push_failure_populates_unpushed_files(self, ws_provider):

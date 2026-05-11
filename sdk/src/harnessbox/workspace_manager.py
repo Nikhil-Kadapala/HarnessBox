@@ -134,14 +134,16 @@ class WorkspaceInstance:
         config_json = "{}"
         if config is not None:
             # Minimal subset: primitives only, no complex types
-            config_json = json.dumps({
-                "provider": config.provider,
-                "harness": config.harness,
-                "timeout": config.timeout,
-                "skip_permissions": config.skip_permissions,
-                "template": config.template,
-                "session_timeout": config.session_timeout,
-            })
+            config_json = json.dumps(
+                {
+                    "provider": config.provider,
+                    "harness": config.harness,
+                    "timeout": config.timeout,
+                    "skip_permissions": config.skip_permissions,
+                    "template": config.template,
+                    "session_timeout": config.session_timeout,
+                }
+            )
 
         return {
             "workspace_id": self.workspace_id,
@@ -436,13 +438,15 @@ class WorkspaceManager:
                 if first_event and self._storage:
                     first_event = False
                     try:
-                        await self._storage.save_conversation({
-                            "conversation_id": conversation_id,
-                            "workspace_id": workspace_id,
-                            "agent_type": info.harness,
-                            "title": prompt[:50],  # First 50 chars as title
-                            "last_active": datetime.now(timezone.utc).isoformat(),
-                        })
+                        await self._storage.save_conversation(
+                            {
+                                "conversation_id": conversation_id,
+                                "workspace_id": workspace_id,
+                                "agent_type": info.harness,
+                                "title": prompt[:50],  # First 50 chars as title
+                                "last_active": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
                     except Exception as e:
                         logger.error(f"Failed to save conversation {conversation_id}: {e}")
 
@@ -487,7 +491,9 @@ class WorkspaceManager:
                 and info.remote == remote
                 and info.branch == branch
             ):
-                logger.info(f"Pool hit: resuming workspace {info.workspace_id} for {remote}@{branch}")
+                logger.info(
+                    f"Pool hit: resuming workspace {info.workspace_id} for {remote}@{branch}"
+                )
                 await self._resume_workspace(info.workspace_id)
                 return info
 
@@ -503,7 +509,9 @@ class WorkspaceManager:
                 record = candidates[0]
                 wid = record["workspace_id"]
 
-                logger.info(f"Pool hit from storage: hydrating workspace {wid} for {remote}@{branch}")
+                logger.info(
+                    f"Pool hit from storage: hydrating workspace {wid} for {remote}@{branch}"
+                )
 
                 # Hydrate workspace instance
                 info = await self._hydrate_workspace(record)
@@ -720,7 +728,7 @@ class WorkspaceManager:
                     if attempt == 2:  # Last attempt
                         raise
                     logger.warning(f"Resume attempt {attempt + 1} failed: {e}, retrying...")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    await asyncio.sleep(2**attempt)  # Exponential backoff
 
     async def _resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace with transparent snapshot recovery."""

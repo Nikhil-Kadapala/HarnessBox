@@ -100,7 +100,6 @@ class GitWorkspace:
             f"auth_token={'***' if self._auth_token else 'None'})"
         )
 
-
     def _fire_event(self, callback: EventCallback | None, **kwargs: Any) -> None:
         if callback is not None:
             callback(**kwargs)
@@ -228,9 +227,7 @@ class GitWorkspace:
                 cwd=workspace_root,
             )
         if self.branch != self.base_branch:
-            await self._run_git(
-                provider, f"checkout -b {self.branch}", cwd=workspace_root
-            )
+            await self._run_git(provider, f"checkout -b {self.branch}", cwd=workspace_root)
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:
             self._initial_sha = sha_result.stdout.strip()
@@ -339,7 +336,6 @@ class GitWorkspace:
         if "HAS_SUBMODULES" in sub_result.stdout:
             pass
 
-
     @staticmethod
     def _is_auth_or_notfound(stderr: str) -> bool:
         indicators = ["401", "403", "404", "Authentication failed", "not found", "does not exist"]
@@ -422,9 +418,7 @@ class GitWorkspace:
             f'commit --allow-empty -m "snapshot: {name}"',
             cwd=clone_target,
         )
-        tag_result = await self._run_git(
-            provider, f"tag harnessbox-snap-{name}", cwd=clone_target
-        )
+        tag_result = await self._run_git(provider, f"tag harnessbox-snap-{name}", cwd=clone_target)
         if tag_result.exit_code != 0:
             raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
         self._last_snapshot = name
@@ -543,9 +537,7 @@ class GitWorkspace:
         self.branch = new_name
 
     def _clone_target(self, workspace_root: str) -> str:
-        return (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
+        return f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
 
     def _diff_ref(self) -> str:
         if self._last_snapshot:

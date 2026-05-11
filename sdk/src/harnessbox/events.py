@@ -160,14 +160,16 @@ class EventBuffer:
                 if "content" in event_dict and event_dict["content"]:
                     event_dict["content"] = [asdict(c) for c in event_dict["content"]]
 
-                event_records.append({
-                    "event_id": event.event_id,
-                    "session_id": self._session_id,
-                    "sequence": event.sequence,
-                    "timestamp": event.timestamp,
-                    "event_type": event.event_type.value,
-                    "event_json": json.dumps(event_dict),
-                })
+                event_records.append(
+                    {
+                        "event_id": event.event_id,
+                        "session_id": self._session_id,
+                        "sequence": event.sequence,
+                        "timestamp": event.timestamp,
+                        "event_type": event.event_type.value,
+                        "event_json": json.dumps(event_dict),
+                    }
+                )
 
             await self._storage.append_events(self._session_id, event_records)
         except Exception as e:

@@ -34,7 +34,7 @@ class AgentManager:
     def __init__(self, sandbox: Sandbox) -> None:
         self._sandbox = sandbox
         self._agents: dict[str, AgentProcess] = {}  # conversation_id → process
-        self._locks: dict[str, asyncio.Lock] = {}        # per-conversation lock
+        self._locks: dict[str, asyncio.Lock] = {}  # per-conversation lock
 
     async def run_prompt(
         self,

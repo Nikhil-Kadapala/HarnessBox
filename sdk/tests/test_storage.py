@@ -54,32 +54,36 @@ class TestWorkspaceCRUD:
     @pytest.mark.asyncio
     async def test_list_workspaces(self, memory_backend):
         """Should list all workspaces."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
-        await memory_backend.save_workspace({
-            "workspace_id": "w-2",
-            "remote": "https://github.com/user/other.git",
-            "branch": "dev",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.PAUSED.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-2",
+                "remote": "https://github.com/user/other.git",
+                "branch": "dev",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.PAUSED.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
 
         result = await memory_backend.list_workspaces()
 
@@ -89,32 +93,36 @@ class TestWorkspaceCRUD:
     @pytest.mark.asyncio
     async def test_list_workspaces_filter_by_status(self, memory_backend):
         """Should filter workspaces by status."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
-        await memory_backend.save_workspace({
-            "workspace_id": "w-2",
-            "remote": "https://github.com/user/other.git",
-            "branch": "dev",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.PAUSED.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-2",
+                "remote": "https://github.com/user/other.git",
+                "branch": "dev",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.PAUSED.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
 
         result = await memory_backend.list_workspaces(status=WorkspaceState.PAUSED.value)
 
@@ -124,19 +132,21 @@ class TestWorkspaceCRUD:
     @pytest.mark.asyncio
     async def test_update_workspace(self, memory_backend):
         """Should update workspace fields."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
 
         await memory_backend.update_workspace("w-1", status=WorkspaceState.PAUSED.value)
 
@@ -146,19 +156,21 @@ class TestWorkspaceCRUD:
     @pytest.mark.asyncio
     async def test_delete_workspace(self, memory_backend):
         """Should delete workspace."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
 
         await memory_backend.delete_workspace("w-1")
 
@@ -172,23 +184,9 @@ class TestUniqueConstraint:
     @pytest.mark.asyncio
     async def test_duplicate_remote_branch_raises(self, memory_backend):
         """Should reject duplicate (remote, branch) combination."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
-
-        with pytest.raises(KeyError, match="already exists"):
-            await memory_backend.save_workspace({
-                "workspace_id": "w-2",
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
                 "remote": "https://github.com/user/repo.git",
                 "branch": "main",
                 "provider": "e2b",
@@ -199,7 +197,25 @@ class TestUniqueConstraint:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
-            })
+            }
+        )
+
+        with pytest.raises(KeyError, match="already exists"):
+            await memory_backend.save_workspace(
+                {
+                    "workspace_id": "w-2",
+                    "remote": "https://github.com/user/repo.git",
+                    "branch": "main",
+                    "provider": "e2b",
+                    "provider_sandbox_id": None,
+                    "snapshot_id": None,
+                    "harness": "claude-code",
+                    "status": WorkspaceState.ACTIVE.value,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "last_active": datetime.now(timezone.utc).isoformat(),
+                    "config_json": "{}",
+                }
+            )
 
 
 class TestConversationCRUD:
@@ -209,28 +225,32 @@ class TestConversationCRUD:
     async def test_save_conversation(self, memory_backend):
         """Should save conversation to storage."""
         # Create workspace first
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
 
         # Save conversation
-        await memory_backend.save_conversation({
-            "conversation_id": "conv-1",
-            "workspace_id": "w-1",
-            "agent_type": "claude-code",
-            "title": "Test conversation",
-            "last_active": datetime.now(timezone.utc).isoformat(),
-        })
+        await memory_backend.save_conversation(
+            {
+                "conversation_id": "conv-1",
+                "workspace_id": "w-1",
+                "agent_type": "claude-code",
+                "title": "Test conversation",
+                "last_active": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
         result = await memory_backend.get_conversations("w-1")
         assert len(result) == 1
@@ -245,26 +265,30 @@ class TestConversationCRUD:
     @pytest.mark.asyncio
     async def test_update_conversation(self, memory_backend):
         """Should update conversation fields."""
-        await memory_backend.save_workspace({
-            "workspace_id": "w-1",
-            "remote": "https://github.com/user/repo.git",
-            "branch": "main",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-            "config_json": "{}",
-        })
-        await memory_backend.save_conversation({
-            "conversation_id": "conv-1",
-            "workspace_id": "w-1",
-            "agent_type": "claude-code",
-            "title": "Old title",
-            "last_active": datetime.now(timezone.utc).isoformat(),
-        })
+        await memory_backend.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/user/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.ACTIVE.value,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+                "config_json": "{}",
+            }
+        )
+        await memory_backend.save_conversation(
+            {
+                "conversation_id": "conv-1",
+                "workspace_id": "w-1",
+                "agent_type": "claude-code",
+                "title": "Old title",
+                "last_active": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
         await memory_backend.update_conversation("conv-1", title="New title")
 

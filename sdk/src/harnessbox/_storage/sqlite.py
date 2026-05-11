@@ -193,8 +193,12 @@ class SQLiteBackend:
             )
             self._conn.commit()
         except sqlite3.IntegrityError as e:
-            logger.error(f"Duplicate workspace_id or (remote, branch) {record['workspace_id']}: {e}")
-            raise KeyError(f"Workspace {record['workspace_id']} already exists or (remote, branch) conflict") from e
+            logger.error(
+                f"Duplicate workspace_id or (remote, branch) {record['workspace_id']}: {e}"
+            )
+            raise KeyError(
+                f"Workspace {record['workspace_id']} already exists or (remote, branch) conflict"
+            ) from e
 
     async def get_workspace(self, workspace_id: str) -> dict[str, Any] | None:
         """Retrieve a workspace record by ID."""
@@ -408,9 +412,7 @@ class SQLiteBackend:
 
     # -- Event persistence --
 
-    async def append_events(
-        self, workspace_id: str, events: list[dict[str, Any]]
-    ) -> None:
+    async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
         """Append a batch of events (buffered, flushed by background task)."""
         for event in events:
             self._pending_events.append((workspace_id, event))
@@ -429,9 +431,7 @@ class SQLiteBackend:
 
         await asyncio.to_thread(self._flush_events_sync, batch)
 
-    def _flush_events_sync(
-        self, batch: list[tuple[str, dict[str, Any]]]
-    ) -> None:
+    def _flush_events_sync(self, batch: list[tuple[str, dict[str, Any]]]) -> None:
         """Synchronous batch insert with duplicate handling."""
         if self._conn is None:
             return

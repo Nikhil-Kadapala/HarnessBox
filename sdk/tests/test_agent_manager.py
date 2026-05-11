@@ -27,8 +27,10 @@ class TestAgentManagerLazySpawn:
         """Should spawn agent process when conversation_id is new."""
         mgr = AgentManager(mock_sandbox)
 
-        with patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess, \
-             patch("harnessbox.agent_manager.get_harness_type"):
+        with (
+            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox.agent_manager.get_harness_type"),
+        ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
@@ -52,8 +54,10 @@ class TestAgentManagerLazySpawn:
         """Should reuse existing agent for same conversation_id."""
         mgr = AgentManager(mock_sandbox)
 
-        with patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess, \
-             patch("harnessbox.agent_manager.get_harness_type"):
+        with (
+            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox.agent_manager.get_harness_type"),
+        ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
@@ -85,17 +89,23 @@ class TestAgentManagerConcurrent:
         """Should spawn separate agent for each conversation_id."""
         mgr = AgentManager(mock_sandbox)
 
-        with patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess, \
-             patch("harnessbox.agent_manager.get_harness_type"):
+        with (
+            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox.agent_manager.get_harness_type"),
+        ):
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
             mock_process1.send_prompt = AsyncMock()
-            mock_process1.stream_turn = AsyncMock(return_value=iter([MagicMock(session_id="conv-1")]))
+            mock_process1.stream_turn = AsyncMock(
+                return_value=iter([MagicMock(session_id="conv-1")])
+            )
 
             mock_process2 = MagicMock()
             mock_process2.start = AsyncMock()
             mock_process2.send_prompt = AsyncMock()
-            mock_process2.stream_turn = AsyncMock(return_value=iter([MagicMock(session_id="conv-2")]))
+            mock_process2.stream_turn = AsyncMock(
+                return_value=iter([MagicMock(session_id="conv-2")])
+            )
 
             MockAgentProcess.side_effect = [mock_process1, mock_process2]
 
@@ -118,8 +128,10 @@ class TestAgentManagerTermination:
         """Should stop and remove agent process."""
         mgr = AgentManager(mock_sandbox)
 
-        with patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess, \
-             patch("harnessbox.agent_manager.get_harness_type"):
+        with (
+            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox.agent_manager.get_harness_type"),
+        ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
@@ -141,8 +153,10 @@ class TestAgentManagerTermination:
         """Should terminate all agents."""
         mgr = AgentManager(mock_sandbox)
 
-        with patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess, \
-             patch("harnessbox.agent_manager.get_harness_type"):
+        with (
+            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox.agent_manager.get_harness_type"),
+        ):
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
             mock_process1.send_prompt = AsyncMock()

@@ -938,9 +938,7 @@ def create_app(
                         "data": json.dumps(event_data),
                     }
                 except json.JSONDecodeError as e:
-                    logger.error(
-                        f"Malformed event_json for event {event_record['event_id']}: {e}"
-                    )
+                    logger.error(f"Malformed event_json for event {event_record['event_id']}: {e}")
 
         return EventSourceResponse(event_generator(), ping=15)
 

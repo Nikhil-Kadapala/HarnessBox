@@ -56,8 +56,6 @@ class TestGitWorkspaceInit:
         assert "auth_token=None" in r
 
 
-
-
 class _GitMockProvider(MockProvider):
     """MockProvider that simulates git command responses."""
 
@@ -173,7 +171,9 @@ class TestGitWorkspaceInject:
         cmds = git_provider._commands
         # Find indexes of fetch and checkout commands
         fetch_idx = next(i for i, c in enumerate(cmds) if "fetch origin feature-x" in c)
-        checkout_idx = next(i for i, c in enumerate(cmds) if "checkout -b feature-x origin/feature-x" in c)
+        checkout_idx = next(
+            i for i, c in enumerate(cmds) if "checkout -b feature-x origin/feature-x" in c
+        )
         # Checkout must happen after fetch
         assert checkout_idx > fetch_idx
 
@@ -547,9 +547,7 @@ class TestGitWorkspaceDiffStat:
 
     @pytest.mark.asyncio
     async def test_diff_stat_with_clone_dir(self, git_provider):
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git", clone_dir_name="tokyo"
-        )
+        ws = GitWorkspace(remote="https://github.com/test/repo.git", clone_dir_name="tokyo")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -682,13 +680,15 @@ class TestGitWorkspaceCheckPRStatus:
             base_branch="main",
         )
 
-        pr_json = json.dumps({
-            "state": "MERGED",
-            "merged": True,
-            "url": "https://github.com/test/repo/pull/42",
-            "number": 42,
-            "statusCheckRollup": [{"conclusion": "SUCCESS"}],
-        })
+        pr_json = json.dumps(
+            {
+                "state": "MERGED",
+                "merged": True,
+                "url": "https://github.com/test/repo/pull/42",
+                "number": 42,
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        )
         git_provider.set_git_response(
             "gh pr view",
             CommandResult(exit_code=0, stdout=pr_json, stderr=""),
@@ -725,16 +725,18 @@ class TestGitWorkspaceCheckPRStatus:
             base_branch="main",
         )
 
-        pr_json = json.dumps({
-            "state": "OPEN",
-            "merged": False,
-            "url": "https://github.com/test/repo/pull/42",
-            "number": 42,
-            "statusCheckRollup": [
-                {"conclusion": "SUCCESS"},
-                {"conclusion": "FAILURE"},
-            ],
-        })
+        pr_json = json.dumps(
+            {
+                "state": "OPEN",
+                "merged": False,
+                "url": "https://github.com/test/repo/pull/42",
+                "number": 42,
+                "statusCheckRollup": [
+                    {"conclusion": "SUCCESS"},
+                    {"conclusion": "FAILURE"},
+                ],
+            }
+        )
         git_provider.set_git_response(
             "gh pr view",
             CommandResult(exit_code=0, stdout=pr_json, stderr=""),
@@ -781,5 +783,3 @@ class TestGitWorkspaceRenameBranch:
         with pytest.raises(RuntimeError, match="Branch rename failed"):
             await ws.rename_branch(git_provider, "/workspace", "bad-name")
         assert ws.branch == "tokyo"
-
-

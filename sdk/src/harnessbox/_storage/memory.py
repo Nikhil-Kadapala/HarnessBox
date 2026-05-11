@@ -130,17 +130,13 @@ class MemoryBackend:
 
     # -- Event persistence --
 
-    async def append_events(
-        self, workspace_id: str, events: list[dict[str, Any]]
-    ) -> None:
+    async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
         """Append events to workspace's event list."""
         if workspace_id not in self._events:
             self._events[workspace_id] = []
 
         # Check for duplicates (workspace_id, sequence)
-        existing_sequences = {
-            e["sequence"] for e in self._events[workspace_id]
-        }
+        existing_sequences = {e["sequence"] for e in self._events[workspace_id]}
         for event in events:
             if event["sequence"] not in existing_sequences:
                 self._events[workspace_id].append(event.copy())

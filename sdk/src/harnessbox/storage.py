@@ -184,9 +184,7 @@ class StorageBackend(Protocol):
 
     # -- Event persistence --
 
-    async def append_events(
-        self, workspace_id: str, events: list[dict[str, Any]]
-    ) -> None:
+    async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
         """Append a batch of events to a workspace's event log.
 
         Args:
