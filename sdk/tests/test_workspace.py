@@ -715,6 +715,35 @@ class TestGitWorkspaceCheckPRStatus:
         result = await ws.check_pr_status(git_provider, "/workspace")
         assert result == {}
 
+    @pytest.mark.asyncio
+    async def test_check_pr_status_ci_failure(self, git_provider):
+        import json
+
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
+        pr_json = json.dumps({
+            "state": "OPEN",
+            "merged": False,
+            "url": "https://github.com/test/repo/pull/42",
+            "number": 42,
+            "statusCheckRollup": [
+                {"conclusion": "SUCCESS"},
+                {"conclusion": "FAILURE"},
+            ],
+        })
+        git_provider.set_git_response(
+            "gh pr view",
+            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
+        )
+
+        result = await ws.check_pr_status(git_provider, "/workspace")
+        assert result["ci_status"] == "failure"
+
+
 class TestGitWorkspaceRenameBranch:
     @pytest.fixture
     def git_provider(self):
@@ -752,39 +781,5 @@ class TestGitWorkspaceRenameBranch:
         with pytest.raises(RuntimeError, match="Branch rename failed"):
             await ws.rename_branch(git_provider, "/workspace", "bad-name")
         assert ws.branch == "tokyo"
-
-
-class TestGitWorkspaceCheckPRStatus:
-    @pytest.fixture
-    def git_provider(self):
-        return _GitMockProvider()
-
-    @pytest.mark.asyncio
-    async def test_check_pr_status_ci_failure(self, git_provider):
-        import json
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            branch="tokyo",
-            base_branch="main",
-        )
-
-        pr_json = json.dumps({
-            "state": "OPEN",
-            "merged": False,
-            "url": "https://github.com/test/repo/pull/42",
-            "number": 42,
-            "statusCheckRollup": [
-                {"conclusion": "SUCCESS"},
-                {"conclusion": "FAILURE"},
-            ],
-        })
-        git_provider.set_git_response(
-            "gh pr view",
-            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
-        )
-
-        result = await ws.check_pr_status(git_provider, "/workspace")
-        assert result["ci_status"] == "failure"
 
 
