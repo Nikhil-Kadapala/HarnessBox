@@ -25,6 +25,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 try:
@@ -63,15 +64,20 @@ def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
     """Auto-inject ALL available host credentials into the sandbox.
 
     1. Builds Claude Code auth environment (Bedrock, Vertex, or direct API key)
-    2. Injects all detected API keys from host environment
-    3. User-provided env vars always take priority (not overwritten)
+    2. Builds gcloud project/region config
+    3. Injects all detected API keys from host environment
+    4. User-provided env vars always take priority (not overwritten)
     """
     import os
 
-    from harnessbox.credentials import build_claude_env_vars
+    from harnessbox.credentials import build_claude_env_vars, build_gcloud_env_vars
 
     claude_envs = build_claude_env_vars()
     for k, v in claude_envs.items():
+        env_vars.setdefault(k, v)
+
+    gcloud_envs = build_gcloud_env_vars()
+    for k, v in gcloud_envs.items():
         env_vars.setdefault(k, v)
 
     for key in _ENV_VAR_KEYS:
@@ -79,6 +85,13 @@ def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
             val = os.environ.get(key, "").strip()
             if val:
                 env_vars[key] = val
+
+
+def _inject_host_credential_files() -> dict[str, str]:
+    """Auto-inject credential files (e.g., gcloud ADC) for sandbox use."""
+    from harnessbox.credentials import build_gcloud_credential_files
+
+    return build_gcloud_credential_files()
 
 
 def _get_git_auth_token() -> str | None:
@@ -141,6 +154,8 @@ def _extract_provider_key(provider: str, env_vars: dict[str, str]) -> str | None
 
 
 class SecurityPolicyRequest(BaseModel):
+    """Request body for configuring a sandbox security policy."""
+
     denied_tools: list[str] = []
     denied_bash_patterns: list[str] = []
     deny_network: bool = False
@@ -157,6 +172,8 @@ class SecurityPolicyRequest(BaseModel):
 
 
 class WorkspaceRequest(BaseModel):
+    """Request body for git workspace configuration (remote, branch, auth)."""
+
     remote: str
     branch: str = "main"
     auth_token: str | None = None
@@ -166,6 +183,8 @@ class WorkspaceRequest(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
+    """Request body for creating a new sandbox workspace session."""
+
     provider: str = "e2b"
     api_key: str | None = None
     harness: str = "claude-code"
@@ -182,6 +201,8 @@ class CreateSessionRequest(BaseModel):
 
 
 class SessionResponse(BaseModel):
+    """Response body containing session metadata and status."""
+
     session_id: str
     harness: str
     status: str
@@ -197,29 +218,41 @@ class SessionResponse(BaseModel):
 
 
 class SessionStatsResponse(BaseModel):
+    """Response body for workspace diff statistics."""
+
     insertions: int = 0
     deletions: int = 0
     commit_count: int = 0
 
 
 class RenameRequest(BaseModel):
+    """Request body for renaming a workspace."""
+
     name: str
 
 
 class PRRequest(BaseModel):
+    """Request body for creating a pull request from the workspace branch."""
+
     title: str
     body: str = ""
 
 
 class PromptRequest(BaseModel):
+    """Request body for sending a prompt to the agent."""
+
     prompt: str
 
 
 class TransitionRequest(BaseModel):
+    """Request body for transitioning workspace lifecycle state."""
+
     target_state: str
 
 
 class PermissionRequest(BaseModel):
+    """Request body for resolving an agent permission prompt."""
+
     request_id: str
     behavior: str = "allow"
 
@@ -455,6 +488,12 @@ def create_app(
     async def create_session(req: CreateSessionRequest) -> SessionResponse:
         env_vars = dict(req.env_vars)
         _inject_host_env_vars(env_vars)
+        credential_files: dict[str, str | Path] = dict(_inject_host_credential_files())
+        if "/root/.config/gcloud/application_default_credentials.json" in credential_files:
+            env_vars.setdefault(
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "/root/.config/gcloud/application_default_credentials.json",
+            )
         api_key = req.api_key or _extract_provider_key(req.provider, env_vars)
 
         security_policy = None
@@ -512,6 +551,7 @@ def create_app(
             api_key=api_key,
             harness=req.harness,
             env_vars=env_vars,
+            files=credential_files or None,
             setup_script=req.setup_script,
             cwd=req.cwd,
             timeout=sandbox_timeout,

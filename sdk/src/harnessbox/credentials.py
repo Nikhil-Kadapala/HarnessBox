@@ -19,6 +19,8 @@ class CredentialProbe:
 
 @dataclass(frozen=True)
 class CredentialStatus:
+    """Snapshot of all credential probes taken at a specific time."""
+
     probes: list[CredentialProbe]
     timestamp: str
 
@@ -80,6 +82,38 @@ def _probe_aws_credentials() -> CredentialProbe:
         return CredentialProbe(name="aws_credentials", available=False)
     except Exception:
         return CredentialProbe(name="aws_credentials", available=False)
+
+
+def _resolve_gcloud_config_dir() -> Path:
+    config_dir = os.environ.get("CLOUDSDK_CONFIG", "").strip()
+    if config_dir:
+        return Path(config_dir)
+    return Path.home() / ".config" / "gcloud"
+
+
+def _probe_gcloud_cli() -> CredentialProbe:
+    try:
+        gcloud_dir = _resolve_gcloud_config_dir()
+
+        adc = gcloud_dir / "application_default_credentials.json"
+        if adc.is_file() and adc.stat().st_size > 0:
+            return CredentialProbe(name="gcloud_cli", available=True)
+
+        props = gcloud_dir / "properties"
+        if props.is_file() and props.stat().st_size > 0:
+            content = props.read_text(encoding="utf-8")
+            if "account" in content:
+                return CredentialProbe(name="gcloud_cli", available=True)
+
+        config_default = gcloud_dir / "configurations" / "config_default"
+        if config_default.is_file() and config_default.stat().st_size > 0:
+            content = config_default.read_text(encoding="utf-8")
+            if "account" in content:
+                return CredentialProbe(name="gcloud_cli", available=True)
+
+        return CredentialProbe(name="gcloud_cli", available=False)
+    except Exception:
+        return CredentialProbe(name="gcloud_cli", available=False)
 
 
 # --- Claude Code auth mode detection ---
@@ -209,6 +243,75 @@ def _read_aws_config_region(envs: dict[str, str]) -> None:
         pass
 
 
+# --- gcloud credential building ---
+
+
+def _read_gcloud_property(
+    envs: dict[str, str], gcloud_dir: Path, section: str, key: str, env_key: str
+) -> None:
+    try:
+        props_path = gcloud_dir / "properties"
+        if not props_path.is_file():
+            props_path = gcloud_dir / "configurations" / "config_default"
+        if not props_path.is_file():
+            return
+
+        target_section = f"[{section}]"
+        in_section = False
+        for line in props_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                in_section = line == target_section
+                continue
+            if in_section and line.startswith(key):
+                _, v = line.split("=", 1)
+                envs[env_key] = v.strip()
+                break
+    except Exception:
+        pass
+
+
+def build_gcloud_env_vars() -> dict[str, str]:
+    """Build env vars for gcloud project/region config inside a sandbox."""
+    envs: dict[str, str] = {}
+    gcloud_dir = _resolve_gcloud_config_dir()
+
+    _inject_val(envs, "CLOUDSDK_CORE_PROJECT")
+    _inject_val(envs, "CLOUDSDK_COMPUTE_REGION")
+    _inject_val(envs, "GOOGLE_CLOUD_PROJECT")
+    _inject_val(envs, "GOOGLE_CLOUD_REGION")
+
+    if "GOOGLE_CLOUD_PROJECT" not in envs and "CLOUDSDK_CORE_PROJECT" not in envs:
+        _read_gcloud_property(envs, gcloud_dir, "core", "project", "CLOUDSDK_CORE_PROJECT")
+
+    if "GOOGLE_CLOUD_REGION" not in envs and "CLOUDSDK_COMPUTE_REGION" not in envs:
+        _read_gcloud_property(envs, gcloud_dir, "compute", "region", "CLOUDSDK_COMPUTE_REGION")
+
+    return envs
+
+
+def build_gcloud_credential_files() -> dict[str, str]:
+    """Build credential files to inject into a sandbox for gcloud auth.
+
+    Returns a dict of {sandbox_path: file_content} to be written via
+    provider.write_file(). Sets up Application Default Credentials so
+    gcloud CLI and Google client libraries authenticate automatically.
+    """
+    files: dict[str, str] = {}
+    gcloud_dir = _resolve_gcloud_config_dir()
+
+    adc_path = gcloud_dir / "application_default_credentials.json"
+    if adc_path.is_file():
+        try:
+            adc_content = adc_path.read_text(encoding="utf-8")
+            json.loads(adc_content)
+            files["/root/.config/gcloud/application_default_credentials.json"] = adc_content
+        except Exception:
+            pass
+
+    return files
+
+
 # --- Main detection ---
 
 
@@ -230,6 +333,7 @@ def detect_credentials() -> CredentialStatus:
     probes.append(_probe_e2b_cli())
     probes.append(_probe_claude_code())
     probes.append(_probe_aws_credentials())
+    probes.append(_probe_gcloud_cli())
 
     mode = detect_claude_auth_mode()
     probes.append(

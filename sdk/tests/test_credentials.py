@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 from harnessbox.credentials import (
     CredentialProbe,
     CredentialStatus,
+    build_gcloud_credential_files,
+    build_gcloud_env_vars,
     detect_credentials,
 )
 
@@ -145,3 +148,165 @@ class TestDetectCredentials:
         ):
             status = detect_credentials()
         assert isinstance(status, CredentialStatus)
+
+
+class TestProbeGcloudCli:
+    def test_gcloud_adc_present(self, tmp_path: Path) -> None:
+        adc = tmp_path / ".config" / "gcloud" / "application_default_credentials.json"
+        adc.parent.mkdir(parents=True)
+        adc.write_text('{"type": "authorized_user", "client_id": "x"}')
+        with patch("harnessbox.credentials.Path.home", return_value=tmp_path):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is True
+
+    def test_gcloud_properties_with_account(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text("[core]\naccount = user@example.com\nproject = my-proj\n")
+        with patch("harnessbox.credentials.Path.home", return_value=tmp_path):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is True
+
+    def test_gcloud_config_default_with_account(self, tmp_path: Path) -> None:
+        cfg = tmp_path / ".config" / "gcloud" / "configurations" / "config_default"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[core]\naccount = user@example.com\n")
+        with patch("harnessbox.credentials.Path.home", return_value=tmp_path):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is True
+
+    def test_gcloud_missing(self, tmp_path: Path) -> None:
+        with patch("harnessbox.credentials.Path.home", return_value=tmp_path):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is False
+
+    def test_gcloud_properties_without_account(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text("[core]\nproject = my-proj\n")
+        with patch("harnessbox.credentials.Path.home", return_value=tmp_path):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is False
+
+    def test_gcloud_custom_config_dir(self, tmp_path: Path) -> None:
+        custom_dir = tmp_path / "custom-gcloud"
+        custom_dir.mkdir()
+        adc = custom_dir / "application_default_credentials.json"
+        adc.write_text('{"type": "authorized_user"}')
+        with patch.dict("os.environ", {"CLOUDSDK_CONFIG": str(custom_dir)}):
+            status = detect_credentials()
+        probe = next(p for p in status.probes if p.name == "gcloud_cli")
+        assert probe.available is True
+
+    def test_gcloud_in_probe_list(self) -> None:
+        status = detect_credentials()
+        names = {p.name for p in status.probes}
+        assert "gcloud_cli" in names
+
+
+class TestBuildGcloudEnvVars:
+    def test_project_from_properties(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text("[core]\nproject = my-proj\n")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            envs = build_gcloud_env_vars()
+        assert envs["CLOUDSDK_CORE_PROJECT"] == "my-proj"
+
+    def test_region_from_properties(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text("[compute]\nregion = us-east1\n")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            envs = build_gcloud_env_vars()
+        assert envs["CLOUDSDK_COMPUTE_REGION"] == "us-east1"
+
+    def test_multi_section_parsing(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text(
+            "[core]\nproject = my-proj\naccount = u@ex.com\n\n"
+            "[compute]\nregion = us-west2\nzone = us-west2-a\n"
+        )
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            envs = build_gcloud_env_vars()
+        assert envs["CLOUDSDK_CORE_PROJECT"] == "my-proj"
+        assert envs["CLOUDSDK_COMPUTE_REGION"] == "us-west2"
+
+    def test_env_var_precedence(self, tmp_path: Path) -> None:
+        props = tmp_path / ".config" / "gcloud" / "properties"
+        props.parent.mkdir(parents=True)
+        props.write_text("[core]\nproject = from-file\n")
+        with (
+            patch.dict("os.environ", {"CLOUDSDK_CORE_PROJECT": "from-env"}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            envs = build_gcloud_env_vars()
+        assert envs["CLOUDSDK_CORE_PROJECT"] == "from-env"
+
+    def test_no_credentials(self, tmp_path: Path) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            envs = build_gcloud_env_vars()
+        assert envs == {}
+
+
+class TestBuildGcloudCredentialFiles:
+    def test_adc_file_present(self, tmp_path: Path) -> None:
+        adc_content = json.dumps({"type": "authorized_user", "client_id": "123"})
+        adc = tmp_path / ".config" / "gcloud" / "application_default_credentials.json"
+        adc.parent.mkdir(parents=True)
+        adc.write_text(adc_content)
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            files = build_gcloud_credential_files()
+        expected_path = "/root/.config/gcloud/application_default_credentials.json"
+        assert expected_path in files
+        assert json.loads(files[expected_path]) == json.loads(adc_content)
+
+    def test_adc_file_missing(self, tmp_path: Path) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            files = build_gcloud_credential_files()
+        assert files == {}
+
+    def test_adc_invalid_json(self, tmp_path: Path) -> None:
+        adc = tmp_path / ".config" / "gcloud" / "application_default_credentials.json"
+        adc.parent.mkdir(parents=True)
+        adc.write_text("not valid json {{{")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("harnessbox.credentials.Path.home", return_value=tmp_path),
+        ):
+            files = build_gcloud_credential_files()
+        assert files == {}
+
+    def test_adc_custom_config_dir(self, tmp_path: Path) -> None:
+        custom_dir = tmp_path / "custom-gcloud"
+        custom_dir.mkdir()
+        adc_content = json.dumps({"type": "service_account", "project_id": "proj"})
+        (custom_dir / "application_default_credentials.json").write_text(adc_content)
+        with patch.dict("os.environ", {"CLOUDSDK_CONFIG": str(custom_dir)}, clear=True):
+            files = build_gcloud_credential_files()
+        expected_path = "/root/.config/gcloud/application_default_credentials.json"
+        assert expected_path in files

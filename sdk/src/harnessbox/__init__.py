@@ -11,6 +11,7 @@ from harnessbox.credentials import (
     CredentialProbe,
     CredentialStatus,
     build_claude_env_vars,
+    build_gcloud_env_vars,
     detect_claude_auth_mode,
     detect_credentials,
 )
@@ -85,6 +86,7 @@ __all__ = [
     "CredentialProbe",
     "CredentialStatus",
     "build_claude_env_vars",
+    "build_gcloud_env_vars",
     "detect_claude_auth_mode",
     "detect_credentials",
     # Sandbox
