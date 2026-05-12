@@ -77,10 +77,11 @@ export interface WorkspaceConfig {
   auth_token?: string;
   clone_depth?: number;
   commit_on_exit?: boolean;
-  worktree_name?: string;
+  clone_dir_name?: string;
 }
 
 export interface CreateSessionRequest {
+  session_id?: string;
   provider: string;
   harness: string;
   env_vars: Record<string, string>;
@@ -135,4 +136,4 @@ export interface SessionEntry {
 
 // --- View switching ---
 
-export type ActiveView = "session" | "new-session" | "settings" | "board";
+export type ActiveView = "session" | "settings" | "board";

@@ -62,7 +62,7 @@ class AgentProcess:
         def on_stdout(data: Any) -> None:
             nonlocal buffer
             raw = data.line if hasattr(data, "line") else str(data)
-            _log.debug("stdout raw: %s", raw[:200])
+            _log.debug("stdout raw: %s", raw[:1000])
             buffer += raw + "\n"
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
@@ -135,8 +135,9 @@ class AgentProcess:
                 _log.info("Agent process exited during turn")
                 return
 
-            _log.debug("Turn line: %s", line[:200])
+            _log.debug("Turn line: %s", line[:1000])
             for event in self._parser.parse_line(line):
+                _log.info("Parsed event: %s (error: %s)", event.event_type, event.error_message)
                 yield event
                 if event.event_type in (EventType.SESSION_ENDED, EventType.TURN_ENDED):
                     if event.cost_usd is not None or event.duration_ms is not None:

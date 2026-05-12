@@ -388,3 +388,57 @@ async def consult_claude(task: str, files: list[str]) -> str:
 - Option C: Replace bandit with a lighter tool (e.g., `ruff` security rules via `S` prefix) that integrates with existing lint
 
 **Depends on:** Codebase stabilization — do this once the module boundaries stop shifting.
+
+## Frontend Test Infrastructure — vitest + React Testing Library
+
+**What:** Set up vitest with React Testing Library in `apps/web/` and write tests for session creation, event streaming, and component rendering.
+
+**Why:** Zero test coverage in the web app. Every new feature adds untested surface area. The optimistic creation flow has 11 untested code paths (reducer actions, background POST, SSE subscription, abort on destroy, component rendering). MSW (already in node_modules) can mock the SSE/fetch layer.
+
+**Design:**
+- Install vitest + @testing-library/react + jsdom
+- Add `"test": "vitest"` script to package.json
+- Create `apps/web/vitest.config.ts` extending the existing Vite config
+- Priority test files:
+  - `src/hooks/use-session-manager.test.ts` — reducer actions, optimistic creation, error handling
+  - `src/components/session/session-view.test.tsx` — conditional rendering by status
+  - `src/lib/sse.test.ts` — stream parsing, reconnection, abort behavior
+
+**Tradeoffs:**
+- Pro: Catches regressions automatically, enables confident refactoring
+- Pro: MSW already installed — SSE/fetch mocking is straightforward
+- Pro: Vitest integrates natively with Vite (zero config for transforms/aliases)
+- Con: Setup overhead (~30 min), requires learning MSW SSE mocking patterns
+- Con: Adds CI time (likely <10s for unit tests)
+
+**Depends on:** Nothing. Can be done independently at any time.
+
+## Server-Side Async Workspace Creation (202 Pattern)
+
+**What:** Refactor backend to register workspace immediately (return 202 with session_id), then provision sandbox in a background task. Stream real provisioning events via the existing SSE events endpoint.
+
+**Why:** The current `POST /v1/workspaces` blocks for 3-10+ seconds during `sandbox.setup()` (E2B provisioning, git clone, setup script). Client-side optimism is a workaround. The correct architecture lets the server drive the lifecycle with real progress events ("Creating sandbox...", "Cloning repo...", "Running setup...").
+
+**Design:**
+- `POST /v1/workspaces` creates a `WorkspaceInstance` immediately with `status: "starting"`, registers it in the manager, returns 202
+- Provisioning runs in a background `asyncio.Task`
+- `sandbox.setup()` emits lifecycle events during each phase (not just `session.started` at the end)
+- `GET /v1/workspaces/{id}/events` works immediately after POST (workspace is registered)
+- On setup completion: status transitions to `"active"`, `session.started` emitted
+- On setup failure: status transitions to `"failed"`, error event emitted
+
+**Implementation sketch:**
+1. Split `workspace_manager.create_workspace` into `register_workspace` (sync, returns immediately) + `provision_workspace` (async background task)
+2. Add intermediate lifecycle events to `sandbox.setup()`: `setup.phase` events with metadata like `{phase: "sandbox_create"}`, `{phase: "git_clone"}`, `{phase: "setup_script"}`
+3. Update frontend: remove client-side optimistic dispatch, use real server events to drive progress UI
+4. Update `SessionCreatingView` to show real phase names from events
+
+**Tradeoffs:**
+- Pro: Real progress streaming, honest UX, cleaner API contract
+- Pro: Enables real-time setup monitoring for long-running provisions (>10s)
+- Pro: Eliminates all client-side race conditions (destroy-during-create, stale closure, resurrection guard)
+- Con: Significant refactor of workspace_manager.py, sandbox.py, and server.py
+- Con: Must handle "workspace exists but isn't ready" state in all endpoints (prompt, events, etc.)
+- Con: Changes API contract from 200 to 202 (may affect other consumers)
+
+**Depends on:** Nothing blocks starting this. Should be informed by real usage patterns (how long do setups actually take? do users need intermediate progress for 3-5s waits, or only for >10s?). The client-side optimistic creation (current plan) ships first as the immediate UX fix.

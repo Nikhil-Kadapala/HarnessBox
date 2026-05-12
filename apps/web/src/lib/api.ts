@@ -49,20 +49,21 @@ export async function fetchGuards(): Promise<GuardInfo[]> {
   return fetchJSON<GuardInfo[]>("/v1/guards");
 }
 
-export async function createSession(config: CreateSessionRequest): Promise<SessionResponse> {
-  return fetchJSON<SessionResponse>("/v1/sessions", {
+export async function createSession(config: CreateSessionRequest, signal?: AbortSignal): Promise<SessionResponse> {
+  return fetchJSON<SessionResponse>("/v1/workspaces", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
+    signal,
   });
 }
 
 export async function listSessions(): Promise<SessionResponse[]> {
-  return fetchJSON<SessionResponse[]>("/v1/sessions");
+  return fetchJSON<SessionResponse[]>("/v1/workspaces");
 }
 
 export async function destroySession(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/v1/sessions/${id}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}/v1/workspaces/${id}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Failed to destroy session: ${res.status}`);
   }
@@ -73,7 +74,7 @@ export async function sendPermission(
   requestId: string,
   behavior: "allow" | "deny",
 ): Promise<void> {
-  await fetchJSON(`/v1/sessions/${sessionId}/permission`, {
+  await fetchJSON(`/v1/workspaces/${sessionId}/permission`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ request_id: requestId, behavior }),

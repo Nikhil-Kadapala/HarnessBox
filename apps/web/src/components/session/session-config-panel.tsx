@@ -136,7 +136,7 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
         branch,
         auth_token: authToken || undefined,
         clone_depth: cloneDepth ? parseInt(cloneDepth, 10) : undefined,
-        worktree_name: workspaceName || undefined,
+        clone_dir_name: workspaceName || undefined,
       };
     }
 

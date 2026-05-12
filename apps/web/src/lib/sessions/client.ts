@@ -3,7 +3,7 @@ import type { SessionCard, SessionStats } from "./types"
 const API_BASE = "/api"
 
 export async function fetchSessions(): Promise<SessionCard[]> {
-  const response = await fetch(`${API_BASE}/v1/sessions`)
+  const response = await fetch(`${API_BASE}/v1/workspaces`)
   if (!response.ok) {
     throw new Error(`Failed to fetch sessions: ${response.statusText}`)
   }
@@ -15,7 +15,7 @@ export async function transitionSession(
   sessionId: string,
   targetState: string,
 ): Promise<SessionCard> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/transition`, {
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/transition`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_state: targetState }),
@@ -29,7 +29,7 @@ export async function transitionSession(
 }
 
 export async function fetchSessionStats(sessionId: string): Promise<SessionStats> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/stats`)
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/stats`)
   if (!response.ok) {
     return { insertions: 0, deletions: 0, commit_count: 0 }
   }
@@ -37,7 +37,7 @@ export async function fetchSessionStats(sessionId: string): Promise<SessionStats
 }
 
 export async function pauseSession(sessionId: string): Promise<SessionCard> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/pause`, { method: "POST" })
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/pause`, { method: "POST" })
   if (!response.ok) {
     const detail = await response.text()
     throw new Error(detail || "Failed to pause session")
@@ -46,7 +46,7 @@ export async function pauseSession(sessionId: string): Promise<SessionCard> {
 }
 
 export async function resumeSession(sessionId: string): Promise<SessionCard> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/resume`, { method: "POST" })
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/resume`, { method: "POST" })
   if (!response.ok) {
     const detail = await response.text()
     throw new Error(detail || "Failed to resume session")
@@ -55,7 +55,7 @@ export async function resumeSession(sessionId: string): Promise<SessionCard> {
 }
 
 export async function stopSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/stop`, { method: "POST" })
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/stop`, { method: "POST" })
   if (!response.ok) {
     const detail = await response.text()
     throw new Error(detail || "Failed to stop session")
@@ -67,7 +67,7 @@ export async function createPR(
   title: string,
   body: string = "",
 ): Promise<SessionCard> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/pr`, {
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/pr`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title, body }),
@@ -80,7 +80,7 @@ export async function createPR(
 }
 
 export async function refreshPRStatus(sessionId: string): Promise<SessionCard> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/pr/refresh`, {
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/pr/refresh`, {
     method: "POST",
   })
   if (!response.ok) {
@@ -90,7 +90,7 @@ export async function refreshPRStatus(sessionId: string): Promise<SessionCard> {
 }
 
 export async function renameSession(sessionId: string, name: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/v1/sessions/${sessionId}/rename`, {
+  const response = await fetch(`${API_BASE}/v1/workspaces/${sessionId}/rename`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),

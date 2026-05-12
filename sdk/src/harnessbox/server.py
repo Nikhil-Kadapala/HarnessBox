@@ -488,6 +488,7 @@ def create_app(
     async def create_session(req: CreateSessionRequest) -> SessionResponse:
         env_vars = dict(req.env_vars)
         _inject_host_env_vars(env_vars)
+        logger.info("Injected env vars: %s", list(env_vars.keys()))
         credential_files: dict[str, str | Path] = dict(_inject_host_credential_files())
         if "/root/.config/gcloud/application_default_credentials.json" in credential_files:
             env_vars.setdefault(

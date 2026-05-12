@@ -24,7 +24,8 @@ type Action =
   | { type: "set_error"; sessionId: string; error: string }
   | { type: "append_event"; sessionId: string; event: UniversalEvent }
   | { type: "clear_events"; sessionId: string }
-  | { type: "rename_session"; sessionId: string; name: string };
+  | { type: "rename_session"; sessionId: string; name: string }
+  | { type: "update_metadata"; sessionId: string; metadata: Partial<Pick<SessionEntry, "workspaceName" | "branch" | "baseBranch" | "remote">> };
 
 function sessionsReducer(state: SessionMap, action: Action): SessionMap {
   const next = new Map(state);
@@ -76,6 +77,13 @@ function sessionsReducer(state: SessionMap, action: Action): SessionMap {
       }
       return next;
     }
+    case "update_metadata": {
+      const entry = next.get(action.sessionId);
+      if (entry) {
+        next.set(action.sessionId, { ...entry, ...action.metadata });
+      }
+      return next;
+    }
   }
 }
 
@@ -102,6 +110,7 @@ export function useSessionManager() {
   const [sessions, dispatch] = useReducer(sessionsReducer, new Map<string, SessionEntry>());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const abortRefs = useRef<Map<string, AbortController>>(new Map());
+  const destroyedRef = useRef<Set<string>>(new Set());
   const polledRef = useRef(false);
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
@@ -140,37 +149,6 @@ export function useSessionManager() {
       .catch(() => {});
   }, []);
 
-  const createSessionAndActivate = useCallback(
-    async (config: CreateSessionRequest) => {
-      try {
-        const res = await apiCreateSession(config);
-        const entry: SessionEntry = {
-          id: res.session_id,
-          harness: res.harness,
-          status: "active",
-          createdAt: res.created_at,
-          events: [],
-          error: null,
-          workspaceName: res.workspace_name,
-          branch: res.branch,
-          baseBranch: res.base_branch,
-          remote: res.remote,
-        };
-        dispatch({ type: "add_session", entry });
-        setActiveSessionId(res.session_id);
-        return res.session_id;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to create session";
-        throw new Error(message);
-      }
-    },
-    [],
-  );
-
-  const switchSession = useCallback((id: string) => {
-    setActiveSessionId(id);
-  }, []);
-
   const reconnectSession = useCallback(
     async (sessionId: string) => {
       const entry = sessions.get(sessionId);
@@ -181,7 +159,7 @@ export function useSessionManager() {
 
       try {
         for await (const event of streamSSE({
-          url: `/v1/sessions/${sessionId}/events`,
+          url: `/v1/workspaces/${sessionId}/events`,
           method: "GET",
           lastEventId: lastSeq,
           signal: controller.signal,
@@ -203,6 +181,62 @@ export function useSessionManager() {
     [sessions],
   );
 
+  const createSessionOptimistic = useCallback(
+    (config: CreateSessionRequest) => {
+      const sessionId = config.session_id || crypto.randomUUID();
+
+      const entry: SessionEntry = {
+        id: sessionId,
+        harness: config.harness,
+        status: "creating",
+        createdAt: new Date().toISOString(),
+        events: [],
+        error: null,
+        workspaceName: config.workspace?.clone_dir_name,
+        branch: config.workspace?.branch,
+        remote: config.workspace?.remote,
+      };
+      dispatch({ type: "add_session", entry });
+      setActiveSessionId(sessionId);
+
+      const controller = new AbortController();
+      abortRefs.current.set(`create-${sessionId}`, controller);
+
+      apiCreateSession({ ...config, session_id: sessionId }, controller.signal)
+        .then((res) => {
+          abortRefs.current.delete(`create-${sessionId}`);
+
+          if (destroyedRef.current.has(sessionId)) return;
+
+          dispatch({
+            type: "update_metadata",
+            sessionId,
+            metadata: {
+              workspaceName: res.workspace_name,
+              branch: res.branch,
+              baseBranch: res.base_branch,
+              remote: res.remote,
+            },
+          });
+
+          reconnectSession(sessionId);
+        })
+        .catch((err) => {
+          abortRefs.current.delete(`create-${sessionId}`);
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          const message = err instanceof Error ? err.message : "Failed to create session";
+          dispatch({ type: "set_error", sessionId, error: message });
+        });
+
+      return sessionId;
+    },
+    [reconnectSession],
+  );
+
+  const switchSession = useCallback((id: string) => {
+    setActiveSessionId(id);
+  }, []);
+
   const sendPrompt = useCallback(
     async (sessionId: string, prompt: string) => {
       dispatch({ type: "set_status", sessionId, status: "streaming" });
@@ -211,12 +245,15 @@ export function useSessionManager() {
       abortRefs.current.set(sessionId, controller);
 
       try {
+        let eventCount = 0;
         for await (const event of streamSSE({
-          url: `/v1/sessions/${sessionId}/prompt`,
+          url: `/v1/workspaces/${sessionId}/prompt`,
           method: "POST",
           body: { prompt },
           signal: controller.signal,
         })) {
+          eventCount++;
+          console.log(`[SessionManager] Event #${eventCount}:`, event.event_type, event);
           dispatch({ type: "append_event", sessionId, event });
           if (event.event_type === "error" && event.error_message) {
             dispatch({ type: "set_error", sessionId, error: event.error_message });
@@ -227,6 +264,7 @@ export function useSessionManager() {
             dispatch({ type: "set_status", sessionId, status: newStatus });
           }
         }
+        console.log(`[SessionManager] Stream ended. Total events: ${eventCount}`);
         dispatch({ type: "set_status", sessionId, status: "active" });
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -248,10 +286,13 @@ export function useSessionManager() {
 
   const destroySessionById = useCallback(
     async (sessionId: string) => {
+      destroyedRef.current.add(sessionId);
       abortRefs.current.get(sessionId)?.abort();
       abortRefs.current.get(`reconnect-${sessionId}`)?.abort();
+      abortRefs.current.get(`create-${sessionId}`)?.abort();
       abortRefs.current.delete(sessionId);
       abortRefs.current.delete(`reconnect-${sessionId}`);
+      abortRefs.current.delete(`create-${sessionId}`);
 
       try {
         await apiDestroySession(sessionId);
@@ -285,7 +326,7 @@ export function useSessionManager() {
     sessions,
     activeSessionId,
     activeSession,
-    createSession: createSessionAndActivate,
+    createSession: createSessionOptimistic,
     switchSession,
     reconnectSession,
     sendPrompt,

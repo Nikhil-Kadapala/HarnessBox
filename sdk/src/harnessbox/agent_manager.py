@@ -62,7 +62,7 @@ class AgentManager:
             process = self._agents[conversation_id]
             await process.send_prompt(prompt)
 
-            async for event in process.stream_events():
+            async for event in process.stream_turn():
                 # Update conversation_id in event if not set
                 if not event.session_id:
                     event.session_id = conversation_id
@@ -70,12 +70,17 @@ class AgentManager:
                 yield event
 
     async def _spawn_agent(self, conversation_id: str, harness: str) -> None:
-        """Spawn agent process with --resume {conversation_id}."""
+        """Spawn agent process.
+
+        On first spawn, do NOT use --resume (let Claude create new session).
+        The conversation_id will be set from Claude's first response.
+        """
         harness_config = get_harness_type(harness)
 
+        # Do NOT use --resume on first spawn - Claude will create a new session
         cmd = harness_config.build_persistent_command(
             skip_permissions=self._sandbox._skip_permissions,
-            session_id=conversation_id,  # Maps to --resume flag
+            session_id=None,  # No --resume on first spawn
         )
 
         parser = StreamParser(persistent=True)

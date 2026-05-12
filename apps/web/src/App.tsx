@@ -7,8 +7,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { AppSidebar } from "@/components/layout/app-sidebar";
-import { AppHeader } from "@/components/layout/app-header";
+import { HarnessSidebar } from "@/components/layout/harness-sidebar";
+import { HarnessHeader } from "@/components/layout/harness-header";
 import { SessionView } from "@/components/session/session-view";
 import { SessionConfigPanel } from "@/components/session/session-config-panel";
 import { SettingsPanel } from "@/components/settings/settings-panel";
@@ -20,14 +20,11 @@ import type { ActiveView, CreateSessionRequest } from "@/types";
 export default function App() {
   const manager = useSessionManager();
   const [view, setView] = useState<ActiveView>("board");
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [prefillRepoUrl, setPrefillRepoUrl] = useState<string | undefined>();
 
   const handleNewSession = useCallback((repoUrl?: string) => {
     setPrefillRepoUrl(repoUrl);
-    setCreateError(null);
     setSheetOpen(true);
   }, []);
 
@@ -37,25 +34,20 @@ export default function App() {
   }, []);
 
   const handleCreateSession = useCallback(
-    async (config: CreateSessionRequest) => {
-      setIsCreating(true);
-      setCreateError(null);
-      try {
-        const storedKeys = getStoredValue<{ name: string; value: string }[]>("api-keys", []);
-        const mergedEnv = { ...config.env_vars };
-        for (const k of storedKeys) {
-          if (k.name && k.value && !(k.name in mergedEnv)) {
-            mergedEnv[k.name] = k.value;
-          }
+    (config: CreateSessionRequest) => {
+      const storedKeys = getStoredValue<{ name: string; value: string }[]>("api-keys", []);
+      const mergedEnv = { ...config.env_vars };
+      for (const k of storedKeys) {
+        if (k.name && k.value && !(k.name in mergedEnv)) {
+          mergedEnv[k.name] = k.value;
         }
-        await manager.createSession({ ...config, env_vars: mergedEnv });
-        handleCloseSheet();
-        setView("session");
-      } catch (err) {
-        setCreateError(err instanceof Error ? err.message : "Failed to create session");
-      } finally {
-        setIsCreating(false);
       }
+
+      const sessionId = crypto.randomUUID();
+      manager.createSession({ ...config, env_vars: mergedEnv, session_id: sessionId });
+
+      handleCloseSheet();
+      setView("session");
     },
     [manager, handleCloseSheet],
   );
@@ -68,13 +60,14 @@ export default function App() {
     [manager],
   );
 
-  const handleOpenSettings = useCallback(() => {
+  const handleNavigateToBoard = useCallback(() => {
+    setView("board");
+  }, []);
+
+  const handleNavigateToSettings = useCallback(() => {
     setView("settings");
   }, []);
 
-  const handleOpenBoard = useCallback(() => {
-    setView("board");
-  }, []);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {
@@ -94,19 +87,18 @@ export default function App() {
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <AppSidebar
+        <HarnessSidebar
           sessions={manager.sessions}
           activeSessionId={manager.activeSessionId}
           onSelectSession={handleSelectSession}
           onNewSession={handleNewSession}
-          onOpenSettings={handleOpenSettings}
-          onOpenBoard={handleOpenBoard}
           onDestroySession={manager.destroySession}
+          currentView={view}
+          onNavigateToBoard={handleNavigateToBoard}
+          onNavigateToSettings={handleNavigateToSettings}
         />
         <SidebarInset>
-          {view !== "board" && (
-            <AppHeader session={manager.activeSession} onRenameSession={manager.renameSession} />
-          )}
+          <HarnessHeader session={view === "session" ? manager.activeSession : null} />
           <div className="flex flex-1 flex-col min-h-0">
             {view === "settings" && (
               <SettingsPanel
@@ -145,15 +137,9 @@ export default function App() {
             <SheetHeader>
               <SheetTitle>New Session</SheetTitle>
             </SheetHeader>
-            {createError && (
-              <div className="mx-4 rounded border border-destructive/50 bg-destructive/10 px-3 py-2">
-                <span className="text-xs text-destructive">{createError}</span>
-              </div>
-            )}
             <SessionConfigPanel
               onSubmit={handleCreateSession}
               onCancel={handleCloseSheet}
-              disabled={isCreating}
               defaultRepoUrl={prefillRepoUrl}
             />
           </SheetContent>

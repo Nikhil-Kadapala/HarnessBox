@@ -50,7 +50,12 @@ export async function* streamSSE(config: SSEConfig): AsyncGenerator<UniversalEve
         buffer = buffer.slice(sepIndex + 2);
 
         const event = parseSSEChunk(chunk);
-        if (event) yield event;
+        if (event) {
+          console.log('[SSE] Parsed event:', event.event_type, event);
+          yield event;
+        } else {
+          console.log('[SSE] Skipped chunk:', chunk.substring(0, 100));
+        }
 
         sepIndex = buffer.indexOf("\n\n");
       }

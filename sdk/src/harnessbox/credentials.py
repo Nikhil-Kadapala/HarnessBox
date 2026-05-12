@@ -149,7 +149,11 @@ def build_claude_env_vars() -> dict[str, str]:
     corresponding credentials (AWS for Bedrock, GCP for Vertex, or
     ANTHROPIC_API_KEY for direct API).
     """
+    import logging
+    logger = logging.getLogger("harnessbox.credentials")
+
     mode = detect_claude_auth_mode()
+    logger.info("Detected Claude auth mode: %s", mode)
     if mode is None:
         return {}
 
@@ -158,6 +162,7 @@ def build_claude_env_vars() -> dict[str, str]:
     if mode == "bedrock":
         envs["CLAUDE_CODE_USE_BEDROCK"] = "1"
         _inject_aws_creds(envs)
+        logger.info("Built Bedrock env vars: %s", list(envs.keys()))
 
     elif mode == "vertex":
         envs["CLAUDE_CODE_USE_VERTEX"] = "1"
@@ -179,6 +184,9 @@ def _inject_val(envs: dict[str, str], key: str) -> None:
 
 def _inject_aws_creds(envs: dict[str, str]) -> None:
     """Inject AWS credentials from env vars or ~/.aws/credentials + config."""
+    import logging
+    logger = logging.getLogger("harnessbox.credentials")
+
     _inject_val(envs, "AWS_ACCESS_KEY_ID")
     _inject_val(envs, "AWS_SECRET_ACCESS_KEY")
     _inject_val(envs, "AWS_SESSION_TOKEN")
@@ -187,7 +195,12 @@ def _inject_aws_creds(envs: dict[str, str]) -> None:
     _inject_val(envs, "AWS_PROFILE")
 
     if "AWS_ACCESS_KEY_ID" not in envs:
+        logger.info("AWS_ACCESS_KEY_ID not in env, reading from ~/.aws/credentials")
         _read_aws_credentials_file(envs)
+        if "AWS_ACCESS_KEY_ID" in envs:
+            logger.info("Successfully read AWS credentials from file")
+        else:
+            logger.warning("Failed to read AWS credentials from file")
 
     if "AWS_REGION" not in envs and "AWS_DEFAULT_REGION" not in envs:
         _read_aws_config_region(envs)

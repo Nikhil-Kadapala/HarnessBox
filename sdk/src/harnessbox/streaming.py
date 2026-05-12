@@ -538,9 +538,16 @@ class StreamParser:
     # -- result (final) ----------------------------------------------------
 
     def _parse_result(self, data: dict[str, Any]) -> UniversalEvent | list[UniversalEvent]:
+        import logging
+        logger = logging.getLogger("harnessbox.streaming")
+
         sid = data.get("session_id")
         if sid:
             self._session_id = sid
+
+        is_error = data.get("is_error", False)
+        if is_error:
+            logger.error("Claude agent error - result data: %s", data)
 
         events: list[UniversalEvent] = []
 
@@ -557,7 +564,6 @@ class StreamParser:
                 )
             )
 
-        is_error = data.get("is_error", False)
         result_text = data.get("result", "")
         if isinstance(result_text, dict):
             result_text = result_text.get("text", str(result_text))
