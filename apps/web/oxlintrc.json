@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "react/jsx-key": "warn",
+    "react/jsx-no-target-blank": "warn",
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn"
+  },
+  "ignore": [
+    "dist",
+    "node_modules",
+    "*.config.ts",
+    "*.config.js"
+  ]
+}
