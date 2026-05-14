@@ -16,7 +16,7 @@ class MockProvider:
     def __init__(self) -> None:
         self._sandbox_id: str | None = None
         self._running = False
-        self._files: dict[str, str] = {}
+        self._files: dict[str, str | bytes] = {}
         self._dirs: list[str] = []
         self._commands: list[str] = []
         self._env_vars: dict[str, str] = {}
@@ -61,13 +61,14 @@ class MockProvider:
             raise RuntimeError("Not running")
         return f"snapshot-{self._sandbox_id}"
 
-    async def write_file(self, path: str, content: str) -> None:
+    async def write_file(self, path: str, content: str | bytes) -> None:
         self._files[path] = content
 
     async def read_file(self, path: str) -> str:
         if path not in self._files:
             raise FileNotFoundError(path)
-        return self._files[path]
+        content = self._files[path]
+        return content if isinstance(content, str) else content.decode()
 
     async def make_dir(self, path: str) -> None:
         self._dirs.append(path)

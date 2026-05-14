@@ -72,8 +72,8 @@ class TestMigrationRunner:
         migrations.MIGRATIONS.append("harnessbox._storage.migrations._fake_broken")
 
         # Create a fake module that raises during upgrade
-        import types
         import sys
+        import types
 
         fake_module = types.ModuleType("harnessbox._storage.migrations._fake_broken")
 

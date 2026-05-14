@@ -40,6 +40,7 @@ class EventType(str, Enum):
     INPUT_REQUESTED = "input.requested"
     CONTEXT_UPDATE = "context.update"
     COST_UPDATE = "cost.update"
+    USER_PROMPT = "user.prompt"
 
 
 class ItemKind(str, Enum):
@@ -108,6 +109,19 @@ class ContentPart:
     call_id: str | None = None
     file_path: str | None = None
     file_action: str | None = None
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A file or image attached to a user prompt."""
+
+    attachment_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    data_b64: str | None = None
+    storage_path: str | None = None
+    sandbox_path: str | None = None
 
 
 # ---------------------------------------------------------------------------

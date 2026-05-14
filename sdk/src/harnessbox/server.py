@@ -239,10 +239,19 @@ class PRRequest(BaseModel):
     body: str = ""
 
 
+class AttachmentPayload(BaseModel):
+    """A single attachment in a prompt request."""
+
+    filename: str
+    mime_type: str = "application/octet-stream"
+    data_b64: str
+
+
 class PromptRequest(BaseModel):
     """Request body for sending a prompt to the agent."""
 
     prompt: str
+    attachments: list[AttachmentPayload] = []
 
 
 class TransitionRequest(BaseModel):
@@ -852,6 +861,11 @@ def create_app(
 
     @app.post("/v1/workspaces/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
+        import base64
+        import uuid as _uuid
+
+        from harnessbox.streaming import Attachment
+
         try:
             info = mgr.get_workspace(session_id)
         except WorkspaceNotFoundError as exc:
@@ -867,11 +881,46 @@ def create_app(
                 },
             )
 
+        attachments: list[Attachment] = []
+        total_size = 0
+        for att in req.attachments:
+            raw = base64.b64decode(att.data_b64)
+            total_size += len(raw)
+            if total_size > 10 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Total attachment size exceeds 10MB")
+
+            att_id = str(_uuid.uuid4())
+            size = len(raw)
+
+            if size >= 1024 * 1024:
+                att_dir = Path.home() / ".harnessbox" / "attachments" / session_id
+                att_dir.mkdir(parents=True, exist_ok=True)
+                file_path = att_dir / f"{att_id}_{att.filename}"
+                file_path.write_bytes(raw)
+                attachments.append(Attachment(
+                    attachment_id=att_id,
+                    filename=att.filename,
+                    mime_type=att.mime_type,
+                    size_bytes=size,
+                    data_b64=None,
+                    storage_path=str(file_path),
+                ))
+            else:
+                attachments.append(Attachment(
+                    attachment_id=att_id,
+                    filename=att.filename,
+                    mime_type=att.mime_type,
+                    size_bytes=size,
+                    data_b64=att.data_b64,
+                ))
+
         async def event_generator() -> Any:
             logger.info("SSE stream started for session %s", session_id)
             event_count = 0
             try:
-                async for event in mgr.prompt(session_id, req.prompt):
+                async for event in mgr.prompt(
+                    session_id, req.prompt, attachments=attachments or None
+                ):
                     event_count += 1
                     logger.info(
                         "SSE event #%d: %s (kind=%s)",

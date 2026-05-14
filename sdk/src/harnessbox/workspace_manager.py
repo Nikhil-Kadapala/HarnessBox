@@ -29,7 +29,8 @@ from harnessbox.agent_manager import AgentManager
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
-from harnessbox.streaming import UniversalEvent
+from harnessbox.streaming import Attachment, ContentPart, UniversalEvent
+from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -391,6 +392,7 @@ class WorkspaceManager:
         prompt: str,
         *,
         conversation_id: str | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> AsyncGenerator[UniversalEvent, None]:
         """Send prompt to workspace (auto-resumes if paused).
 
@@ -398,7 +400,10 @@ class WorkspaceManager:
             workspace_id: Target workspace
             prompt: Prompt text
             conversation_id: Specific conversation (generates UUID if None)
+            attachments: Files/images to write to sandbox and reference in prompt
         """
+        import base64
+
         info = self.get_workspace(workspace_id)
 
         if info.sandbox is None:
@@ -425,8 +430,73 @@ class WorkspaceManager:
             await self._storage.update_workspace(workspace_id, last_active=info.last_active)
 
         async with self._locks[workspace_id]:
+            # Write attachments to sandbox and build metadata
+            resolved_attachments: list[Attachment] = []
+            if attachments:
+                cwd = info.sandbox._cwd or "/workspace"
+                for att in attachments:
+                    sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{att.filename}"
+                    await info.sandbox._provider.make_dir(
+                        f"{cwd}/.attachments/{att.attachment_id}"
+                    )
+                    raw_data = base64.b64decode(
+                        att.data_b64 or ""
+                    ) if att.data_b64 else (
+                        Path(att.storage_path).read_bytes() if att.storage_path else b""
+                    )
+                    if raw_data:
+                        await info.sandbox._provider.write_file(sandbox_path, raw_data)
+                    resolved_attachments.append(Attachment(
+                        attachment_id=att.attachment_id,
+                        filename=att.filename,
+                        mime_type=att.mime_type,
+                        size_bytes=att.size_bytes,
+                        data_b64=att.data_b64,
+                        storage_path=att.storage_path,
+                        sandbox_path=sandbox_path,
+                    ))
+
+            # Emit USER_PROMPT event
+            attachment_meta = [
+                {
+                    "attachment_id": a.attachment_id,
+                    "filename": a.filename,
+                    "mime_type": a.mime_type,
+                    "size_bytes": a.size_bytes,
+                    "sandbox_path": a.sandbox_path,
+                    **({"data_b64": a.data_b64} if a.data_b64 and a.size_bytes < 1024 * 1024 else {}),
+                }
+                for a in resolved_attachments
+            ]
+            user_prompt_event = UniversalEvent(
+                event_id=str(uuid.uuid4()),
+                sequence=0,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                session_id=conversation_id,
+                event_type=StreamEventType.USER_PROMPT,
+                content=(ContentPart(type="text", text=prompt),),
+                metadata={
+                    "conversation_id": conversation_id,
+                    **({"attachments": attachment_meta} if attachment_meta else {}),
+                },
+            )
+            if info.sandbox._event_buffer:
+                await info.sandbox._event_buffer.push(user_prompt_event)
+            yield user_prompt_event
+
+            # Augment prompt with file references for the agent
+            augmented_prompt = prompt
+            if resolved_attachments:
+                file_list = "\n".join(
+                    f"- {a.sandbox_path}" for a in resolved_attachments
+                )
+                augmented_prompt = f"{prompt}\n\n[Attached files written to sandbox:\n{file_list}]"
+
+            # Save conversation on first agent event
             first_event = True
-            async for event in info.agent_manager.send_message(conversation_id, prompt):
+            async for event in info.agent_manager.send_message(
+                conversation_id, augmented_prompt
+            ):
                 if (
                     event.event_type == "error"
                     and event.metadata.get("error_code") == "SANDBOX_DEAD"
@@ -436,7 +506,6 @@ class WorkspaceManager:
                 if event.cost_usd is not None:
                     info.total_cost_usd = event.cost_usd
 
-                # Save conversation on first event
                 if first_event and self._storage:
                     first_event = False
                     try:
@@ -445,7 +514,7 @@ class WorkspaceManager:
                                 "conversation_id": conversation_id,
                                 "workspace_id": workspace_id,
                                 "agent_type": info.harness,
-                                "title": prompt[:50],  # First 50 chars as title
+                                "title": prompt[:50],
                                 "last_active": datetime.now(timezone.utc).isoformat(),
                             }
                         )

@@ -42,6 +42,7 @@ from harnessbox.security.guards import (
 from harnessbox.security.policy import SecurityPolicy, build_settings
 from harnessbox.streaming import (
     AgentStreamEvent,
+    Attachment,
     ContentPart,
     ItemKind,
     ItemStatus,
@@ -76,6 +77,7 @@ __all__ = [
     "validate_transition",
     # Streaming
     "AgentStreamEvent",
+    "Attachment",
     "ContentPart",
     "InteractiveSession",
     "ItemKind",

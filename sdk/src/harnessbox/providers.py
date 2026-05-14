@@ -62,8 +62,8 @@ class SandboxProvider(Protocol):
         """Create a point-in-time snapshot and return its identifier."""
         ...
 
-    async def write_file(self, path: str, content: str) -> None:
-        """Write text content to a file in the sandbox."""
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        """Write content to a file in the sandbox."""
         ...
 
     async def read_file(self, path: str) -> str:

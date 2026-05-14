@@ -118,7 +118,7 @@ class E2BProvider:
 
     # -- File I/O --
 
-    async def write_file(self, path: str, content: str) -> None:
+    async def write_file(self, path: str, content: str | bytes) -> None:
         await self._sandbox.files.write(path, content)
 
     async def read_file(self, path: str) -> str:
