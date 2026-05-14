@@ -154,34 +154,6 @@ class StorageBackend(Protocol):
         """
         ...
 
-    # -- Legacy Session CRUD (for backward compat during transition) --
-
-    async def save_session(self, session_record: dict[str, Any]) -> None:
-        """DEPRECATED: Use save_workspace() instead."""
-        ...
-
-    async def get_session(self, session_id: str) -> dict[str, Any] | None:
-        """DEPRECATED: Use get_workspace() instead."""
-        ...
-
-    async def list_sessions(
-        self,
-        *,
-        status: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[dict[str, Any]]:
-        """DEPRECATED: Use list_workspaces() instead."""
-        ...
-
-    async def update_session(self, session_id: str, **fields: Any) -> None:
-        """DEPRECATED: Use update_workspace() instead."""
-        ...
-
-    async def delete_session(self, session_id: str) -> None:
-        """DEPRECATED: Use delete_workspace() instead."""
-        ...
-
     # -- Event persistence --
 
     async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
@@ -225,6 +197,27 @@ class StorageBackend(Protocol):
         """
         ...
         yield {}  # Type hint for AsyncGenerator
+
+    # -- Cost history --
+
+    async def get_cost_history(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get cost update events for a workspace, most recent first.
+
+        Queries the events table for event_type='cost_update'.
+
+        Args:
+            workspace_id: Workspace whose cost history to retrieve.
+            limit: Maximum number of cost events to return.
+
+        Returns:
+            List of event dicts containing cost data, newest first.
+        """
+        ...
 
     # -- Lifecycle --
 

@@ -180,3 +180,17 @@ All tests use `MockProvider` from `sdk/tests/conftest.py` — an in-memory provi
 - Mypy strict for `harnessbox/`, relaxed for `tests/`
 - `uv` for dependency management (not pip)
 - Conventional commits: `feat:`, `fix:`, `docs:`, `test:`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (`Nikhil-Kadapala/HarnessBox`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

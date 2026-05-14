@@ -645,6 +645,128 @@ Network reachability consideration:
 
 **Depends on:** Nothing blocks starting this. Should be informed by real usage patterns (how long do setups actually take? do users need intermediate progress for 3-5s waits, or only for >10s?). The client-side optimistic creation (current plan) ships first as the immediate UX fix.
 
+## Data Structure Optimizations — Scale-Ready Internals
+
+**What:** Replace O(N) linear scans with indexed lookups in three hot paths that will become bottlenecks at multi-tenant scale.
+
+**Why:** Current data structures are correct for single-digit sessions but degrade linearly as workspace/session count grows. These are cheap wins — straightforward index additions, no architectural changes.
+
+### 1. Workspace pool lookup — secondary index for (remote, branch)
+
+**Location:** `workspace_manager.py` — `find_by_repo_branch()` (line ~459), `get_or_create_workspace()` (line ~490)
+
+**Problem:** Both methods do O(N) scans over all workspaces to find a match by `(remote, branch)`. Called on every session creation (pool hit check) and resume.
+
+**Fix:** Add `_repo_branch_index: dict[tuple[str, str], str]` mapping `(remote, branch) → workspace_id`. Update on create/destroy/transition. Lookups become O(1).
+
+```python
+# On create:
+self._repo_branch_index[(info.remote, info.branch)] = workspace_id
+
+# On lookup:
+def find_by_repo_branch(self, remote: str, branch: str) -> WorkspaceInstance | None:
+    wid = self._repo_branch_index.get((remote, branch))
+    return self._workspaces.get(wid) if wid else None
+```
+
+### 2. Event replay — bisect on monotonic sequence
+
+**Location:** `events.py` — `replay(after_sequence)` (line ~127)
+
+**Problem:** SSE reconnect triggers `[e for e in self._ring if e.sequence > after_sequence]` — scans all 1024 slots. Called on every client reconnect (tab switch, network hiccup, mobile wake).
+
+**Fix:** Since the ring buffer is a deque with monotonically increasing sequences, use `bisect` to find the start index in O(log N), then slice from there.
+
+```python
+import bisect
+
+def replay(self, after_sequence: int) -> list[UniversalEvent]:
+    sequences = [e.sequence for e in self._ring]
+    start = bisect.bisect_right(sequences, after_sequence)
+    return list(itertools.islice(self._ring, start, len(self._ring)))
+```
+
+### 3. Auto-pause idle detection — heap-based expiry
+
+**Location:** `workspace_manager.py` — `_run_auto_pause()` background task (line ~632)
+
+**Problem:** Scans all workspaces every 60 seconds, parses ISO timestamps for each, checks if idle exceeds threshold. At 100 workspaces this is still trivially fast, but it's wasteful design.
+
+**Fix:** Maintain a `heapq` sorted by `last_active + timeout` (next expiry time). The background task sleeps until the nearest expiry, pops expired workspaces in O(log N), and re-heaps on activity.
+
+```python
+import heapq
+
+# _expiry_heap: list[tuple[float, str]]  # (expiry_timestamp, workspace_id)
+
+async def _run_auto_pause(self) -> None:
+    while True:
+        if not self._expiry_heap:
+            await asyncio.sleep(60)
+            continue
+        next_expiry, wid = self._expiry_heap[0]
+        sleep_for = max(0, next_expiry - time.time())
+        await asyncio.sleep(sleep_for)
+        # Pop and pause all expired
+        while self._expiry_heap and self._expiry_heap[0][0] <= time.time():
+            _, expired_wid = heapq.heappop(self._expiry_heap)
+            await self._pause_workspace(expired_wid)
+```
+
+### Priority
+
+Implement in this order based on call frequency:
+1. **Event replay bisect** — highest call frequency (every SSE reconnect)
+2. **Workspace pool index** — called on every session create/resume
+3. **Heap-based auto-pause** — lowest priority (background task, 60s cadence)
+
+**Depends on:** Nothing. Can be done independently at any time. Best done when we have >10 concurrent workspaces in testing to validate the improvement.
+
+## Auth Gateway — Per-User Process Isolation for Paid Tier
+
+**What:** A lightweight gateway service that authenticates users (JWT/API key) and routes requests to per-user HarnessBox instances. Each user gets their own process with their own SQLite database. Multi-tenancy is handled by architecture (process isolation) not code (user_id filtering + RLS).
+
+**Why:** The alternative (shared-DB multi-tenancy with Supabase + RLS + user_id plumbing through every SDK method) adds complexity to the SDK core, risks cross-tenant data leaks from missed WHERE clauses, and requires dual migration systems. Per-user isolation keeps the SDK single-tenant (simpler, more secure) and pushes auth to the infrastructure layer where it belongs.
+
+**Architecture:**
+```
+Internet → Auth Gateway (validates JWT/API key, routes by user)
+               │
+               ├── user-A → harnessbox serve (port 8001, ~/.harnessbox-A/sessions.db)
+               ├── user-B → harnessbox serve (port 8002, ~/.harnessbox-B/sessions.db)
+               └── user-C → harnessbox serve (port 8003, ~/.harnessbox-C/sessions.db)
+```
+
+**Gateway responsibilities:**
+- JWT validation (Supabase Auth or any OIDC provider)
+- API key validation (hash-based lookup against a users table)
+- Request routing: authenticated user → their HarnessBox instance
+- Process lifecycle: spawn on first request, idle-pause after timeout, resume on next request
+- Billing hooks: meter API calls and sandbox minutes per user
+
+**Implementation options:**
+- Cloudflare Workers / Durable Objects (serverless, auto-scaling)
+- Caddy reverse proxy + systemd per-user services (simple, self-hosted)
+- Kubernetes with per-user pods (enterprise scale)
+- Simple Python supervisor (MVP: asyncio process manager)
+
+**Trigger:** Build this when the first paying user materializes. Until then, `harnessbox serve` with SQLite is the complete product for OSS and single-user paid.
+
+**Depends on:** Phase A (SQLite defaults + CLI) must ship first so `harnessbox serve` works standalone.
+
+## WorkspaceManager.prompt() Refactor — Extract Responsibilities
+
+**What:** The `prompt()` method in `workspace_manager.py` has accumulated too many responsibilities: conversation state management, SANDBOX_DEAD error transitions, event streaming, and status polling. Extract into focused sub-methods before it grows further.
+
+**Why:** Adding any new per-turn logic (cost queries, context tracking, session analytics) to this method makes it harder to test, harder to reason about, and harder to modify one concern without touching others. Currently ~60 lines but growing.
+
+**Design:**
+- Extract `_handle_conversation_state(workspace_id, prompt)` — manages conversation lookup/creation and last_active updates
+- Extract `_handle_stream_error(workspace_id, error)` — SANDBOX_DEAD detection, state transitions, error event emission
+- `prompt()` becomes: validate state → handle conversation → delegate to sandbox.send_message → handle errors
+
+**Depends on:** Nothing. Can be done independently. Best done before adding more per-turn logic.
+
 ## Cost Tracking — Per-Turn Breakdown
 
 **What:** Store cost data per turn (not just per-session aggregate). Track which prompts were expensive vs cheap.

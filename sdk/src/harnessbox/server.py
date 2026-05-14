@@ -266,24 +266,26 @@ class PermissionRequest(BaseModel):
 def create_app(
     *,
     manager: WorkspaceManager | None = None,
-    storage: str | StorageBackend | None = None,
+    storage: str | StorageBackend | None = "sqlite",
 ) -> FastAPI:
-    """Create a FastAPI app with optional persistent storage.
+    """Create a FastAPI app with persistent storage (SQLite by default).
 
     Args:
         manager: Existing WorkspaceManager instance (or None to create).
-        storage: Storage backend name ("memory", "sqlite") or instance.
-                 If None, sessions are in-memory only (lost on restart).
+        storage: Storage backend name ("memory", "sqlite"), instance, or None.
+                 Defaults to "sqlite" for persistent sessions across restarts.
+                 Pass None for pure in-memory (tests only).
 
     Returns:
         FastAPI app ready to run with uvicorn.
 
     Example:
-        >>> app = create_app(storage="sqlite")
-        >>> # OR
+        >>> app = create_app()  # SQLite at ~/.harnessbox/sessions.db
+        >>> app = create_app(storage="memory")  # In-memory (no persistence)
+        >>> # OR custom path:
         >>> from harnessbox._storage import get_storage_backend
         >>> backend_cls = get_storage_backend("sqlite")
-        >>> storage = backend_cls(path="~/.harnessbox/sessions.db")
+        >>> storage = backend_cls(path="./my-sessions.db")
         >>> app = create_app(storage=storage)
     """
     # Resolve storage backend by name if string
