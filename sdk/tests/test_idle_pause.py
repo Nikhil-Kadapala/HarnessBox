@@ -173,8 +173,8 @@ class TestEnsureAgentReady:
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
 
         with patch.object(sandbox, "_agent_process", None):
-            # Mock start_persistent on provider
-            provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+            # Mock start_session on provider
+            provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
             await sandbox._ensure_agent_ready()
             assert sandbox._agent_process is not None
 
@@ -184,8 +184,8 @@ class TestEnsureAgentReady:
         sandbox._paused_sandbox_id = "mock-sandbox-123"
         provider._running = False  # type: ignore[attr-defined]
 
-        # Mock start_persistent on provider
-        provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+        # Mock start_session on provider
+        provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
         await sandbox._ensure_agent_ready()
         assert sandbox._state == WorkspaceState.ACTIVE
         assert sandbox._paused_sandbox_id is None
@@ -202,7 +202,7 @@ class TestEnsureAgentReady:
         dead_process.is_running = False
         sandbox._agent_process = dead_process
 
-        provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+        provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
         await sandbox._ensure_agent_ready()
         assert sandbox._agent_process is not dead_process
 

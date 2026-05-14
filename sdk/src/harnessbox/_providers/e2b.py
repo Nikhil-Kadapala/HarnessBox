@@ -154,15 +154,15 @@ class E2BProvider:
     async def send_stdin(self, pid: int, data: str) -> None:
         await self._sandbox.commands.send_stdin(pid, data)
 
-    # -- Persistent process (E2B-specific) --
+    # -- Session process (long-lived stdin/stdout) --
 
-    async def start_persistent(
+    async def start_session(
         self,
         command: str,
         cwd: str,
         on_stdout: Any,
     ) -> int:
-        """Start a long-lived background process with stdin + stdout streaming.
+        """Start a long-lived session process with stdin + stdout streaming.
 
         Returns the PID. The process stays alive until killed. Use
         ``send_stdin(pid, data)`` to write JSON lines to the process.

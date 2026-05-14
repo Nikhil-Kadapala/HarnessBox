@@ -109,13 +109,13 @@ class SandboxProvider(Protocol):
 
 
 @runtime_checkable
-class PersistentProcessCapable(Protocol):
-    """Provider supports long-lived agent processes with stdin/stdout control."""
+class SessionProcessCapable(Protocol):
+    """Provider supports long-lived agent sessions with stdin/stdout control."""
 
-    async def start_persistent(
+    async def start_session(
         self, command: str, cwd: str, on_stdout: Callable[[Any], None]
     ) -> int:
-        """Start a persistent process and return its PID."""
+        """Start a session process and return its PID."""
         ...
 
 

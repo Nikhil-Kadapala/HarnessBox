@@ -111,6 +111,7 @@ class Sandbox:
         security_policy: SecurityPolicy | None = None,
         harness: str = "claude-code",
         model: str | None = None,
+        one_shot: bool = False,
         system_prompt: str | Path | None = None,
         skills: list[str | Path] | None = None,
         skill_installs: list[str] | None = None,
@@ -167,6 +168,7 @@ class Sandbox:
         """
         self._harness_config: HarnessTypeConfig = get_harness_type(harness)
         self._model = model
+        self._one_shot = one_shot
 
         if isinstance(client, str):
             effective_template = template or self._harness_config.default_template
@@ -769,8 +771,12 @@ class Sandbox:
         try:
             self._cancel_idle_timer()
 
-            use_persistent = self._harness_config.supports_persistent and hasattr(
-                self._provider, "start_persistent"
+            from harnessbox.providers import SessionProcessCapable
+
+            use_persistent = (
+                self._harness_config.supports_persistent
+                and isinstance(self._provider, SessionProcessCapable)
+                and not self._one_shot
             )
             if use_persistent:
                 await self._ensure_agent_ready()
