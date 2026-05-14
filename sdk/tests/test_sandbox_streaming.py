@@ -33,7 +33,7 @@ class TestRunPromptEvents:
             ),
             json.dumps({"type": "result", "session_id": "s-1", "duration_ms": 100}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         events = []
@@ -61,7 +61,7 @@ class TestRunPromptEvents:
             ),
             "not json at all",
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         events = []
@@ -78,7 +78,7 @@ class TestSessionIdTracking:
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "sess-abc", "duration_ms": 500}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
         assert sb.agent_session_id is None
 
@@ -92,7 +92,7 @@ class TestSessionIdTracking:
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "sess-123", "duration_ms": 100}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         async for _ in sb.run_prompt_events("first"):
@@ -115,7 +115,7 @@ class TestSessionIdTracking:
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "raw-sess"}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         async for _ in sb.run_prompt("test"):

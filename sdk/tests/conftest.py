@@ -88,6 +88,10 @@ class MockProvider:
         on_stdout: Any,
     ) -> int:
         self._commands.append(command)
+        self._on_stdout = on_stdout
+        if self._stream_lines:
+            for line in self._stream_lines:
+                on_stdout(type("Data", (), {"line": line})())
         return self._background_pid
 
     async def send_stdin(self, pid: int, data: str) -> None:

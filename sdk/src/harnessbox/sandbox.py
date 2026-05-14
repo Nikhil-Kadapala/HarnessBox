@@ -791,7 +791,7 @@ class Sandbox:
                     await self._event_buffer.push(event)
                     yield event
 
-                for status_event in await self._poll_session_events():
+                for status_event in await self._poll_status_events():
                     await self._event_buffer.push(status_event)
                     yield status_event
 
