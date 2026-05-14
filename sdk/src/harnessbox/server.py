@@ -33,7 +33,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import Response
     from pydantic import BaseModel, field_validator
-    from sse_starlette.sse import EventSourceResponse
+    from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 except ImportError as e:
     raise ImportError(
         "Server dependencies not installed. Run: pip install harnessbox[server]"
@@ -875,19 +875,19 @@ def create_app(
                         event.event_type,
                         event.item_kind,
                     )
-                    yield {
-                        "event": "message",
-                        "id": str(event.sequence),
-                        "data": json.dumps(event.to_dict()),
-                    }
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
             except RuntimeError as exc:
                 logger.error("Stream error for session %s: %s", session_id, exc)
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"event_type": "error", "error_message": str(exc)}),
-                }
+                yield ServerSentEvent(
+                    data=json.dumps({"event_type": "error", "error_message": str(exc)}),
+                    event="message",
+                )
             logger.info("SSE stream ended for session %s (%d events)", session_id, event_count)
-            yield {"event": "message", "data": "[DONE]"}
+            yield ServerSentEvent(data="[DONE]", event="message")
 
         return EventSourceResponse(event_generator())
 
@@ -910,11 +910,11 @@ def create_app(
 
         async def event_generator() -> Any:
             async for event in info.sandbox.event_buffer.stream(last_seq):
-                yield {
-                    "event": "message",
-                    "id": str(event.sequence),
-                    "data": json.dumps(event.to_dict()),
-                }
+                yield ServerSentEvent(
+                    data=json.dumps(event.to_dict()),
+                    event="message",
+                    id=str(event.sequence),
+                )
 
         return EventSourceResponse(event_generator(), ping=15)
 
@@ -959,14 +959,13 @@ def create_app(
             async for event_record in mgr._storage.get_events(
                 session_id, after_sequence=after_sequence, limit=limit
             ):
-                # Deserialize event_json
                 try:
                     event_data = json.loads(event_record["event_json"])
-                    yield {
-                        "event": "message",
-                        "id": str(event_record["sequence"]),
-                        "data": json.dumps(event_data),
-                    }
+                    yield ServerSentEvent(
+                        data=json.dumps(event_data),
+                        event="message",
+                        id=str(event_record["sequence"]),
+                    )
                 except json.JSONDecodeError as e:
                     logger.error(f"Malformed event_json for event {event_record['event_id']}: {e}")
 

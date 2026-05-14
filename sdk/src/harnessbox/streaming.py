@@ -36,6 +36,8 @@ class EventType(str, Enum):
     PERMISSION_REQUESTED = "permission.requested"
     PERMISSION_RESOLVED = "permission.resolved"
     STATUS = "status"
+    CONTEXT_UPDATE = "context.update"
+    COST_UPDATE = "cost.update"
 
 
 class ItemKind(str, Enum):

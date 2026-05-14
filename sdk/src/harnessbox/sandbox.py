@@ -785,8 +785,7 @@ class Sandbox:
                     await self._event_buffer.push(event)
                     yield event
 
-                status_event = await self._poll_session_status()
-                if status_event:
+                for status_event in await self._poll_session_events():
                     await self._event_buffer.push(status_event)
                     yield status_event
 
@@ -845,88 +844,67 @@ class Sandbox:
             # Non-sandbox errors: re-raise
             raise
 
-    async def _poll_session_status(self) -> UniversalEvent | None:
-        """Poll /context and /cost after a turn and emit a STATUS event."""
+    async def _poll_status_events(self) -> list[UniversalEvent]:
+        """Poll /context and /cost after a turn, emit typed events."""
         if not self._agent_process or not self._agent_process.is_running:
-            return None
+            return []
         try:
             context_data = await self._agent_process.send_command("/context", timeout=5)
             cost_data = await self._agent_process.send_command("/cost", timeout=5)
         except asyncio.TimeoutError:
-            # Transient timeout — swallow, log warning, don't crash
             _log.warning("Status poll timed out")
-            return None
-        except (ValueError, KeyError) as e:
-            # Persistent failure — emit error event
-            _log.error("Status poll failed with parsing error: %s", e)
-            return UniversalEvent(
-                event_id=str(uuid.uuid4()),
-                sequence=self._event_buffer.latest_sequence + 1,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                session_id=self._agent_session_id or "",
-                event_type=StreamEventType.ERROR,
-                error_message=f"Cost/context polling failed: {e}",
-                metadata={"error_code": "STATUS_POLL_FAILED", "error_details": str(e)},
-            )
+            return []
         except Exception as e:
-            # Unknown failure — log and swallow
             _log.warning("Status poll failed: %s", e)
-            return None
+            return []
 
-        _log.info("Context data keys: %s", list(context_data.keys()))
-        _log.info("Cost data keys: %s", list(cost_data.keys()))
+        events: list[UniversalEvent] = []
+        session_id = self._agent_session_id or ""
+        now = datetime.now(timezone.utc).isoformat()
 
-        metadata: dict[str, Any] = {}
-
+        # --- CONTEXT_UPDATE event ---
         context_output = context_data.get("output", "")
         if context_output:
             parsed = self._parse_context_output(context_output)
             if parsed:
-                metadata["context"] = parsed
+                events.append(UniversalEvent(
+                    event_id=str(uuid.uuid4()),
+                    sequence=0,
+                    timestamp=now,
+                    session_id=session_id,
+                    event_type=StreamEventType.CONTEXT_UPDATE,
+                    metadata=parsed,
+                ))
 
-        cost_output = cost_data.get("output", "")
-        if cost_output:
-            metadata["cost_text"] = cost_output
-
-        # Parse and accumulate cost metrics (atomic: only update on full success)
+        # --- COST_UPDATE event ---
         try:
             parsed_cost = parse_cost_data(cost_data)
             if parsed_cost:
                 new_metrics = accumulate_costs(self._cost_metrics, parsed_cost)
-                metadata["cost_breakdown"] = {
-                    "total_cost_usd": new_metrics.total_cost_usd,
-                    "turn_count": new_metrics.turn_count,
-                    "per_model": {
-                        model: {
-                            "input_tokens": cost.input_tokens,
-                            "output_tokens": cost.output_tokens,
-                            "cost_usd": cost.cost_usd,
-                        }
-                        for model, cost in new_metrics.per_model.items()
+                events.append(UniversalEvent(
+                    event_id=str(uuid.uuid4()),
+                    sequence=0,
+                    timestamp=now,
+                    session_id=session_id,
+                    event_type=StreamEventType.COST_UPDATE,
+                    metadata={
+                        "total_cost_usd": new_metrics.total_cost_usd,
+                        "turn_count": new_metrics.turn_count,
+                        "per_model": {
+                            model: {
+                                "input_tokens": mc.input_tokens,
+                                "output_tokens": mc.output_tokens,
+                                "cost_usd": mc.cost_usd,
+                            }
+                            for model, mc in new_metrics.per_model.items()
+                        },
                     },
-                }
+                ))
                 self._cost_metrics = new_metrics
         except Exception as e:
             _log.warning("Failed to parse cost data: %s", e)
 
-        # Keep legacy total_cost_usd for backward compatibility
-        total_cost = cost_data.get("total_cost_usd")
-        if total_cost is not None:
-            metadata["total_cost_usd"] = total_cost
-
-        if not metadata:
-            _log.info("Status poll: no metadata collected")
-            return None
-
-        _log.info("Status poll: emitting STATUS event with %s", list(metadata.keys()))
-        return UniversalEvent(
-            event_id=str(uuid.uuid4()),
-            sequence=self._event_buffer.latest_sequence + 1,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._agent_session_id or "",
-            event_type=StreamEventType.STATUS,
-            metadata=metadata,
-        )
+        return events
 
     @staticmethod
     def _parse_context_output(text: str) -> dict[str, Any] | None:
