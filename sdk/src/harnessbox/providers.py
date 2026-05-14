@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
 
+class SandboxDeadError(Exception):
+    """Raised when the sandbox is no longer reachable (timed out, destroyed, or killed)."""
+
+
 @dataclass
 class CommandResult:
     """Result of a command execution in the sandbox."""

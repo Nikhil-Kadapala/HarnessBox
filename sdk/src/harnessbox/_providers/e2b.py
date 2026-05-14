@@ -8,9 +8,17 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from harnessbox.providers import CommandResult
+from harnessbox.providers import CommandResult, SandboxDeadError
 
 logger = logging.getLogger("harnessbox.e2b")
+
+_DEAD_SANDBOX_SIGNALS = ("sandbox was not found", "502", "unavailable", "timeout")
+
+
+def _is_sandbox_dead(exc: Exception) -> bool:
+    """Check if an E2B exception indicates the sandbox is unreachable."""
+    msg = str(exc).lower()
+    return any(signal in msg for signal in _DEAD_SANDBOX_SIGNALS)
 
 
 class E2BProvider:
@@ -133,7 +141,12 @@ class E2BProvider:
             kwargs["cwd"] = cwd
         if timeout:
             kwargs["timeout"] = timeout
-        result = await self._sandbox.commands.run(command, **kwargs)
+        try:
+            result = await self._sandbox.commands.run(command, **kwargs)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
         return CommandResult(
             exit_code=result.exit_code,
             stdout=result.stdout or "",
@@ -141,7 +154,12 @@ class E2BProvider:
         )
 
     async def send_stdin(self, pid: int, data: str) -> None:
-        await self._sandbox.commands.send_stdin(pid, data)
+        try:
+            await self._sandbox.commands.send_stdin(pid, data)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
 
     async def start_session(
         self,
@@ -163,7 +181,12 @@ class E2BProvider:
         }
         if cwd:
             kwargs["cwd"] = cwd
-        handle = await self._sandbox.commands.run(command, **kwargs)
+        try:
+            handle = await self._sandbox.commands.run(command, **kwargs)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
         pid: int = handle.pid
         logger.info("Persistent process started: pid=%d cmd=%s", pid, command[:200])
         return pid
@@ -306,6 +329,8 @@ class E2BProvider:
                         ),
                     )
             except Exception as e:
+                if _is_sandbox_dead(e):
+                    raise SandboxDeadError(str(e)) from e
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
                     json.dumps(

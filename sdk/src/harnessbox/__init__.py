@@ -24,8 +24,8 @@ from harnessbox.lifecycle import (
     validate_transition,
 )
 from harnessbox.process import AgentProcess
-from harnessbox.providers import CommandResult, SandboxProvider
-from harnessbox.sandbox import AgentResponse, InteractiveSession, Sandbox
+from harnessbox.providers import CommandResult, SandboxDeadError, SandboxProvider
+from harnessbox.sandbox import InteractiveSession, Sandbox
 from harnessbox.security.events import (
     CallbackHandler,
     EventHandler,
@@ -54,6 +54,7 @@ from harnessbox.streaming import (
 from harnessbox.streaming import (
     EventType as StreamEventType,
 )
+from harnessbox.types import AgentResponse
 from harnessbox.workspace import GitStatus, GitWorkspace, Workspace
 
 __all__ = [
@@ -99,6 +100,7 @@ __all__ = [
     "CommandResult",
     "HarnessTypeConfig",
     "Sandbox",
+    "SandboxDeadError",
     "SandboxProvider",
     "get_harness_type",
     "list_harness_types",

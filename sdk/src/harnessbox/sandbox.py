@@ -8,7 +8,6 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Coroutine, Literal, cast, overload
@@ -19,43 +18,15 @@ from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.process import AgentProcess
-from harnessbox.providers import CommandResult, PTYCapable, SandboxProvider
+from harnessbox.providers import CommandResult, PTYCapable, SandboxDeadError, SandboxProvider
 from harnessbox.security.events import EventHandler, EventType, SandboxEvent
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.streaming import StreamParser, UniversalEvent
+from harnessbox.types import AgentResponse
 from harnessbox.workspace import Workspace
 
-# E2B-specific exceptions for sandbox death detection
-try:
-    from e2b.exceptions import TimeoutException
-    from e2b_connect.client import ConnectException
-except ImportError:
-    # Mock exceptions if E2B is not installed (for tests with MockProvider)
-    class TimeoutException(Exception):  # type: ignore
-        """Stub for e2b.exceptions.TimeoutException when E2B is not installed."""
-
-    class ConnectException(Exception):  # type: ignore
-        """Stub for e2b_connect.client.ConnectException when E2B is not installed."""
-
-
 _log = logging.getLogger("harnessbox.sandbox")
-
-
-@dataclass(frozen=True)
-class AgentResponse:
-    """Accumulated response from a single agent turn.
-
-    Returned by ``sandbox.send_message(input, stream=False)``.
-    Contains the full text output, cost/timing metadata, and the
-    raw event list for consumers that need finer granularity.
-    """
-
-    text: str
-    cost_usd: float | None = None
-    duration_ms: int | None = None
-    session_id: str = ""
-    events: list[UniversalEvent] = field(default_factory=list)
 
 
 class InteractiveSession:
@@ -895,50 +866,36 @@ class Sandbox:
                         await self._event_buffer.push(event)
                         yield event
 
-        except (TimeoutException, ConnectException) as e:
-            # Sandbox is dead (timed out, destroyed, or killed)
-            error_msg = str(e).lower()
-            if (
-                "sandbox was not found" in error_msg
-                or "502" in error_msg
-                or "unavailable" in error_msg
-                or "timeout" in error_msg
-            ):
-                _log.error(
-                    f"Sandbox {self._provider.sandbox_id} is dead: {e}",
-                    extra={"sandbox_id": self._provider.sandbox_id},
+        except SandboxDeadError as e:
+            _log.error(
+                f"Sandbox {self._provider.sandbox_id} is dead: {e}",
+                extra={"sandbox_id": self._provider.sandbox_id},
+            )
+
+            error_event = UniversalEvent(
+                event_id=str(uuid.uuid4()),
+                sequence=0,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                session_id=self._agent_session_id or "",
+                event_type=StreamEventType.ERROR,
+                error_message="Sandbox has timed out or been destroyed. Create a new session.",
+                metadata={
+                    "error_code": "SANDBOX_DEAD",
+                    "error_details": str(e),
+                    "recoverable": False,
+                },
+            )
+            await self._event_buffer.push(error_event)
+            yield error_event
+
+            try:
+                self._transition(WorkspaceState.FAILED)
+            except InvalidTransitionError as transition_err:
+                _log.debug(
+                    f"Could not transition to FAILED (already in {self._state.value}): {transition_err}"
                 )
 
-                # Yield structured error event to client
-                error_event = UniversalEvent(
-                    event_id=str(uuid.uuid4()),
-                    sequence=0,  # Event buffer will set correct sequence
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    session_id=self._agent_session_id or "",
-                    event_type=StreamEventType.ERROR,
-                    error_message="Sandbox has timed out or been destroyed. Create a new session.",
-                    metadata={
-                        "error_code": "SANDBOX_DEAD",
-                        "error_details": str(e),
-                        "recoverable": False,
-                    },
-                )
-                await self._event_buffer.push(error_event)
-                yield error_event
-
-                # Transition to FAILED state
-                try:
-                    self._transition(WorkspaceState.FAILED)
-                except InvalidTransitionError as transition_err:
-                    # Already in a terminal state (FAILED or MERGED), that's fine
-                    _log.debug(
-                        f"Could not transition to FAILED (already in {self._state.value}): {transition_err}"
-                    )
-
-                return
-
-            # Non-sandbox errors: re-raise
-            raise
+            return
 
     def _cost_update_from_result(self, turn_end_event: UniversalEvent) -> UniversalEvent | None:
         """Build a COST_UPDATE event from enriched result metadata (snapshot overwrite)."""
