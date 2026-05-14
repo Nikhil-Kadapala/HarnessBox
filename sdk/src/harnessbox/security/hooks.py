@@ -23,13 +23,7 @@ def build_guard_script(policy: SecurityPolicy) -> str:
         guard_names = ALL_GUARD_NAMES
 
     merged = merge_guard_sets(guard_names)
-
-    blocked_lines = []
-    for regex in merged.hook_regexes:
-        escaped = regex.replace("\\", "\\\\").replace('"', '\\"')
-        blocked_lines.append(f'    r"{escaped}",')
-
-    blocked_list = "\n".join(blocked_lines)
+    blocked_list = "\n".join(merged.render_hook_lines())
 
     return (
         "#!/usr/bin/env python3\n"

@@ -14,10 +14,11 @@ from typing import Any, cast
 
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.manifest import build_manifest
+from harnessbox.cost import CostMetrics, accumulate_costs, parse_cost_data
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.process import AgentProcess
-from harnessbox.providers import CommandResult, SandboxProvider
+from harnessbox.providers import CommandResult, PTYCapable, SandboxProvider
 from harnessbox.security.events import EventHandler, EventType, SandboxEvent
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import EventType as StreamEventType
@@ -201,6 +202,7 @@ class Sandbox:
         self._session_lock = session_lock
         self._idle_timer_task: asyncio.Task[None] | None = None
         self._paused_sandbox_id: str | None = None
+        self._cost_metrics = CostMetrics()
 
     @staticmethod
     def _resolve_string_provider(
@@ -355,6 +357,26 @@ class Sandbox:
         """Return the event buffer used for SSE streaming and replay."""
         return self._event_buffer
 
+    @property
+    def cost_metrics(self) -> CostMetrics:
+        """Return the current cost metrics for this session.
+
+        Returns an immutable snapshot of accumulated costs across all turns.
+        Costs include total USD spent and per-model breakdown with input/output
+        tokens.
+
+        Only available in persistent mode. One-shot mode does not track costs.
+
+        Example::
+
+            metrics = sandbox.cost_metrics
+            print(f"Total: ${metrics.total_cost_usd:.4f}")
+            print(f"Turns: {metrics.turn_count}")
+            for model, cost in metrics.per_model.items():
+                print(f"  {model}: ${cost.cost_usd:.4f}")
+        """
+        return self._cost_metrics
+
     # ------------------------------------------------------------------
     # State management
     # ------------------------------------------------------------------
@@ -392,7 +414,7 @@ class Sandbox:
     async def _push_lifecycle_event(self, event_type: StreamEventType, **metadata: Any) -> None:
         event = UniversalEvent(
             event_id=str(uuid.uuid4()),
-            sequence=self._event_buffer.latest_sequence + 1,
+            sequence=0,
             timestamp=datetime.now(timezone.utc).isoformat(),
             session_id=self._agent_session_id or self.sandbox_id or "",
             event_type=event_type,
@@ -830,7 +852,24 @@ class Sandbox:
         try:
             context_data = await self._agent_process.send_command("/context", timeout=5)
             cost_data = await self._agent_process.send_command("/cost", timeout=5)
+        except asyncio.TimeoutError:
+            # Transient timeout — swallow, log warning, don't crash
+            _log.warning("Status poll timed out")
+            return None
+        except (ValueError, KeyError) as e:
+            # Persistent failure — emit error event
+            _log.error("Status poll failed with parsing error: %s", e)
+            return UniversalEvent(
+                event_id=str(uuid.uuid4()),
+                sequence=self._event_buffer.latest_sequence + 1,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                session_id=self._agent_session_id or "",
+                event_type=StreamEventType.ERROR,
+                error_message=f"Cost/context polling failed: {e}",
+                metadata={"error_code": "STATUS_POLL_FAILED", "error_details": str(e)},
+            )
         except Exception as e:
+            # Unknown failure — log and swallow
             _log.warning("Status poll failed: %s", e)
             return None
 
@@ -849,6 +888,28 @@ class Sandbox:
         if cost_output:
             metadata["cost_text"] = cost_output
 
+        # Parse and accumulate cost metrics (atomic: only update on full success)
+        try:
+            parsed_cost = parse_cost_data(cost_data)
+            if parsed_cost:
+                new_metrics = accumulate_costs(self._cost_metrics, parsed_cost)
+                metadata["cost_breakdown"] = {
+                    "total_cost_usd": new_metrics.total_cost_usd,
+                    "turn_count": new_metrics.turn_count,
+                    "per_model": {
+                        model: {
+                            "input_tokens": cost.input_tokens,
+                            "output_tokens": cost.output_tokens,
+                            "cost_usd": cost.cost_usd,
+                        }
+                        for model, cost in new_metrics.per_model.items()
+                    },
+                }
+                self._cost_metrics = new_metrics
+        except Exception as e:
+            _log.warning("Failed to parse cost data: %s", e)
+
+        # Keep legacy total_cost_usd for backward compatibility
         total_cost = cost_data.get("total_cost_usd")
         if total_cost is not None:
             metadata["total_cost_usd"] = total_cost
@@ -872,19 +933,112 @@ class Sandbox:
         """Parse the markdown output from /context into structured data."""
         import re
 
+        def parse_token_count(value: str, suffix: str | None = None) -> int:
+            multiplier = 1
+            if suffix:
+                normalized_suffix = suffix.lower()
+                if normalized_suffix == "k":
+                    multiplier = 1_000
+                elif normalized_suffix == "m":
+                    multiplier = 1_000_000
+            return int(float(value.replace(",", "")) * multiplier)
+
         result: dict[str, Any] = {}
-        tokens_match = re.search(r"\*\*Tokens:\*\*\s*([\d.]+)k\s*/\s*([\d.]+)k\s*\((\d+)%\)", text)
+        tokens_match = re.search(
+            r"(?:\*\*)?Tokens:(?:\*\*)?\s*([\d,.]+)\s*([kKmM]?)\s*/\s*([\d,.]+)\s*([kKmM]?)\s*\((\d+)%\)",
+            text,
+            re.IGNORECASE,
+        )
+        if not tokens_match:
+            tokens_match = re.search(
+                r"\b([\d,.]+)\s*([kKmM])\s*/\s*([\d,.]+)\s*([kKmM])\s+tokens\s*\((\d+)%\)",
+                text,
+                re.IGNORECASE,
+            )
         if tokens_match:
-            used_k = float(tokens_match.group(1))
-            total_k = float(tokens_match.group(2))
-            percent = int(tokens_match.group(3))
-            result["tokens_used"] = int(used_k * 1000)
-            result["context_window"] = int(total_k * 1000)
+            percent = int(tokens_match.group(5))
+            result["tokens_used"] = parse_token_count(tokens_match.group(1), tokens_match.group(2))
+            result["context_window"] = parse_token_count(tokens_match.group(3), tokens_match.group(4))
             result["percent_used"] = percent
 
-        model_match = re.search(r"\*\*Model:\*\*\s*(\S+)", text)
+        model_match = re.search(r"(?:\*\*)?Model:(?:\*\*)?\s*(\S+)", text, re.IGNORECASE)
+        if not model_match:
+            model_match = re.search(
+                r"\b([A-Za-z][A-Za-z0-9 ._-]+)\s+\((?:[\d.]+[kKmM]\s+)?context\)",
+                text,
+                re.IGNORECASE,
+            )
         if model_match:
-            result["model"] = model_match.group(1)
+            result["model"] = model_match.group(1).strip()
+
+        category_labels = [
+            ("system prompt", "system_prompt", "System prompt"),
+            ("system tools", "system_tools", "System tools"),
+            ("memory files", "memory_files", "Memory files"),
+            ("tools", "tools", "Tools"),
+            ("rules", "rules", "Rules"),
+            ("skills", "skills", "Skills"),
+            ("mcp", "mcp", "MCP"),
+            ("subagents", "subagents", "Subagents"),
+            ("messages", "messages", "Messages"),
+            ("conversation", "conversation", "Conversation"),
+            ("free space", "free_space", "Free space"),
+            ("autocompact buffer", "autocompact_buffer", "Autocompact buffer"),
+        ]
+        categories: list[dict[str, Any]] = []
+        seen_category_keys: set[str] = set()
+        for raw_line in text.splitlines():
+            line = raw_line.strip().strip("|").strip()
+            if not line or "tokens:" in line.lower() or "model:" in line.lower():
+                continue
+            normalized_line = re.sub(r"[*_`]", "", line)
+            for label, key, display_label in category_labels:
+                if key in seen_category_keys:
+                    continue
+                category_match = re.search(
+                    rf"\b{re.escape(label)}\b\s*(?:\||:|-|\u2014|\u2013)?\s*~?\$?([\d,.]+)\s*([kKmM]?)\s*(?:tokens?)?\b",
+                    normalized_line,
+                    re.IGNORECASE,
+                )
+                if not category_match:
+                    continue
+                categories.append(
+                    {
+                        "key": key,
+                        "label": display_label,
+                        "tokens": parse_token_count(
+                            category_match.group(1),
+                            category_match.group(2),
+                        ),
+                    }
+                )
+                seen_category_keys.add(key)
+                break
+
+        if categories:
+            if any(category["key"] in {"system_tools", "free_space"} for category in categories):
+                terminal_category_defaults = [
+                    ("system_prompt", "System prompt"),
+                    ("system_tools", "System tools"),
+                    ("memory_files", "Memory files"),
+                    ("skills", "Skills"),
+                    ("messages", "Messages"),
+                    ("free_space", "Free space"),
+                    ("autocompact_buffer", "Autocompact buffer"),
+                ]
+                existing_categories = {category["key"]: category for category in categories}
+                categories = [
+                    existing_categories.get(
+                        key,
+                        {
+                            "key": key,
+                            "label": label,
+                            "tokens": 0,
+                        },
+                    )
+                    for key, label in terminal_category_defaults
+                ]
+            result["categories"] = categories
 
         return result if result else None
 
@@ -906,7 +1060,7 @@ class Sandbox:
                 f"{self._state.value!r} state.{hint}"
             )
 
-        if not hasattr(self._provider, "pty_create"):
+        if not isinstance(self._provider, PTYCapable):
             raise RuntimeError(
                 f"Provider {type(self._provider).__name__} does not support "
                 f"interactive sessions (no PTY). Use run_prompt_events() with "

@@ -187,20 +187,6 @@ register_harness_type(
 
 register_harness_type(
     HarnessTypeConfig(
-        name="gemini-cli",
-        config_dir=".gemini",
-        settings_file=None,
-        hooks_dir=None,
-        system_prompt_file="GEMINI.md",
-        default_dirs=("/workspace",),
-        cli_command="gemini",
-        cli_base_flags=(),
-        cli_prompt_flag="-p",
-    )
-)
-
-register_harness_type(
-    HarnessTypeConfig(
         name="opencode",
         config_dir=".opencode",
         settings_file=None,

@@ -28,6 +28,21 @@ class CredentialGuardSet:
     read_deny_globs: tuple[str, ...] = ()
     hook_regexes: tuple[str, ...] = ()
 
+    def render_settings_deny(self) -> dict[str, list[str]]:
+        """Render this guard set's deny rules for settings.json."""
+        return {
+            "Bash": list(self.bash_deny_globs),
+            "Read": list(self.read_deny_globs),
+        }
+
+    def render_hook_lines(self) -> list[str]:
+        """Render this guard set's regexes as Python source lines for the hook script."""
+        lines = []
+        for regex in self.hook_regexes:
+            escaped = regex.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'    r"{escaped}",')
+        return lines
+
 
 # ---------------------------------------------------------------------------
 # CORE — always included when any credential guards are active

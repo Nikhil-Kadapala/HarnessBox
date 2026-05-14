@@ -118,9 +118,9 @@ class TestListHarnesses:
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
-        assert len(data) >= 4
+        assert len(data) >= 3
         names = {h["name"] for h in data}
-        assert {"claude-code", "codex", "gemini-cli", "opencode"}.issubset(names)
+        assert {"claude-code", "codex", "opencode"}.issubset(names)
         for h in data:
             assert "cli_command" in h
             assert "supports_persistent" in h

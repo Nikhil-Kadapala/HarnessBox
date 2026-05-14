@@ -7,6 +7,7 @@ from harnessbox.config.harness import (
     list_harness_types,
     register_harness_type,
 )
+from harnessbox.cost import CostMetrics, ModelCost, accumulate_costs, parse_cost_data
 from harnessbox.credentials import (
     CredentialProbe,
     CredentialStatus,
@@ -57,6 +58,11 @@ from harnessbox.workspace import GitStatus, GitWorkspace, Workspace
 
 __all__ = [
     "__version__",
+    # Cost tracking
+    "CostMetrics",
+    "ModelCost",
+    "accumulate_costs",
+    "parse_cost_data",
     # Security
     "ALL_GUARD_NAMES",
     "CredentialGuardSet",

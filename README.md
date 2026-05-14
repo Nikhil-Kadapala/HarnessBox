@@ -383,7 +383,6 @@ policy = SecurityPolicy(
 |---------|-----------|---------------|-----|
 | `claude-code` | `.claude` | `CLAUDE.md` | `claude --dangerously-skip-permissions ...` |
 | `codex` | `.codex` | `AGENTS.md` | `codex --model o4-mini -q {prompt}` |
-| `gemini-cli` | `.gemini` | `GEMINI.md` | `gemini -p {prompt}` |
 | `opencode` | `.opencode` | `AGENTS.md` | `opencode -p {prompt}` |
 
 ## Key Features

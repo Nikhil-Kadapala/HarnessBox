@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Cost tracking** for persistent agent sessions
+  - `CostMetrics` dataclass with per-model breakdown (input/output tokens + cost per model)
+  - `sandbox.cost_metrics` property for accessing accumulated costs
+  - `harnessbox.cost` module with `parse_cost_data()` and `accumulate_costs()` utilities
+  - STATUS events now include `cost_breakdown` in metadata for dashboard visualization
+  - Per-model cost attribution across multiple turns
+  - Persistent mode only (one-shot mode does not track costs)
+
 ## [0.2.0] - 2026-04-20
 
 ### Added
@@ -40,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `Sandbox` class with multi-provider support (E2B, Docker, Daytona, EC2)
 - `SandboxProvider` protocol for custom provider implementations
-- `HarnessTypeConfig` registry with built-in types: claude-code, codex, gemini-cli, opencode
+- `HarnessTypeConfig` registry with built-in types: claude-code, codex, opencode
 - `SecurityPolicy` with credential deny rules and PreToolUse hook guard
 - `GitWorkspace` for cloning repos into sandboxes with optional commit+push on exit
 - `Workspace` protocol for extensibility

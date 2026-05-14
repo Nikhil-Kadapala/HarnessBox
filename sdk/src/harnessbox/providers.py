@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 
 @dataclass
@@ -105,4 +105,47 @@ class SandboxProvider(Protocol):
         timeout: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream stdout lines from a command as an async generator."""
+        ...
+
+
+@runtime_checkable
+class PersistentProcessCapable(Protocol):
+    """Provider supports long-lived agent processes with stdin/stdout control."""
+
+    async def start_persistent(
+        self, command: str, cwd: str, on_stdout: Callable[[Any], None]
+    ) -> int:
+        """Start a persistent process and return its PID."""
+        ...
+
+
+@runtime_checkable
+class NativeGitCapable(Protocol):
+    """Provider supports native git operations (faster than shell fallback)."""
+
+    async def git_clone(
+        self,
+        url: str,
+        dest: str,
+        *,
+        branch: str | None = None,
+        depth: int | None = None,
+        auth_token: str | None = None,
+    ) -> None:
+        """Clone a git repository using the provider's native git API."""
+        ...
+
+
+@runtime_checkable
+class PTYCapable(Protocol):
+    """Provider supports interactive PTY sessions."""
+
+    async def pty_create(
+        self, on_data: Callable[[bytes], None], *, cwd: str | None = None
+    ) -> int:
+        """Create a PTY with an output callback and return its PID."""
+        ...
+
+    async def pty_send(self, pid: int, data: bytes) -> None:
+        """Send data to a PTY's stdin."""
         ...

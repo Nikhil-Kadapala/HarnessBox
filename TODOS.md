@@ -389,6 +389,152 @@ async def consult_claude(task: str, files: list[str]) -> str:
 
 **Depends on:** Codebase stabilization — do this once the module boundaries stop shifting.
 
+## Secret Management — Encrypted secrets with sealed token injection
+
+**What:** Inject API keys, tokens, and credentials into sandboxes without the real values ever entering the VM. Secrets are encrypted at rest, sealed into opaque tokens at boot, and only revealed by a host-side proxy on outbound HTTPS requests.
+
+**Why:** Currently, HarnessBox injects secrets as plaintext env vars via `SandboxManifest.env_vars`. The credential guards in `security/guards.py` block the agent from reading them (deny `env`, `printenv`, `cat /proc/*/environ`) but a determined attacker or buggy tool could still exfiltrate them. The correct model ensures real values never enter the VM at all.
+
+**Reference:** OpenComputer's secrets implementation (https://docs.opencomputer.dev/sandboxes/secrets) — their architecture uses a MITM proxy that intercepts outbound HTTPS, replacing sealed tokens with real secrets only for allowlisted hosts.
+
+**Architecture (three layers):**
+
+1. **Secret Store (persistence)** — secrets encrypted with AES-256-GCM in a backing store (Postgres, SQLite, or encrypted local vault). Values never returned by the API. CRUD via SDK and CLI.
+
+2. **Sealed Tokens (sandbox injection)** — at boot, real secrets are replaced with opaque `hbx_sealed_<hash>` tokens injected as env vars. `echo $API_KEY` prints a sealed token, not the real value.
+
+3. **MITM Proxy (enforcement)** — host-side HTTPS proxy intercepts outbound requests. When it sees a sealed token in a request header/body, it substitutes the real secret — but only if the destination host is on the egress allowlist.
+
+**Key features:**
+- **Per-secret host restrictions** — individual secrets locked to specific domains (e.g., `ANTHROPIC_API_KEY` only works for `api.anthropic.com`)
+- **Egress allowlists** — store-level control over which domains can receive any secret
+- **Layering with snapshots** — fork a pre-built env and attach different credentials per worker; on collision, fork's store wins; egress lists are unioned
+- **Values never returned** — API only returns secret names and metadata
+
+**Implementation approach (Hybrid — phased):**
+
+Phase 1: SDK model + storage
+- Define `SecretStore`, `SecretEntry` dataclasses
+- Implement CRUD operations (create store, set/list/delete secrets)
+- Encrypted storage backend (AES-256-GCM, key via config)
+- Generate sealed tokens (`hbx_sealed_<hash>`)
+
+Phase 2: Manifest integration
+- Modify `build_manifest()` to accept a `SecretStore` and inject sealed tokens (not real values) into `env_vars`
+- Add `egress_allowlist` to `SecurityPolicy`
+- Update `Sandbox.setup()` to handle secret stores
+
+Phase 3: Provider proxy support
+- For E2B: investigate `HTTPS_PROXY` env var pointing to sidecar, or native secret support
+- Add `supports_secret_proxy()` and `configure_secret_proxy()` to `SandboxProvider` protocol
+- For providers without proxy support, fall back to enhanced file-based injection with guards
+
+Phase 4: CLI + Web UI
+- `oc secrets create <store-name> --egress api.anthropic.com`
+- `oc secrets set <store-name> ANTHROPIC_API_KEY <value> --allowed-hosts api.anthropic.com`
+- `oc secrets list <store-name>`
+- Web UI: secret store management in settings panel, store selector in session creation
+
+**Data model sketch:**
+```python
+@dataclass(frozen=True)
+class SecretEntry:
+    name: str  # env var name in sandbox
+    sealed_token: str  # opaque token injected into VM
+    allowed_hosts: tuple[str, ...] = ()  # per-secret host restrictions
+
+@dataclass
+class SecretStore:
+    id: str
+    name: str  # unique per org/user
+    egress_allowlist: tuple[str, ...] = ()  # store-level egress control
+    entries: dict[str, SecretEntry] = field(default_factory=dict)
+
+class SandboxProvider(Protocol):
+    # ... existing methods ...
+    async def supports_secret_proxy(self) -> bool: ...
+    async def configure_secret_proxy(self, store: SecretStore, encryption_key: bytes) -> None: ...
+```
+
+**Security properties:**
+| Property | Detail |
+|----------|--------|
+| Encryption at rest | AES-256-GCM, key via `HARNESSBOX_SECRET_ENCRYPTION_KEY` |
+| Never in VM memory | Env vars contain opaque `hbx_sealed_*` tokens |
+| Host-side only | Real values exist only in the proxy process on the worker host |
+| Egress control | Allowlists restrict which domains receive secrets |
+| Per-secret scoping | Individual secrets locked to specific hosts |
+| Values never returned | API only returns secret names and metadata |
+
+**Architectural decision: Co-locate proxy in existing FastAPI server**
+
+The SDK already runs a FastAPI server (`server.py`) for SSE streaming and session management. Rather than spinning up a separate proxy gateway, reuse it with a `/v1/proxy/{session_id}` endpoint. The server already has `SessionManager` context (knows which session owns which secrets), so token substitution is a natural extension.
+
+Traffic flow:
+```
+Sandbox env: HTTPS_PROXY=https://<server-url>/v1/proxy/{session_id}
+
+Sandbox curl → HTTPS_PROXY → /v1/proxy/{session_id}/{destination} →
+  server checks sealed tokens in headers/body →
+  substitutes real values →
+  validates destination against egress allowlist →
+  forwards to actual API →
+  returns response to sandbox
+```
+
+This is an explicit forward proxy (sandbox is configured to use it via `HTTPS_PROXY`), not MITM — no TLS interception, no custom CA cert injection needed.
+
+Endpoint sketch:
+```python
+@app.api_route("/v1/proxy/{session_id}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_request(session_id: str, path: str, request: Request):
+    # 1. Validate session exists and has a secret store
+    # 2. Check destination host against egress allowlist
+    # 3. Read request body, replace hbx_sealed_* tokens with real values
+    # 4. Forward to actual destination
+    # 5. Return response (optionally scan response for leaked secrets)
+```
+
+During `sandbox.setup()`, inject proxy config:
+```python
+env_vars["HTTPS_PROXY"] = f"{server_base_url}/v1/proxy/{session_id}"
+env_vars["HTTP_PROXY"] = env_vars["HTTPS_PROXY"]
+env_vars["NO_PROXY"] = "localhost,127.0.0.1"
+```
+
+| | Co-located (reuse server) | Separate proxy |
+|---|---|---|
+| Ops complexity | Single process, single deploy | Extra process to manage per sandbox |
+| Session context | Already has it (SessionManager) | Needs shared state or IPC |
+| Network | Sandbox must reach server (may need tunnel for local dev) | Runs on host alongside sandbox (always reachable) |
+| Blast radius | Proxy load affects SSE streaming & API | Isolated failure domain |
+| Latency | Extra hop if server is remote from sandbox | Minimal if co-located with VM |
+
+Decision: co-locate for Phase 1. The proxy endpoint is lightweight (header/body scan + httpx forward). If proxy load becomes a problem later, split out — but that's an optimization, not a day-one concern.
+
+Network reachability consideration:
+- Server deployed as a service (cloud, publicly routable) → works immediately
+- Running locally → E2B sandboxes are remote VMs, can't reach `localhost:8000`. Requires a tunnel (Cloudflare Tunnel, ngrok) or a relay. Document this as a local dev requirement.
+
+**Open questions:**
+1. Where do secrets live at rest? Local encrypted file (simple, good for single-user) vs Postgres (multi-tenant) vs managed service (Vault, GCP Secret Manager)?
+2. Do we need per-secret host restrictions on day one? Or is store-level egress allowlist sufficient initially?
+3. Multi-tenancy — do different sessions/users get isolated stores, or shared per-org?
+4. E2B-specific: can we configure network egress rules or proxy settings on their microVMs?
+5. Local dev: should we bundle a tunnel solution (e.g., `bore` or Cloudflare Tunnel) or just document the requirement?
+
+**Tradeoffs:**
+- Pro: Real zero-knowledge security — secrets cannot be exfiltrated even by a compromised agent
+- Pro: Clean SDK interface regardless of provider capability (graceful degradation)
+- Pro: Egress allowlists provide defense-in-depth beyond credential guards
+- Pro: No separate proxy process — reuses existing server infrastructure and session context
+- Pro: Explicit forward proxy avoids TLS interception complexity (no custom CA certs)
+- Con: Provider-dependent security guarantees if proxy isn't available
+- Con: Adds latency to outbound HTTPS requests (proxy hop through server)
+- Con: Local dev requires tunnel for sandbox → server reachability
+
+**Depends on:** E2B provider capabilities (network policy, proxy support), user feedback on threat model priorities.
+
 ## Frontend Test Infrastructure — vitest + React Testing Library
 
 **What:** Set up vitest with React Testing Library in `apps/web/` and write tests for session creation, event streaming, and component rendering.
@@ -442,3 +588,43 @@ async def consult_claude(task: str, files: list[str]) -> str:
 - Con: Changes API contract from 200 to 202 (may affect other consumers)
 
 **Depends on:** Nothing blocks starting this. Should be informed by real usage patterns (how long do setups actually take? do users need intermediate progress for 3-5s waits, or only for >10s?). The client-side optimistic creation (current plan) ships first as the immediate UX fix.
+
+## Cost Tracking — Per-Turn Breakdown
+
+**What:** Store cost data per turn (not just per-session aggregate). Track which prompts were expensive vs cheap.
+
+**Why:** Enables cost optimization at the prompt level. Users can see "turn 3 cost $2.50 because it used Opus, turn 4 cost $0.05 because it used Haiku" and adjust their prompting strategy or model selection.
+
+**Pros:**
+- Granular cost visibility — users see which specific prompts are expensive
+- Enables A/B testing of prompts ("did my system prompt change increase costs?")
+- Better debugging — cost spikes correlate with specific prompts/tools
+
+**Cons:**
+- Requires storing turn history (list of TurnCost entries with timestamp, prompt_preview, cost)
+- Larger memory footprint per session (100 turns × ~100 bytes per turn = ~10KB)
+- More complex CostMetrics dataclass (need List[TurnCost], not just aggregates)
+
+**Context:** Currently, CostMetrics only stores per-session aggregates (total_cost_usd, per_model breakdown). To add per-turn tracking, extend CostMetrics with a `turns: list[TurnCost]` field where `TurnCost = {turn_number: int, timestamp: str, total_cost: float, per_model: dict}`. Update `_poll_session_status()` to append a new TurnCost entry on each poll.
+
+**Depends on:** Cost tracking implementation (per-session aggregates).
+
+## Cost Tracking — Persistence and Export
+
+**What:** Persist cost metrics to database or file (e.g., SQLite, CSV export) so costs survive beyond Sandbox instance lifespan. Include session metadata (session_id, start/end time, total cost, per-model breakdown).
+
+**Why:** Dashboard kanban needs historical cost data to show "session X cost $5.23" for archived sessions. Currently, costs disappear when the Sandbox instance is garbage-collected.
+
+**Pros:**
+- Historical cost tracking — dashboard shows costs for all sessions, not just active ones
+- Budget reports — users can query "how much did I spend this week?"
+- Cost attribution — link costs to specific repos, branches, or users
+
+**Cons:**
+- Requires database schema or file format design
+- Adds I/O overhead (write cost data on each turn)
+- Storage management (pruning old cost records, avoiding unbounded growth)
+
+**Context:** Currently, CostMetrics lives in `sandbox._cost_metrics` (in-memory only). To persist, write cost data to `_storage` backend (already exists for event replay) or add a new `CostStorage` backend. The `SessionManager` in `session.py` can serialize cost_metrics when a session ends and load it on restore.
+
+**Depends on:** Cost tracking implementation (per-session aggregates), storage backend design.

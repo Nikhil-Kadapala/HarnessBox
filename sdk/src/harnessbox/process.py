@@ -16,7 +16,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from harnessbox.providers import SandboxProvider
+from harnessbox.providers import PersistentProcessCapable, SandboxProvider
 from harnessbox.streaming import EventType, StreamParser, UniversalEvent
 
 _log = logging.getLogger("harnessbox.process")
@@ -70,7 +70,7 @@ class AgentProcess:
                 if line:
                     loop.call_soon_threadsafe(self._stdout_queue.put_nowait, line)
 
-        if hasattr(self._provider, "start_persistent"):
+        if isinstance(self._provider, PersistentProcessCapable):
             _log.info("Starting persistent process (native): %s", command[:200])
             self._pid = await self._provider.start_persistent(command, cwd, on_stdout)
             self._running = True
@@ -177,9 +177,10 @@ class AgentProcess:
             msg_type = data.get("type")
             if msg_type == "user":
                 content = data.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    collected["output"] = content
-                    _log.debug("Command output captured: %s", content[:200])
+                output = self._extract_text_content(content)
+                if output:
+                    collected["output"] = output
+                    _log.debug("Command output captured: %s", output[:200])
             elif msg_type == "result":
                 collected.update(data)
                 _log.debug(
@@ -187,6 +188,31 @@ class AgentProcess:
                     {k: v for k, v in collected.items() if k != "raw"}.__repr__()[:300],
                 )
                 return collected
+
+    @classmethod
+    def _extract_text_content(cls, content: Any) -> str:
+        """Extract text from Claude message content blocks."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [cls._extract_text_content(item) for item in content]
+            return "\n".join(part for part in parts if part)
+        if not isinstance(content, dict):
+            return ""
+
+        text_parts: list[str] = []
+        for key in ("text", "output"):
+            value = content.get(key)
+            if isinstance(value, str):
+                text_parts.append(value)
+
+        nested_content = content.get("content")
+        if nested_content is not None:
+            nested = cls._extract_text_content(nested_content)
+            if nested:
+                text_parts.append(nested)
+
+        return "\n".join(text_parts)
 
     async def respond_permission(self, request_id: str, behavior: str = "allow") -> None:
         """Respond to a control_request permission gate."""
