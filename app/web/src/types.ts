@@ -110,6 +110,7 @@ export interface CreateSessionRequest {
   session_id?: string;
   provider: string;
   harness: string;
+  model?: string;
   env_vars: Record<string, string>;
   skip_permissions: boolean;
   sandbox_timeout?: number;

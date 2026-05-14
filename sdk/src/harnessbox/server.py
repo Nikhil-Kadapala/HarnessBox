@@ -188,6 +188,7 @@ class CreateSessionRequest(BaseModel):
     provider: str = "e2b"
     api_key: str | None = None
     harness: str = "claude-code"
+    model: str | None = None
     env_vars: dict[str, str] = {}
     setup_script: str | None = None
     cwd: str | None = None
@@ -580,6 +581,7 @@ def create_app(
             provider=req.provider,
             api_key=api_key,
             harness=req.harness,
+            model=req.model,
             env_vars=env_vars,
             files=credential_files or None,
             setup_script=req.setup_script,

@@ -74,6 +74,7 @@ class WorkspaceConfig:
     provider: str = "e2b"
     api_key: str | None = None
     harness: str = "claude-code"
+    model: str | None = None
     system_prompt: str | Path | None = None
     skills: list[str | Path] = field(default_factory=list)
     skill_installs: list[str] = field(default_factory=list)
@@ -247,6 +248,7 @@ class WorkspaceManager:
             client=config.provider,
             api_key=config.api_key,
             harness=config.harness,
+            model=config.model,
             system_prompt=config.system_prompt,
             skills=config.skills or None,
             skill_installs=config.skill_installs or None,
@@ -539,10 +541,10 @@ class WorkspaceManager:
         # Parse config_json
         config_dict = json.loads(record.get("config_json", "{}"))
 
-        # Recreate Sandbox (will resume on first use)
         sandbox = Sandbox(
             client=record["provider"],
             harness=record["harness"],
+            model=config_dict.get("model"),
             timeout=config_dict.get("timeout", 300),
             skip_permissions=config_dict.get("skip_permissions", False),
             template=config_dict.get("template"),

@@ -131,9 +131,10 @@ class AgentManager:
         harness_config = get_harness_type(harness)
 
         # Do NOT use --resume on first spawn - Claude will create a new session
-        cmd = harness_config.build_persistent_command(
+        cmd = harness_config.build_session_command(
             skip_permissions=self._sandbox._skip_permissions,
-            session_id=None,  # No --resume on first spawn
+            model=self._sandbox._model,
+            session_id=None,
         )
 
         parser = StreamParser(persistent=True)

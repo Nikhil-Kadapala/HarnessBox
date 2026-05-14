@@ -110,6 +110,7 @@ class Sandbox:
         *,
         security_policy: SecurityPolicy | None = None,
         harness: str = "claude-code",
+        model: str | None = None,
         system_prompt: str | Path | None = None,
         skills: list[str | Path] | None = None,
         skill_installs: list[str] | None = None,
@@ -165,6 +166,7 @@ class Sandbox:
                 (e.g., a git worktree at ``/workspace/feat-branch``).
         """
         self._harness_config: HarnessTypeConfig = get_harness_type(harness)
+        self._model = model
 
         if isinstance(client, str):
             effective_template = template or self._harness_config.default_template
@@ -714,6 +716,7 @@ class Sandbox:
         cmd = self._harness_config.build_oneshot_command(
             escaped_prompt,
             skip_permissions=self._skip_permissions,
+            model=self._model,
             session_id=self._agent_session_id,
             plugin_dirs=self._plugin_dirs or None,
         )
@@ -739,8 +742,9 @@ class Sandbox:
             self._paused_sandbox_id = None
 
         if not self._agent_process or not self._agent_process.is_running:
-            cmd = self._harness_config.build_persistent_command(
+            cmd = self._harness_config.build_session_command(
                 skip_permissions=self._skip_permissions,
+                model=self._model,
                 plugin_dirs=self._plugin_dirs or None,
                 session_id=self._agent_session_id,
             )
