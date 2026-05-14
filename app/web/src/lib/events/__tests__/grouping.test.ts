@@ -134,4 +134,16 @@ describe("groupEvents", () => {
       expect(groups[0].itemId).toBe("no-match");
     }
   });
+
+  it("renders api.retry as standalone single event", () => {
+    const events = [
+      evt({ event_type: "api.retry", item_id: undefined, item_kind: undefined, metadata: { attempt: 1, max_retries: 3 } }),
+    ];
+    const groups = groupEvents(events);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].type).toBe("single");
+    if (groups[0].type === "single") {
+      expect(groups[0].event.event_type).toBe("api.retry");
+    }
+  });
 });

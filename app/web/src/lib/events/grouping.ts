@@ -12,6 +12,8 @@ const STANDALONE_EVENT_TYPES = new Set([
   "session.ended",
   "error",
   "permission.requested",
+  "input.requested",
+  "api.retry",
 ]);
 
 export function groupEvents(events: UniversalEvent[]): EventGroup[] {

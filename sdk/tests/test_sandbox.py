@@ -216,7 +216,7 @@ class TestRunPrompt:
         await sb.setup()
 
         collected = []
-        async for line in sb.run_prompt("test prompt"):
+        async for line in sb._stream_oneshot("test prompt"):
             collected.append(line)
 
         assert collected == ['{"type": "start"}', '{"type": "end"}']
@@ -224,10 +224,10 @@ class TestRunPrompt:
     @pytest.mark.asyncio
     async def test_command_uses_agent_template(self, mock_provider):
         mock_provider._stream_lines = []
-        sb = Sandbox(client=mock_provider, harness="claude-code", skip_permissions=True)
+        sb = Sandbox(client=mock_provider, harness="claude-code", skip_permissions=True, one_shot=True)
         await sb.setup()
 
-        async for _ in sb.run_prompt("hello"):
+        async for _ in sb.send_message("hello"):
             pass
 
         stream_cmd = [c for c in mock_provider._commands if "claude" in c]
@@ -239,7 +239,7 @@ class TestRunPrompt:
     async def test_raises_in_non_active_state(self, mock_provider):
         sb = Sandbox(client=mock_provider)
         with pytest.raises(RuntimeError, match="Cannot run prompt"):
-            async for _ in sb.run_prompt("test"):
+            async for _ in sb._stream_oneshot("test"):
                 pass
 
 

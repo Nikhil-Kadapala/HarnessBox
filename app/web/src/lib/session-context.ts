@@ -1,4 +1,4 @@
-import type { ContextCategory, CostBreakdown, ModelCostBreakdown, SessionContextStats, UniversalEvent } from "@/types";
+import type { CacheStats, ContextCategory, CostBreakdown, ModelCostBreakdown, SessionContextStats, UniversalEvent } from "@/types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -103,4 +103,29 @@ export function getLatestSessionCostStats(events: UniversalEvent[]): CostBreakdo
   }
 
   return latest;
+}
+
+export function getLatestCacheStats(events: UniversalEvent[]): CacheStats | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (
+      (event.event_type === "turn.ended" || event.event_type === "session.ended") &&
+      isRecord(event.metadata)
+    ) {
+      const usage = event.metadata.usage;
+      if (isRecord(usage)) {
+        const cacheRead = readNumber(usage.cache_read_input_tokens);
+        const cacheCreation = readNumber(usage.cache_creation_input_tokens);
+        if (cacheRead != null || cacheCreation != null) {
+          return {
+            cacheReadTokens: cacheRead ?? 0,
+            cacheCreationTokens: cacheCreation ?? 0,
+            inputTokens: readNumber(usage.input_tokens) ?? 0,
+            outputTokens: readNumber(usage.output_tokens) ?? 0,
+          };
+        }
+      }
+    }
+  }
+  return null;
 }

@@ -160,36 +160,3 @@ def parse_cost_data(cost_data: dict[str, Any]) -> CostMetrics | None:
     )
 
 
-def accumulate_costs(current: CostMetrics, new: CostMetrics) -> CostMetrics:
-    """Accumulate new cost data into existing metrics.
-
-    Merges per-model costs and updates totals. Used to aggregate costs across
-    multiple turns in a session.
-
-    Args:
-        current: Existing cost metrics.
-        new: New cost metrics from the latest turn.
-
-    Returns:
-        New CostMetrics with accumulated data (frozen dataclass).
-    """
-    # Merge per-model costs
-    merged_per_model = dict(current.per_model)
-
-    for model_name, new_cost in new.per_model.items():
-        if model_name in merged_per_model:
-            existing = merged_per_model[model_name]
-            merged_per_model[model_name] = ModelCost(
-                input_tokens=existing.input_tokens + new_cost.input_tokens,
-                output_tokens=existing.output_tokens + new_cost.output_tokens,
-                cost_usd=existing.cost_usd + new_cost.cost_usd,
-            )
-        else:
-            merged_per_model[model_name] = new_cost
-
-    return CostMetrics(
-        total_cost_usd=current.total_cost_usd + new.total_cost_usd,
-        per_model=merged_per_model,
-        turn_count=current.turn_count + new.turn_count,
-        last_updated=new.last_updated,
-    )

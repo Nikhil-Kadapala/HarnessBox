@@ -54,6 +54,13 @@ export interface CostBreakdown {
   per_model: Record<string, ModelCostBreakdown>;
 }
 
+export interface CacheStats {
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 // --- Discovery types (from server endpoints) ---
 
 export interface HarnessInfo {

@@ -2,7 +2,7 @@
 
 import pytest
 
-from harnessbox.cost import CostMetrics, ModelCost, accumulate_costs, parse_cost_data
+from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.sandbox import Sandbox
 from tests.conftest import MockProvider
 
@@ -182,124 +182,6 @@ def test_parse_cost_data_missing_total():
     assert parse_cost_data(cost_data) is None
 
 
-# ---------------------------------------------------------------------------
-# 3. Cost accumulation
-# ---------------------------------------------------------------------------
-
-
-def test_accumulate_costs_single_model():
-    """Accumulate costs for a single model across turns."""
-    current = CostMetrics(
-        total_cost_usd=0.01,
-        per_model={
-            "model-a": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:00:00Z",
-    )
-
-    new = CostMetrics(
-        total_cost_usd=0.02,
-        per_model={
-            "model-a": ModelCost(input_tokens=50, output_tokens=25, cost_usd=0.02),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:01:00Z",
-    )
-
-    result = accumulate_costs(current, new)
-
-    assert result.total_cost_usd == 0.03
-    assert result.turn_count == 2
-    assert result.per_model["model-a"].input_tokens == 150  # 100 + 50
-    assert result.per_model["model-a"].cost_usd == 0.03  # 0.01 + 0.02
-
-
-def test_accumulate_costs_multiple_models():
-    """Accumulate costs across multiple models."""
-    current = CostMetrics(
-        total_cost_usd=0.01,
-        per_model={
-            "model-a": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:00:00Z",
-    )
-
-    new = CostMetrics(
-        total_cost_usd=0.12,
-        per_model={
-            "model-a": ModelCost(input_tokens=50, output_tokens=25, cost_usd=0.02),
-            "model-b": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.10),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:01:00Z",
-    )
-
-    result = accumulate_costs(current, new)
-
-    assert result.total_cost_usd == 0.13
-    assert result.turn_count == 2
-    assert result.last_updated == "2026-01-01T00:01:00Z"
-    assert "model-a" in result.per_model
-    assert result.per_model["model-a"].input_tokens == 150  # 100 + 50
-    assert result.per_model["model-a"].cost_usd == 0.03  # 0.01 + 0.02
-    assert "model-b" in result.per_model
-    assert result.per_model["model-b"].cost_usd == 0.10
-
-
-def test_accumulate_costs_new_model_appears():
-    """New model appears in second turn → added to per_model dict."""
-    current = CostMetrics(
-        total_cost_usd=0.01,
-        per_model={
-            "model-a": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:00:00Z",
-    )
-
-    new = CostMetrics(
-        total_cost_usd=0.05,
-        per_model={
-            "model-b": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.05),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:01:00Z",
-    )
-
-    result = accumulate_costs(current, new)
-
-    assert len(result.per_model) == 2
-    assert "model-a" in result.per_model
-    assert "model-b" in result.per_model
-    assert result.per_model["model-a"].cost_usd == 0.01
-    assert result.per_model["model-b"].cost_usd == 0.05
-
-
-def test_accumulate_costs_zero_turn():
-    """Accumulate zero-cost turn (edge case)."""
-    current = CostMetrics(
-        total_cost_usd=0.01,
-        per_model={
-            "model-a": ModelCost(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        },
-        turn_count=1,
-        last_updated="2026-01-01T00:00:00Z",
-    )
-
-    new = CostMetrics(
-        total_cost_usd=0.0,
-        per_model={},
-        turn_count=1,
-        last_updated="2026-01-01T00:01:00Z",
-    )
-
-    result = accumulate_costs(current, new)
-
-    assert result.total_cost_usd == 0.01
-    assert result.turn_count == 2
-    assert len(result.per_model) == 1
 
 
 # ---------------------------------------------------------------------------

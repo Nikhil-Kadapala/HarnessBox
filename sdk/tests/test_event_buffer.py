@@ -186,7 +186,7 @@ class TestEventBufferInSandbox:
         sb = Sandbox(provider, skip_permissions=True)
         await sb.setup()
 
-        async for _ in sb.run_prompt_events("test"):
+        async for _ in sb.send_message("test"):
             pass
 
         assert sb.event_buffer.size >= 2

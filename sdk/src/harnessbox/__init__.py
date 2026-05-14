@@ -7,7 +7,7 @@ from harnessbox.config.harness import (
     list_harness_types,
     register_harness_type,
 )
-from harnessbox.cost import CostMetrics, ModelCost, accumulate_costs, parse_cost_data
+from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.credentials import (
     CredentialProbe,
     CredentialStatus,
@@ -25,7 +25,7 @@ from harnessbox.lifecycle import (
 )
 from harnessbox.process import AgentProcess
 from harnessbox.providers import CommandResult, SandboxProvider
-from harnessbox.sandbox import InteractiveSession, Sandbox
+from harnessbox.sandbox import AgentResponse, InteractiveSession, Sandbox
 from harnessbox.security.events import (
     CallbackHandler,
     EventHandler,
@@ -61,7 +61,6 @@ __all__ = [
     # Cost tracking
     "CostMetrics",
     "ModelCost",
-    "accumulate_costs",
     "parse_cost_data",
     # Security
     "ALL_GUARD_NAMES",
@@ -96,6 +95,7 @@ __all__ = [
     "detect_claude_auth_mode",
     "detect_credentials",
     # Sandbox
+    "AgentResponse",
     "CommandResult",
     "HarnessTypeConfig",
     "Sandbox",

@@ -426,7 +426,7 @@ class WorkspaceManager:
 
         async with self._locks[workspace_id]:
             first_event = True
-            async for event in info.agent_manager.run_prompt(conversation_id, prompt):
+            async for event in info.agent_manager.send_message(conversation_id, prompt):
                 if (
                     event.event_type == "error"
                     and event.metadata.get("error_code") == "SANDBOX_DEAD"

@@ -2,6 +2,62 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
+## Subagent Visibility — Parallel Execution UI
+
+**What:** When the agent spawns subagents (via the `Agent` tool), the frontend should render dedicated subagent cards showing status, description, and results — with side-by-side layout for parallel subagents.
+
+**Why:** Subagent calls can take 30s–5min. Without dedicated UI, users see an opaque tool call spinner with no context about what's happening or why it's taking long. The SDK now emits `ITEM_COMPLETED` for Agent tool calls with enriched metadata (`subagent_type`, `description`, `prompt`), and `tool_result` events carry the subagent's output. The frontend needs to render this as something better than a generic collapsible tool call.
+
+**Design:**
+- When `ITEM_STARTED` fires with `tool_kind="agent"`, render a **SubagentCard** (spinner + "Spawning: {description}")
+- When `ITEM_DELTA` arrives with `tool_kind="agent"`, accumulate the input JSON to show subagent metadata as it streams in
+- When `ITEM_COMPLETED` fires with `tool_kind="agent"` and `metadata.description`, update the card to show the subagent type + description prominently
+- When the corresponding `tool_result` arrives (matched via `call_id`), render the result inside the card and mark it complete
+- **Parallel detection:** If the grouping layer sees multiple `ITEM_STARTED` events with `tool_kind="agent"` that share the same parent message (same sequence range before a turn-end), render them in a side-by-side grid layout
+- The correlation key is `item_id` on the tool_use start → `call_id` on the tool_result
+
+**Streaming subagent output (future):**
+- Claude Code doesn't yet stream subagent internals to the parent (`stream_to_parent` is a feature request: github.com/anthropics/claude-code/issues/33199)
+- When/if it ships, subagent messages will carry `parent_tool_use_id` — use this to render indented/nested events inside the SubagentCard
+- For now, subagent internals are opaque; we show input (prompt) and output (result) only
+
+**Depends on:** `ToolKind.AGENT` classification (shipped), subagent metadata enrichment on `ITEM_COMPLETED` (shipped), event grouping by `item_id` (shipped).
+
+## AskUserQuestion — Interactive Form Rendering
+
+**What:** When the agent emits an `input.requested` event (from Claude's built-in `AskUserQuestion` tool), the frontend should render an interactive form with the structured question data — radio buttons for single-select, checkboxes for multi-select, option descriptions, and a submit button.
+
+**Why:** Currently the SDK emits the `INPUT_REQUESTED` event with the full questions payload in metadata (`questions[].header`, `questions[].question`, `questions[].options[].label/description`, `questions[].multiSelect`). The user's response must flow back via `POST /v1/sessions/{id}/permission` with `request_id` + the answers dict. Without a proper form UI, the agent hangs waiting for input.
+
+**Design:**
+- New component: `InputRequestCard` (renders alongside `PermissionCard` in the event feed)
+- Each question renders as: header badge + question text + option list (radio or checkbox based on `multiSelect`)
+- Submit button calls the existing permission endpoint with `behavior: "allow"` and `updated_input: { questions, answers }` 
+- The `answers` dict maps `question_text → selected_option_label` (or comma-separated for multi-select)
+- After submission, card transitions to "answered" state showing the selected option(s)
+- If the session ends or errors before the user answers, card shows "expired" state
+
+**Agent SDK reference:** The response format expected by Claude Code is:
+```json
+{
+  "type": "control_response",
+  "request_id": "<from the event>",
+  "response": {
+    "subtype": "success",
+    "response": {
+      "behavior": "allow",
+      "updatedInput": {
+        "questions": [...original questions...],
+        "answers": {"Which database?": "PostgreSQL"}
+      }
+    }
+  }
+}
+```
+
+**Depends on:** `input.requested` event type (shipped), permission response endpoint (shipped), event-card rendering pipeline (shipped).
+
+
 ## Session Board — Lifecycle Actions Per Column
 
 **What:** Each kanban column should have distinct card actions beyond the current "Review" and "Archive" buttons.

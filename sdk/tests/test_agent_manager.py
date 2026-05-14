@@ -42,7 +42,7 @@ class TestAgentManagerLazySpawn:
 
             # First prompt should spawn agent
             events = []
-            async for event in mgr.run_prompt("conv-1", "hello"):
+            async for event in mgr.send_message("conv-1", "hello"):
                 events.append(event)
                 break  # Just test spawn, not full stream
 
@@ -68,11 +68,11 @@ class TestAgentManagerLazySpawn:
             mock_process.stream_turn = AsyncMock(return_value=mock_stream())
 
             # First prompt
-            async for _ in mgr.run_prompt("conv-1", "hello"):
+            async for _ in mgr.send_message("conv-1", "hello"):
                 break
 
             # Second prompt should reuse
-            async for _ in mgr.run_prompt("conv-1", "world"):
+            async for _ in mgr.send_message("conv-1", "world"):
                 break
 
         # start() called only once
@@ -110,9 +110,9 @@ class TestAgentManagerConcurrent:
             MockAgentProcess.side_effect = [mock_process1, mock_process2]
 
             # Spawn two agents
-            async for _ in mgr.run_prompt("conv-1", "hello"):
+            async for _ in mgr.send_message("conv-1", "hello"):
                 break
-            async for _ in mgr.run_prompt("conv-2", "world"):
+            async for _ in mgr.send_message("conv-2", "world"):
                 break
 
         assert len(mgr._agents) == 2
@@ -139,7 +139,7 @@ class TestAgentManagerTermination:
             mock_process.stream_turn = AsyncMock(return_value=iter([MagicMock()]))
 
             # Spawn agent
-            async for _ in mgr.run_prompt("conv-1", "hello"):
+            async for _ in mgr.send_message("conv-1", "hello"):
                 break
 
             # Terminate
@@ -172,9 +172,9 @@ class TestAgentManagerTermination:
             MockAgentProcess.side_effect = [mock_process1, mock_process2]
 
             # Spawn two agents
-            async for _ in mgr.run_prompt("conv-1", "hello"):
+            async for _ in mgr.send_message("conv-1", "hello"):
                 break
-            async for _ in mgr.run_prompt("conv-2", "world"):
+            async for _ in mgr.send_message("conv-2", "world"):
                 break
 
             # Shutdown all

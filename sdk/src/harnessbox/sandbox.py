@@ -8,13 +8,14 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Coroutine, Literal, cast, overload
 
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.manifest import build_manifest
-from harnessbox.cost import CostMetrics, accumulate_costs, parse_cost_data
+from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.process import AgentProcess
@@ -39,6 +40,22 @@ except ImportError:
 
 
 _log = logging.getLogger("harnessbox.sandbox")
+
+
+@dataclass(frozen=True)
+class AgentResponse:
+    """Accumulated response from a single agent turn.
+
+    Returned by ``sandbox.send_message(input, stream=False)``.
+    Contains the full text output, cost/timing metadata, and the
+    raw event list for consumers that need finer granularity.
+    """
+
+    text: str
+    cost_usd: float | None = None
+    duration_ms: int | None = None
+    session_id: str = ""
+    events: list[UniversalEvent] = field(default_factory=list)
 
 
 class InteractiveSession:
@@ -99,8 +116,8 @@ class Sandbox:
         )
 
         await sandbox.setup()
-        async for line in sandbox.run_prompt("Analyze the code"):
-            print(line)
+        async for event in sandbox.send_message("Analyze the code"):
+            print(event.delta or "", end="")
         await sandbox.kill()
     """
 
@@ -698,10 +715,10 @@ class Sandbox:
     # Agent execution
     # ------------------------------------------------------------------
 
-    async def run_prompt(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Run the agent with a one-shot prompt and yield raw output lines.
+    async def _stream_oneshot(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Spawn a one-shot agent process and yield raw NDJSON lines.
 
-        For typed stream events, use ``run_prompt_events()`` instead.
+        Used internally by ``send_message()`` in one-shot mode.
         Automatically resumes the previous session if one exists.
         """
         if self._state != WorkspaceState.ACTIVE:
@@ -754,19 +771,73 @@ class Sandbox:
             await self._agent_process.start(cmd, cwd=self._cwd)
             _log.info("Persistent agent process started")
 
-    async def run_prompt_events(self, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
-        """Run the agent and yield typed universal stream events.
+    @overload
+    def send_message(
+        self, input: str, *, stream: Literal[True] = True
+    ) -> AsyncGenerator[UniversalEvent, None]: ...
 
-        In persistent mode (Claude Code with ``--input-format stream-json``),
-        sends the prompt to the living process's stdin and streams the turn's
-        events. The process stays alive for the next call.
+    @overload
+    def send_message(
+        self, input: str, *, stream: Literal[False]
+    ) -> Coroutine[Any, Any, AgentResponse]: ...
 
-        In one-shot mode (fallback), spawns a new process per prompt with
+    def send_message(
+        self, input: str, *, stream: bool = True
+    ) -> AsyncGenerator[UniversalEvent, None] | Coroutine[Any, Any, AgentResponse]:
+        """Send a message to the agent and get the response.
+
+        Args:
+            input: The user message to send.
+            stream: If True (default), returns an async generator yielding
+                events as they arrive. If False, returns an awaitable that
+                resolves to an ``AgentResponse`` when the turn completes.
+
+        Usage::
+
+            # Streaming (default)
+            async for event in sandbox.send_message("fix the bug"):
+                print(event.delta or "", end="")
+
+            # Non-streaming
+            response = await sandbox.send_message("fix the bug", stream=False)
+            print(response.text)
+        """
+        if not stream:
+            return self._collect_response(input)
+        return self._stream_events(input)
+
+    async def _collect_response(self, prompt: str) -> AgentResponse:
+        """Stream internally and return accumulated AgentResponse."""
+        events: list[UniversalEvent] = []
+        text_parts: list[str] = []
+        cost_usd: float | None = None
+        duration_ms: int | None = None
+        session_id = ""
+
+        async for event in self._stream_events(prompt):
+            events.append(event)
+            if event.delta and event.item_kind == "message":
+                text_parts.append(event.delta)
+            if event.session_id:
+                session_id = event.session_id
+            if event.cost_usd is not None:
+                cost_usd = event.cost_usd
+            if event.duration_ms is not None:
+                duration_ms = event.duration_ms
+
+        return AgentResponse(
+            text="".join(text_parts),
+            cost_usd=cost_usd,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            events=events,
+        )
+
+    async def _stream_events(self, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
+        """Internal: stream typed events from the agent for a single turn.
+
+        Uses persistent mode when supported, falls back to one-shot with
         ``--resume`` for conversation continuity.
-
-        If the sandbox is dead (timed out, killed, or destroyed), yields a
-        structured error event and transitions to FAILED state instead of
-        raising an exception.
         """
         try:
             self._cancel_idle_timer()
@@ -785,20 +856,39 @@ class Sandbox:
                     await self._ensure_agent_ready()
                     await self._agent_process.send_prompt(prompt)
 
+                last_turn_end: UniversalEvent | None = None
                 async for event in self._agent_process.stream_turn():
                     if event.session_id:
                         self._agent_session_id = event.session_id
+                    if event.event_type in (
+                        StreamEventType.TURN_ENDED,
+                        StreamEventType.SESSION_ENDED,
+                    ):
+                        last_turn_end = event
                     await self._event_buffer.push(event)
                     yield event
 
-                for status_event in await self._poll_status_events():
+                result_model_usage = (
+                    (last_turn_end.metadata or {}).get("model_usage")
+                    if last_turn_end
+                    else None
+                )
+                skip_cost = bool(result_model_usage)
+
+                if skip_cost and last_turn_end:
+                    cost_event = self._cost_update_from_result(last_turn_end)
+                    if cost_event:
+                        await self._event_buffer.push(cost_event)
+                        yield cost_event
+
+                for status_event in await self._poll_status_events(skip_cost=skip_cost):
                     await self._event_buffer.push(status_event)
                     yield status_event
 
                 self._start_idle_timer()
             else:
                 parser = StreamParser(session_id=self._agent_session_id or "")
-                async for line in self.run_prompt(prompt):
+                async for line in self._stream_oneshot(prompt):
                     for event in parser.parse_line(line):
                         if event.session_id:
                             self._agent_session_id = event.session_id
@@ -850,13 +940,66 @@ class Sandbox:
             # Non-sandbox errors: re-raise
             raise
 
-    async def _poll_status_events(self) -> list[UniversalEvent]:
-        """Poll /context and /cost after a turn, emit typed events."""
+    def _cost_update_from_result(self, turn_end_event: UniversalEvent) -> UniversalEvent | None:
+        """Build a COST_UPDATE event from enriched result metadata (snapshot overwrite)."""
+        metadata = turn_end_event.metadata or {}
+        model_usage = metadata.get("model_usage", {})
+
+        if not model_usage:
+            return None
+
+        total_cost = turn_end_event.cost_usd
+
+        per_model: dict[str, ModelCost] = {}
+        for model_name, usage in model_usage.items():
+            if not isinstance(usage, dict):
+                continue
+            input_tokens = usage.get("inputTokens", usage.get("input_tokens", 0))
+            output_tokens = usage.get("outputTokens", usage.get("output_tokens", 0))
+            per_model[model_name] = ModelCost(
+                input_tokens=int(input_tokens or 0),
+                output_tokens=int(output_tokens or 0),
+                cost_usd=0.0,
+            )
+
+        self._cost_metrics = CostMetrics(
+            total_cost_usd=float(total_cost) if total_cost else self._cost_metrics.total_cost_usd,
+            per_model=per_model,
+            turn_count=self._cost_metrics.turn_count + 1,
+            last_updated=datetime.now(timezone.utc).isoformat(),
+        )
+
+        return UniversalEvent(
+            event_id=str(uuid.uuid4()),
+            sequence=0,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            session_id=self._agent_session_id or "",
+            event_type=StreamEventType.COST_UPDATE,
+            metadata={
+                "total_cost_usd": self._cost_metrics.total_cost_usd,
+                "turn_count": self._cost_metrics.turn_count,
+                "per_model": {
+                    model: {
+                        "input_tokens": mc.input_tokens,
+                        "output_tokens": mc.output_tokens,
+                        "cost_usd": mc.cost_usd,
+                    }
+                    for model, mc in self._cost_metrics.per_model.items()
+                },
+            },
+        )
+
+    async def _poll_status_events(self, *, skip_cost: bool = False) -> list[UniversalEvent]:
+        """Poll /context and optionally /cost after a turn, emit typed events."""
         if not self._agent_process or not self._agent_process.is_running:
             return []
         try:
             context_data = await self._agent_process.send_command("/context", timeout=5)
-            cost_data = await self._agent_process.send_command("/cost", timeout=5)
+            cost_data = (
+                await self._agent_process.send_command("/cost", timeout=5)
+                if not skip_cost
+                else {}
+            )
         except asyncio.TimeoutError:
             _log.warning("Status poll timed out")
             return []
@@ -882,33 +1025,33 @@ class Sandbox:
                     metadata=parsed,
                 ))
 
-        # --- COST_UPDATE event ---
-        try:
-            parsed_cost = parse_cost_data(cost_data)
-            if parsed_cost:
-                new_metrics = accumulate_costs(self._cost_metrics, parsed_cost)
-                events.append(UniversalEvent(
-                    event_id=str(uuid.uuid4()),
-                    sequence=0,
-                    timestamp=now,
-                    session_id=session_id,
-                    event_type=StreamEventType.COST_UPDATE,
-                    metadata={
-                        "total_cost_usd": new_metrics.total_cost_usd,
-                        "turn_count": new_metrics.turn_count,
-                        "per_model": {
-                            model: {
-                                "input_tokens": mc.input_tokens,
-                                "output_tokens": mc.output_tokens,
-                                "cost_usd": mc.cost_usd,
-                            }
-                            for model, mc in new_metrics.per_model.items()
+        # --- COST_UPDATE event (only when not already emitted from result) ---
+        if not skip_cost and cost_data:
+            try:
+                parsed_cost = parse_cost_data(cost_data)
+                if parsed_cost:
+                    self._cost_metrics = parsed_cost
+                    events.append(UniversalEvent(
+                        event_id=str(uuid.uuid4()),
+                        sequence=0,
+                        timestamp=now,
+                        session_id=session_id,
+                        event_type=StreamEventType.COST_UPDATE,
+                        metadata={
+                            "total_cost_usd": parsed_cost.total_cost_usd,
+                            "turn_count": parsed_cost.turn_count,
+                            "per_model": {
+                                model: {
+                                    "input_tokens": mc.input_tokens,
+                                    "output_tokens": mc.output_tokens,
+                                    "cost_usd": mc.cost_usd,
+                                }
+                                for model, mc in parsed_cost.per_model.items()
+                            },
                         },
-                    },
-                ))
-                self._cost_metrics = new_metrics
-        except Exception as e:
-            _log.warning("Failed to parse cost data: %s", e)
+                    ))
+            except Exception as e:
+                _log.warning("Failed to parse cost data: %s", e)
 
         return events
 
@@ -1030,7 +1173,7 @@ class Sandbox:
         """Start a live interactive terminal session via PTY.
 
         Requires a PTY-capable provider (e.g., E2B). For multi-turn
-        structured conversations, use repeated ``run_prompt_events()``
+        structured conversations, use repeated ``send_message()``
         calls instead (automatic ``--resume`` support).
         """
         if self._state != WorkspaceState.ACTIVE:
@@ -1047,7 +1190,7 @@ class Sandbox:
         if not isinstance(self._provider, PTYCapable):
             raise RuntimeError(
                 f"Provider {type(self._provider).__name__} does not support "
-                f"interactive sessions (no PTY). Use run_prompt_events() with "
+                f"interactive sessions (no PTY). Use send_message() with "
                 f"automatic --resume for multi-turn conversations."
             )
 

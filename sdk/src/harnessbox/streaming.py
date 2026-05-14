@@ -36,6 +36,8 @@ class EventType(str, Enum):
     PERMISSION_REQUESTED = "permission.requested"
     PERMISSION_RESOLVED = "permission.resolved"
     STATUS = "status"
+    API_RETRY = "api.retry"
+    INPUT_REQUESTED = "input.requested"
     CONTEXT_UPDATE = "context.update"
     COST_UPDATE = "cost.update"
 
@@ -251,7 +253,22 @@ class StreamParser:
     # -- system.init -------------------------------------------------------
 
     def _parse_system(self, data: dict[str, Any]) -> UniversalEvent | None:
-        if data.get("subtype") != "init":
+        subtype = data.get("subtype")
+
+        if subtype == "api_retry":
+            return self._make_event(
+                EventType.API_RETRY,
+                metadata={
+                    "attempt": data.get("attempt"),
+                    "max_retries": data.get("max_retries"),
+                    "retry_delay_ms": data.get("retry_delay_ms"),
+                    "error_status": data.get("error_status"),
+                    "error": data.get("error"),
+                },
+                raw=data,
+            )
+
+        if subtype != "init":
             return None
         sid = data.get("session_id", "")
         if sid:
@@ -388,12 +405,25 @@ class StreamParser:
             call_id = block_info.get("id", "")
             tool_info = self._tool_map.get(call_id)
             tool_name = tool_info.name if tool_info else None
+            tk = classify_tool(tool_name) if tool_name else None
+
+            metadata: dict[str, Any] = {}
+            if tk == ToolKind.AGENT and tool_info and tool_info.input_buffer:
+                try:
+                    agent_input = json.loads(tool_info.input_buffer)
+                    metadata["subagent_type"] = agent_input.get("subagent_type")
+                    metadata["description"] = agent_input.get("description")
+                    metadata["prompt"] = agent_input.get("prompt")
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
             return self._make_event(
                 EventType.ITEM_COMPLETED,
                 item_id=item_id,
                 item_kind=ItemKind.TOOL_CALL,
                 item_status=ItemStatus.COMPLETED,
-                tool_kind=classify_tool(tool_name) if tool_name else None,
+                tool_kind=tk,
+                metadata=metadata if metadata else {},
                 raw=raw,
             )
 
@@ -571,17 +601,41 @@ class StreamParser:
             result_text = result_text.get("text", str(result_text))
 
         event_type = EventType.TURN_ENDED if self._persistent else EventType.SESSION_ENDED
+
+        metadata: dict[str, Any] = {
+            "is_error": is_error,
+            "result": str(result_text) if not is_error else None,
+            "turn": self._turn_count,
+        }
+
+        usage = data.get("usage")
+        if isinstance(usage, dict):
+            metadata["usage"] = {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+                "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            }
+
+        model_usage = data.get("modelUsage")
+        if isinstance(model_usage, dict) and model_usage:
+            metadata["model_usage"] = model_usage
+
+        num_turns = data.get("num_turns")
+        if num_turns is not None:
+            metadata["num_turns"] = num_turns
+
+        duration_api_ms = data.get("duration_api_ms")
+        if duration_api_ms is not None:
+            metadata["duration_api_ms"] = duration_api_ms
+
         events.append(
             self._make_event(
                 event_type,
                 cost_usd=data.get("total_cost_usd"),
                 duration_ms=data.get("duration_ms"),
                 error_message=str(result_text) if is_error else None,
-                metadata={
-                    "is_error": is_error,
-                    "result": str(result_text) if not is_error else None,
-                    "turn": self._turn_count,
-                },
+                metadata=metadata,
                 raw=data,
             )
         )
@@ -591,14 +645,29 @@ class StreamParser:
 
     def _parse_control_request(self, data: dict[str, Any]) -> list[UniversalEvent]:
         request = data.get("request", {})
+        tool_name = request.get("tool_name", "")
+        tool_input = request.get("input", {})
+
+        if tool_name == "AskUserQuestion":
+            return [
+                self._make_event(
+                    EventType.INPUT_REQUESTED,
+                    metadata={
+                        "request_id": data.get("request_id"),
+                        "questions": tool_input.get("questions", []) if isinstance(tool_input, dict) else [],
+                    },
+                    raw=data,
+                )
+            ]
+
         return [
             self._make_event(
                 EventType.PERMISSION_REQUESTED,
                 metadata={
                     "request_id": data.get("request_id"),
                     "subtype": request.get("subtype"),
-                    "tool_name": request.get("tool_name"),
-                    "tool_input": request.get("input"),
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
                 },
                 raw=data,
             )

@@ -192,6 +192,22 @@ function SingleEventCard({
         </div>
       );
 
+    case "api.retry": {
+      const attempt = (event.metadata?.attempt as number) ?? 0;
+      const maxRetries = (event.metadata?.max_retries as number) ?? 3;
+      const delayMs = (event.metadata?.retry_delay_ms as number) ?? 0;
+      const error = (event.metadata?.error as string) ?? "unknown";
+      return (
+        <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 my-1">
+          <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            Retrying ({attempt}/{maxRetries}) — {error}
+            {delayMs > 0 && ` — ${(delayMs / 1000).toFixed(1)}s`}
+          </span>
+        </div>
+      );
+    }
+
     default:
       return null;
   }
