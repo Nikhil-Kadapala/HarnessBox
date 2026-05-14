@@ -24,7 +24,7 @@ from harnessbox.lifecycle import (
     validate_transition,
 )
 from harnessbox.process import AgentProcess
-from harnessbox.providers import CommandHandle, CommandResult, SandboxProvider
+from harnessbox.providers import CommandResult, SandboxProvider
 from harnessbox.sandbox import InteractiveSession, Sandbox
 from harnessbox.security.events import (
     CallbackHandler,
@@ -96,7 +96,6 @@ __all__ = [
     "detect_claude_auth_mode",
     "detect_credentials",
     # Sandbox
-    "CommandHandle",
     "CommandResult",
     "HarnessTypeConfig",
     "Sandbox",

@@ -16,7 +16,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from harnessbox.providers import SandboxProvider, SessionProcessCapable
+from harnessbox.providers import SandboxProvider
 from harnessbox.streaming import EventType, StreamParser, UniversalEvent
 
 _log = logging.getLogger("harnessbox.process")
@@ -70,15 +70,9 @@ class AgentProcess:
                 if line:
                     loop.call_soon_threadsafe(self._stdout_queue.put_nowait, line)
 
-        if isinstance(self._provider, SessionProcessCapable):
-            _log.info("Starting session process (native): %s", command[:200])
-            self._pid = await self._provider.start_session(command, cwd, on_stdout)
-            self._running = True
-        else:
-            _log.info("Starting persistent process (background task): %s", command[:200])
-            handle = await self._provider.run_background(command, cwd=cwd)
-            self._pid = handle.pid
-            self._running = True
+        _log.info("Starting session process: %s", command[:200])
+        self._pid = await self._provider.start_session(command, cwd, on_stdout)
+        self._running = True
 
         _log.info("Agent process started: pid=%s", self._pid)
 

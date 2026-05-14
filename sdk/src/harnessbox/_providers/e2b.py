@@ -8,7 +8,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from harnessbox.providers import CommandHandle, CommandResult
+from harnessbox.providers import CommandResult
 
 logger = logging.getLogger("harnessbox.e2b")
 
@@ -140,21 +140,8 @@ class E2BProvider:
             stderr=result.stderr or "",
         )
 
-    async def run_background(
-        self,
-        command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
-        kwargs: dict[str, Any] = {"background": True, "timeout": 0}
-        if cwd:
-            kwargs["cwd"] = cwd
-        handle = await self._sandbox.commands.run(command, **kwargs)
-        return CommandHandle(pid=handle.pid)
-
     async def send_stdin(self, pid: int, data: str) -> None:
         await self._sandbox.commands.send_stdin(pid, data)
-
-    # -- Session process (long-lived stdin/stdout) --
 
     async def start_session(
         self,

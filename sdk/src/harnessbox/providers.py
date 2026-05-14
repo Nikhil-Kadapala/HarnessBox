@@ -16,13 +16,6 @@ class CommandResult:
     stderr: str
 
 
-@dataclass
-class CommandHandle:
-    """Handle for a background process in the sandbox."""
-
-    pid: int
-
-
 @runtime_checkable
 class SandboxProvider(Protocol):
     """Protocol that sandbox backends must implement.
@@ -86,16 +79,22 @@ class SandboxProvider(Protocol):
         """Run a command synchronously and return exit code, stdout, stderr."""
         ...
 
-    async def run_background(
+    async def start_session(
         self,
         command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
-        """Start a background process and return a handle with its PID."""
+        cwd: str,
+        on_stdout: Callable[[Any], None],
+    ) -> int:
+        """Start a long-lived session process and return its PID.
+
+        The process stays alive across multiple prompt turns. Use
+        ``send_stdin(pid, data)`` to write to its stdin. The ``on_stdout``
+        callback fires for each line of output.
+        """
         ...
 
     async def send_stdin(self, pid: int, data: str) -> None:
-        """Send data to the stdin of a running background process."""
+        """Send data to the stdin of a running process."""
         ...
 
     def stream_command(
@@ -105,17 +104,6 @@ class SandboxProvider(Protocol):
         timeout: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream stdout lines from a command as an async generator."""
-        ...
-
-
-@runtime_checkable
-class SessionProcessCapable(Protocol):
-    """Provider supports long-lived agent sessions with stdin/stdout control."""
-
-    async def start_session(
-        self, command: str, cwd: str, on_stdout: Callable[[Any], None]
-    ) -> int:
-        """Start a session process and return its PID."""
         ...
 
 

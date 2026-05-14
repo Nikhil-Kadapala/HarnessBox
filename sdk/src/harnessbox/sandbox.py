@@ -771,12 +771,8 @@ class Sandbox:
         try:
             self._cancel_idle_timer()
 
-            from harnessbox.providers import SessionProcessCapable
-
             use_persistent = (
-                self._harness_config.supports_persistent
-                and isinstance(self._provider, SessionProcessCapable)
-                and not self._one_shot
+                self._harness_config.supports_persistent and not self._one_shot
             )
             if use_persistent:
                 await self._ensure_agent_ready()

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 
-from harnessbox.providers import CommandHandle, CommandResult
+from harnessbox.providers import CommandResult
 
 
 class MockProvider:
@@ -80,13 +81,14 @@ class MockProvider:
         self._commands.append(command)
         return CommandResult(exit_code=0, stdout="", stderr="")
 
-    async def run_background(
+    async def start_session(
         self,
         command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
+        cwd: str,
+        on_stdout: Any,
+    ) -> int:
         self._commands.append(command)
-        return CommandHandle(pid=self._background_pid)
+        return self._background_pid
 
     async def send_stdin(self, pid: int, data: str) -> None:
         self._commands.append(f"stdin:{pid}:{data}")
