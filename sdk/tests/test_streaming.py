@@ -200,11 +200,13 @@ class TestToolBlocks:
                 "content_block_delta",
                 delta={
                     "type": "input_json_delta",
-                    "partial_json": json.dumps({
-                        "subagent_type": "code-reviewer",
-                        "description": "Security audit",
-                        "prompt": "Review auth.py",
-                    }),
+                    "partial_json": json.dumps(
+                        {
+                            "subagent_type": "code-reviewer",
+                            "description": "Security audit",
+                            "prompt": "Review auth.py",
+                        }
+                    ),
                 },
                 index=0,
             )
@@ -535,9 +537,7 @@ class TestSystemApiRetry:
 
     def test_api_retry_partial_fields(self) -> None:
         p = StreamParser()
-        e = p.parse(
-            _line(type="system", subtype="api_retry", attempt=2, error="server_error")
-        )
+        e = p.parse(_line(type="system", subtype="api_retry", attempt=2, error="server_error"))
         assert e is not None
         assert e.event_type == EventType.API_RETRY
         assert e.metadata["attempt"] == 2
@@ -623,9 +623,7 @@ class TestEnrichedResult:
 
     def test_result_empty_model_usage_not_included(self) -> None:
         p = StreamParser()
-        e = p.parse(
-            _line(type="result", session_id="s-1", total_cost_usd=0.01, modelUsage={})
-        )
+        e = p.parse(_line(type="result", session_id="s-1", total_cost_usd=0.01, modelUsage={}))
         assert e is not None
         assert "model_usage" not in e.metadata
 

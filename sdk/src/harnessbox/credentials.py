@@ -150,6 +150,7 @@ def build_claude_env_vars() -> dict[str, str]:
     ANTHROPIC_API_KEY for direct API).
     """
     import logging
+
     logger = logging.getLogger("harnessbox.credentials")
 
     mode = detect_claude_auth_mode()
@@ -185,6 +186,7 @@ def _inject_val(envs: dict[str, str], key: str) -> None:
 def _inject_aws_creds(envs: dict[str, str]) -> None:
     """Inject AWS credentials from env vars or ~/.aws/credentials + config."""
     import logging
+
     logger = logging.getLogger("harnessbox.credentials")
 
     _inject_val(envs, "AWS_ACCESS_KEY_ID")

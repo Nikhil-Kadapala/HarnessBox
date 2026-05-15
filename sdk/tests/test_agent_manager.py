@@ -9,6 +9,12 @@ import pytest
 from harnessbox.agent_manager import AgentManager
 
 
+async def _async_gen_from(items):
+    """Helper: create an async generator yielding items."""
+    for item in items:
+        yield item
+
+
 @pytest.fixture
 def mock_sandbox():
     """Mock sandbox with required attributes."""
@@ -16,6 +22,8 @@ def mock_sandbox():
     sandbox._provider = MagicMock()
     sandbox._skip_permissions = False
     sandbox._cwd = "/workspace"
+    sandbox.event_buffer = MagicMock()
+    sandbox.event_buffer.push = AsyncMock()
     return sandbox
 
 
@@ -34,17 +42,14 @@ class TestAgentManagerLazySpawn:
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
+            mock_process.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-1", sequence=1)]
+            )
 
-            async def mock_stream():
-                yield MagicMock(session_id="conv-1", sequence=1)
-
-            mock_process.stream_turn = AsyncMock(return_value=mock_stream())
-
-            # First prompt should spawn agent
             events = []
             async for event in mgr.send_message("conv-1", "hello"):
                 events.append(event)
-                break  # Just test spawn, not full stream
+                break
 
         assert "conv-1" in mgr._agents
         mock_process.start.assert_called_once()
@@ -61,23 +66,17 @@ class TestAgentManagerLazySpawn:
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
+            mock_process.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-1", sequence=1)]
+            )
 
-            async def mock_stream():
-                yield MagicMock(session_id="conv-1", sequence=1)
-
-            mock_process.stream_turn = AsyncMock(return_value=mock_stream())
-
-            # First prompt
             async for _ in mgr.send_message("conv-1", "hello"):
                 break
 
-            # Second prompt should reuse
             async for _ in mgr.send_message("conv-1", "world"):
                 break
 
-        # start() called only once
         assert mock_process.start.call_count == 1
-        # send_prompt() called twice
         assert mock_process.send_prompt.call_count == 2
 
 
@@ -96,20 +95,19 @@ class TestAgentManagerConcurrent:
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
             mock_process1.send_prompt = AsyncMock()
-            mock_process1.stream_turn = AsyncMock(
-                return_value=iter([MagicMock(session_id="conv-1")])
+            mock_process1.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-1", sequence=1)]
             )
 
             mock_process2 = MagicMock()
             mock_process2.start = AsyncMock()
             mock_process2.send_prompt = AsyncMock()
-            mock_process2.stream_turn = AsyncMock(
-                return_value=iter([MagicMock(session_id="conv-2")])
+            mock_process2.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-2", sequence=1)]
             )
 
             MockAgentProcess.side_effect = [mock_process1, mock_process2]
 
-            # Spawn two agents
             async for _ in mgr.send_message("conv-1", "hello"):
                 break
             async for _ in mgr.send_message("conv-2", "world"):
@@ -136,13 +134,13 @@ class TestAgentManagerTermination:
             mock_process.start = AsyncMock()
             mock_process.send_prompt = AsyncMock()
             mock_process.stop = AsyncMock()
-            mock_process.stream_turn = AsyncMock(return_value=iter([MagicMock()]))
+            mock_process.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-1", sequence=1)]
+            )
 
-            # Spawn agent
             async for _ in mgr.send_message("conv-1", "hello"):
                 break
 
-            # Terminate
             await mgr.terminate_agent("conv-1")
 
         assert "conv-1" not in mgr._agents
@@ -161,23 +159,25 @@ class TestAgentManagerTermination:
             mock_process1.start = AsyncMock()
             mock_process1.send_prompt = AsyncMock()
             mock_process1.stop = AsyncMock()
-            mock_process1.stream_turn = AsyncMock(return_value=iter([MagicMock()]))
+            mock_process1.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-1", sequence=1)]
+            )
 
             mock_process2 = MagicMock()
             mock_process2.start = AsyncMock()
             mock_process2.send_prompt = AsyncMock()
             mock_process2.stop = AsyncMock()
-            mock_process2.stream_turn = AsyncMock(return_value=iter([MagicMock()]))
+            mock_process2.stream_turn = lambda: _async_gen_from(
+                [MagicMock(session_id="conv-2", sequence=1)]
+            )
 
             MockAgentProcess.side_effect = [mock_process1, mock_process2]
 
-            # Spawn two agents
             async for _ in mgr.send_message("conv-1", "hello"):
                 break
             async for _ in mgr.send_message("conv-2", "world"):
                 break
 
-            # Shutdown all
             await mgr.shutdown_all()
 
         assert len(mgr._agents) == 0

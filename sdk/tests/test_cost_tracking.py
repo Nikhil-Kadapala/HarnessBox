@@ -38,7 +38,7 @@ def test_parse_cost_data_text_multiple_models():
         "total_cost_usd": 0.15,
         "output": """Usage by model:
    claude-sonnet-4-5:  100 input, 200 output ($0.10)
-   claude-haiku-4-5:  50 input, 75 output ($0.05)"""
+   claude-haiku-4-5:  50 input, 75 output ($0.05)""",
     }
     metrics = parse_cost_data(cost_data)
     assert metrics is not None
@@ -46,6 +46,7 @@ def test_parse_cost_data_text_multiple_models():
     assert len(metrics.per_model) == 2
     assert metrics.per_model["claude-sonnet-4-5"].input_tokens == 100
     assert metrics.per_model["claude-haiku-4-5"].output_tokens == 75
+
 
 # ---------------------------------------------------------------------------
 # 1. CostMetrics initialization
@@ -178,10 +179,10 @@ def test_parse_cost_data_empty_response():
 
 def test_parse_cost_data_missing_total():
     """cost_data missing total_cost_usd → return None."""
-    cost_data = {"modelUsage": {"model-a": {"inputTokens": 100, "outputTokens": 50, "costUSD": 0.01}}}
+    cost_data = {
+        "modelUsage": {"model-a": {"inputTokens": 100, "outputTokens": 50, "costUSD": 0.01}}
+    }
     assert parse_cost_data(cost_data) is None
-
-
 
 
 # ---------------------------------------------------------------------------

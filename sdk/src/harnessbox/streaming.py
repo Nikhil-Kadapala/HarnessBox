@@ -585,6 +585,7 @@ class StreamParser:
 
     def _parse_result(self, data: dict[str, Any]) -> UniversalEvent | list[UniversalEvent]:
         import logging
+
         logger = logging.getLogger("harnessbox.streaming")
 
         sid = data.get("session_id")
@@ -668,7 +669,9 @@ class StreamParser:
                     EventType.INPUT_REQUESTED,
                     metadata={
                         "request_id": data.get("request_id"),
-                        "questions": tool_input.get("questions", []) if isinstance(tool_input, dict) else [],
+                        "questions": tool_input.get("questions", [])
+                        if isinstance(tool_input, dict)
+                        else [],
                     },
                     raw=data,
                 )

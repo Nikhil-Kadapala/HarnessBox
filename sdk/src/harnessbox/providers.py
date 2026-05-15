@@ -132,9 +132,7 @@ class NativeGitCapable(Protocol):
 class PTYCapable(Protocol):
     """Provider supports interactive PTY sessions."""
 
-    async def pty_create(
-        self, on_data: Callable[[bytes], None], *, cwd: str | None = None
-    ) -> int:
+    async def pty_create(self, on_data: Callable[[bytes], None], *, cwd: str | None = None) -> int:
         """Create a PTY with an output callback and return its PID."""
         ...
 

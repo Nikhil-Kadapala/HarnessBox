@@ -813,9 +813,7 @@ class Sandbox:
         try:
             self._cancel_idle_timer()
 
-            use_persistent = (
-                self._harness_config.supports_persistent and not self._one_shot
-            )
+            use_persistent = self._harness_config.supports_persistent and not self._one_shot
             if use_persistent:
                 await self._ensure_agent_ready()
 
@@ -840,9 +838,7 @@ class Sandbox:
                     yield event
 
                 result_model_usage = (
-                    (last_turn_end.metadata or {}).get("model_usage")
-                    if last_turn_end
-                    else None
+                    (last_turn_end.metadata or {}).get("model_usage") if last_turn_end else None
                 )
                 skip_cost = bool(result_model_usage)
 
@@ -953,9 +949,7 @@ class Sandbox:
         try:
             context_data = await self._agent_process.send_command("/context", timeout=5)
             cost_data = (
-                await self._agent_process.send_command("/cost", timeout=5)
-                if not skip_cost
-                else {}
+                await self._agent_process.send_command("/cost", timeout=5) if not skip_cost else {}
             )
         except asyncio.TimeoutError:
             _log.warning("Status poll timed out")
@@ -973,14 +967,16 @@ class Sandbox:
         if context_output:
             parsed = self._parse_context_output(context_output)
             if parsed:
-                events.append(UniversalEvent(
-                    event_id=str(uuid.uuid4()),
-                    sequence=0,
-                    timestamp=now,
-                    session_id=session_id,
-                    event_type=StreamEventType.CONTEXT_UPDATE,
-                    metadata=parsed,
-                ))
+                events.append(
+                    UniversalEvent(
+                        event_id=str(uuid.uuid4()),
+                        sequence=0,
+                        timestamp=now,
+                        session_id=session_id,
+                        event_type=StreamEventType.CONTEXT_UPDATE,
+                        metadata=parsed,
+                    )
+                )
 
         # --- COST_UPDATE event (only when not already emitted from result) ---
         if not skip_cost and cost_data:
@@ -988,25 +984,27 @@ class Sandbox:
                 parsed_cost = parse_cost_data(cost_data)
                 if parsed_cost:
                     self._cost_metrics = parsed_cost
-                    events.append(UniversalEvent(
-                        event_id=str(uuid.uuid4()),
-                        sequence=0,
-                        timestamp=now,
-                        session_id=session_id,
-                        event_type=StreamEventType.COST_UPDATE,
-                        metadata={
-                            "total_cost_usd": parsed_cost.total_cost_usd,
-                            "turn_count": parsed_cost.turn_count,
-                            "per_model": {
-                                model: {
-                                    "input_tokens": mc.input_tokens,
-                                    "output_tokens": mc.output_tokens,
-                                    "cost_usd": mc.cost_usd,
-                                }
-                                for model, mc in parsed_cost.per_model.items()
+                    events.append(
+                        UniversalEvent(
+                            event_id=str(uuid.uuid4()),
+                            sequence=0,
+                            timestamp=now,
+                            session_id=session_id,
+                            event_type=StreamEventType.COST_UPDATE,
+                            metadata={
+                                "total_cost_usd": parsed_cost.total_cost_usd,
+                                "turn_count": parsed_cost.turn_count,
+                                "per_model": {
+                                    model: {
+                                        "input_tokens": mc.input_tokens,
+                                        "output_tokens": mc.output_tokens,
+                                        "cost_usd": mc.cost_usd,
+                                    }
+                                    for model, mc in parsed_cost.per_model.items()
+                                },
                             },
-                        },
-                    ))
+                        )
+                    )
             except Exception as e:
                 _log.warning("Failed to parse cost data: %s", e)
 
@@ -1042,7 +1040,9 @@ class Sandbox:
         if tokens_match:
             percent = int(tokens_match.group(5))
             result["tokens_used"] = parse_token_count(tokens_match.group(1), tokens_match.group(2))
-            result["context_window"] = parse_token_count(tokens_match.group(3), tokens_match.group(4))
+            result["context_window"] = parse_token_count(
+                tokens_match.group(3), tokens_match.group(4)
+            )
             result["percent_used"] = percent
 
         model_match = re.search(r"(?:\*\*)?Model:(?:\*\*)?\s*(\S+)", text, re.IGNORECASE)

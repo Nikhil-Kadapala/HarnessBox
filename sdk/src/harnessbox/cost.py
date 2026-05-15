@@ -135,7 +135,9 @@ def parse_cost_data(cost_data: dict[str, Any]) -> CostMetrics | None:
 
             # Parse per-model usage lines
             # Format: "   model-name:  123 input, 456 output, ... ($1.23)"
-            model_pattern = r"^\s+([a-z0-9_-]+):\s+(\d+)\s+input,\s+(\d+)\s+output.*?\(\$?([\d.]+)\)"
+            model_pattern = (
+                r"^\s+([a-z0-9_-]+):\s+(\d+)\s+input,\s+(\d+)\s+output.*?\(\$?([\d.]+)\)"
+            )
             for line in text.split("\n"):
                 match = re.match(model_pattern, line, re.IGNORECASE)
                 if match:
@@ -158,5 +160,3 @@ def parse_cost_data(cost_data: dict[str, Any]) -> CostMetrics | None:
         turn_count=1,  # This represents one turn's cost
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-
-

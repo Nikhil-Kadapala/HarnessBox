@@ -37,13 +37,17 @@ class TestMigrationRunner:
     def test_creates_workspaces_table(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces'")
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces'"
+        )
         assert cursor.fetchone() is not None
 
     def test_creates_conversations_table(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'")
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'"
+        )
         assert cursor.fetchone() is not None
 
     def test_creates_events_table(self, conn):
@@ -224,13 +228,15 @@ class TestSQLiteBackendIntegration:
             for i in range(5)
         ]
         # Mix in a non-cost event
-        events.append({
-            "event_id": "text-1",
-            "sequence": 5,
-            "timestamp": "2026-01-01T00:00:00Z",
-            "event_type": "text_delta",
-            "event_json": '{"text": "hello"}',
-        })
+        events.append(
+            {
+                "event_id": "text-1",
+                "sequence": 5,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "event_type": "text_delta",
+                "event_json": '{"text": "hello"}',
+            }
+        )
         await backend.append_events("ws-cost", events)
         async with backend._write_lock:
             await backend._flush_events()

@@ -63,9 +63,7 @@ class MigrationRunner:
 
             try:
                 upgrade_fn(self._conn)
-                self._conn.execute(
-                    "UPDATE schema_version SET version = ? WHERE id = 1", (i,)
-                )
+                self._conn.execute("UPDATE schema_version SET version = ? WHERE id = 1", (i,))
                 self._conn.commit()
                 applied += 1
                 logger.info(f"Migration v{i:03d} applied: {module_path.rsplit('.', 1)[-1]}")

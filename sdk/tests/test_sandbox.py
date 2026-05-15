@@ -224,7 +224,9 @@ class TestRunPrompt:
     @pytest.mark.asyncio
     async def test_command_uses_agent_template(self, mock_provider):
         mock_provider._stream_lines = []
-        sb = Sandbox(client=mock_provider, harness="claude-code", skip_permissions=True, one_shot=True)
+        sb = Sandbox(
+            client=mock_provider, harness="claude-code", skip_permissions=True, one_shot=True
+        )
         await sb.setup()
 
         async for _ in sb.send_message("hello"):

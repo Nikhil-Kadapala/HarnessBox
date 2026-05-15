@@ -911,22 +911,26 @@ def create_app(
                 safe_name = Path(att.filename).name or "attachment"
                 file_path = att_dir / f"{att_id}_{safe_name}"
                 file_path.write_bytes(raw)
-                attachments.append(Attachment(
-                    attachment_id=att_id,
-                    filename=att.filename,
-                    mime_type=att.mime_type,
-                    size_bytes=size,
-                    data_b64=None,
-                    storage_path=str(file_path),
-                ))
+                attachments.append(
+                    Attachment(
+                        attachment_id=att_id,
+                        filename=att.filename,
+                        mime_type=att.mime_type,
+                        size_bytes=size,
+                        data_b64=None,
+                        storage_path=str(file_path),
+                    )
+                )
             else:
-                attachments.append(Attachment(
-                    attachment_id=att_id,
-                    filename=att.filename,
-                    mime_type=att.mime_type,
-                    size_bytes=size,
-                    data_b64=att.data_b64,
-                ))
+                attachments.append(
+                    Attachment(
+                        attachment_id=att_id,
+                        filename=att.filename,
+                        mime_type=att.mime_type,
+                        size_bytes=size,
+                        data_b64=att.data_b64,
+                    )
+                )
 
         async def event_generator() -> Any:
             logger.info("SSE stream started for session %s", session_id)

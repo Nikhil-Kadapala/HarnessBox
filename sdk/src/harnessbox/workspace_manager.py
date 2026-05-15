@@ -437,25 +437,25 @@ class WorkspaceManager:
                 for att in attachments:
                     safe_name = Path(att.filename).name or "attachment"
                     sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{safe_name}"
-                    await info.sandbox._provider.make_dir(
-                        f"{cwd}/.attachments/{att.attachment_id}"
-                    )
-                    raw_data = base64.b64decode(
-                        att.data_b64 or ""
-                    ) if att.data_b64 else (
-                        Path(att.storage_path).read_bytes() if att.storage_path else b""
+                    await info.sandbox._provider.make_dir(f"{cwd}/.attachments/{att.attachment_id}")
+                    raw_data = (
+                        base64.b64decode(att.data_b64 or "")
+                        if att.data_b64
+                        else (Path(att.storage_path).read_bytes() if att.storage_path else b"")
                     )
                     if raw_data:
                         await info.sandbox._provider.write_file(sandbox_path, raw_data)
-                    resolved_attachments.append(Attachment(
-                        attachment_id=att.attachment_id,
-                        filename=att.filename,
-                        mime_type=att.mime_type,
-                        size_bytes=att.size_bytes,
-                        data_b64=att.data_b64,
-                        storage_path=att.storage_path,
-                        sandbox_path=sandbox_path,
-                    ))
+                    resolved_attachments.append(
+                        Attachment(
+                            attachment_id=att.attachment_id,
+                            filename=att.filename,
+                            mime_type=att.mime_type,
+                            size_bytes=att.size_bytes,
+                            data_b64=att.data_b64,
+                            storage_path=att.storage_path,
+                            sandbox_path=sandbox_path,
+                        )
+                    )
 
             # Emit USER_PROMPT event
             attachment_meta = [
@@ -465,7 +465,11 @@ class WorkspaceManager:
                     "mime_type": a.mime_type,
                     "size_bytes": a.size_bytes,
                     "sandbox_path": a.sandbox_path,
-                    **({"data_b64": a.data_b64} if a.data_b64 and a.size_bytes < 1024 * 1024 else {}),
+                    **(
+                        {"data_b64": a.data_b64}
+                        if a.data_b64 and a.size_bytes < 1024 * 1024
+                        else {}
+                    ),
                 }
                 for a in resolved_attachments
             ]
@@ -488,16 +492,12 @@ class WorkspaceManager:
             # Augment prompt with file references for the agent
             augmented_prompt = prompt
             if resolved_attachments:
-                file_list = "\n".join(
-                    f"- {a.sandbox_path}" for a in resolved_attachments
-                )
+                file_list = "\n".join(f"- {a.sandbox_path}" for a in resolved_attachments)
                 augmented_prompt = f"{prompt}\n\n[Attached files written to sandbox:\n{file_list}]"
 
             # Save conversation on first agent event
             first_event = True
-            async for event in info.agent_manager.send_message(
-                conversation_id, augmented_prompt
-            ):
+            async for event in info.agent_manager.send_message(conversation_id, augmented_prompt):
                 if (
                     event.event_type == "error"
                     and event.metadata.get("error_code") == "SANDBOX_DEAD"
