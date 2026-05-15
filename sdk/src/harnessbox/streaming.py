@@ -713,9 +713,6 @@ def _parse_result(
         raw=data,
     )
     events.append(ev)
-    # Clear tool_map at turn/session end — entries are only needed between
-    # tool_use start and the corresponding tool_result in the same turn.
-    current_state = replace(current_state, tool_map={})
     return current_state, events
 
 
