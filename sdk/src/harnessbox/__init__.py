@@ -46,10 +46,12 @@ from harnessbox.streaming import (
     ContentPart,
     ItemKind,
     ItemStatus,
+    ParserState,
     StreamParser,
     ToolKind,
     UniversalEvent,
     classify_tool,
+    parse_line,
     parse_stream_line,
 )
 from harnessbox.streaming import (
@@ -82,11 +84,13 @@ __all__ = [
     "InteractiveSession",
     "ItemKind",
     "ItemStatus",
+    "ParserState",
     "StreamEventType",
     "StreamParser",
     "ToolKind",
     "UniversalEvent",
     "classify_tool",
+    "parse_line",
     "parse_stream_line",
     # Process
     "AgentProcess",
