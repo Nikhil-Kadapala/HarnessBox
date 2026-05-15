@@ -5,16 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0.0] - 2026-05-14
 
 ### Added
-- **Cost tracking** for persistent agent sessions
-  - `CostMetrics` dataclass with per-model breakdown (input/output tokens + cost per model)
-  - `sandbox.cost_metrics` property for accessing accumulated costs
-  - `harnessbox.cost` module with `parse_cost_data()` and `accumulate_costs()` utilities
-  - STATUS events now include `cost_breakdown` in metadata for dashboard visualization
-  - Per-model cost attribution across multiple turns
-  - Persistent mode only (one-shot mode does not track costs)
+- **Streaming architecture** with full event coverage: `UniversalEvent` schema, `StreamParser` for Claude Code's NDJSON output, typed `CONTEXT_UPDATE`, `COST_UPDATE`, and `USER_PROMPT` events
+- **WorkspaceManager** replacing SessionManager: multi-workspace registry with per-session locking, branch-based pooling, auto-pause with snapshot creation
+- **SQLite storage backend** as default persistence layer: batched event writes, migration runner, 10K event retention cap per workspace, WAL mode
+- **Migration system** with versioned SQL migrations (`v001_initial`, `v002_event_type_index`)
+- **CLI entrypoint** (`harnessbox serve`) with env vars + flags for port, db path
+- **HTTP/SSE server** with FastAPI: workspace CRUD, prompt submission with SSE streaming, event history replay, permission handling
+- **USER_PROMPT events** with attachment support (inline base64 for <1MB, filesystem path for larger files)
+- **Cost tracking** with per-model breakdown, `CostMetrics` dataclass, persistent cost history via events table query
+- **AgentManager** for lazy process spawning and multi-conversation agent lifecycle
+- **Credential injection** system: Claude auth env vars (Bedrock/Vertex/direct), gcloud ADC file injection, GitHub token resolution
+- **Security guards** (10 composable `CredentialGuardSet`s) generating both settings.json deny rules and PreToolUse hook scripts
+- **Web application** (app/web): React + Vite with session board, event feed, settings panel, dot-matrix loading animations, real-time SSE consumption
+- **Monorepo structure** with `sdk/`, `app/web/`, `app/desktop/` layout
+
+### Changed
+- **BREAKING:** Renamed `start_persistent` to `start_session`, added `one_shot` flag
+- **BREAKING:** Renamed API method to `send_message` (was `run_prompt`)
+- **BREAKING:** `SandboxProvider` protocol now includes `start_session` (previously delegated)
+- `AgentResponse` moved to `types.py` module, E2B exceptions encapsulated behind `SandboxDeadError`
+- Server defaults to SQLite storage (was in-memory only)
+- Event buffer now uses asyncio.Lock covering flush task (fixes race condition on `_pending_events`)
+
+### Removed
+- Old flat package structure at repo root (`harnessbox/` directory replaced by `sdk/src/harnessbox/`)
+- Stub providers (Docker, Daytona, EC2) removed from source tree
+- `SupabaseBackend` and `AuthProvider` concepts (multi-tenancy handled by auth gateway at infra level)
+- `preferences` table (YAGNI)
+- Separate `cost_history` table (cost queries go through events table)
 
 ## [0.2.0] - 2026-04-20
 
@@ -65,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git credential deny rules (.git/config, .git-credentials, git config credential.*)
 - 214 tests
 
+[0.3.0.0]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.2.0...v0.3.0.0
 [0.2.0]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Nikhil-Kadapala/HarnessBox/releases/tag/v0.1.0
