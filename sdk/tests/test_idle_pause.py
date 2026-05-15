@@ -33,17 +33,17 @@ def _make_sandbox(
     )
 
 
-class TestBuildPersistentCommand:
+class TestBuildSessionCommand:
     def test_without_session_id(self) -> None:
         cfg = get_harness_type("claude-code")
-        cmd = cfg.build_persistent_command(skip_permissions=True)
+        cmd = cfg.build_session_command(skip_permissions=True)
         assert "--resume" not in cmd
         assert "--input-format" in cmd
         assert "--dangerously-skip-permissions" in cmd
 
     def test_with_session_id(self) -> None:
         cfg = get_harness_type("claude-code")
-        cmd = cfg.build_persistent_command(skip_permissions=True, session_id="abc-123")
+        cmd = cfg.build_session_command(skip_permissions=True, session_id="abc-123")
         assert "--resume abc-123" in cmd
         parts = cmd.split()
         resume_idx = parts.index("--resume")
@@ -52,8 +52,8 @@ class TestBuildPersistentCommand:
 
     def test_session_id_none_same_as_omitted(self) -> None:
         cfg = get_harness_type("claude-code")
-        cmd_none = cfg.build_persistent_command(skip_permissions=True, session_id=None)
-        cmd_omit = cfg.build_persistent_command(skip_permissions=True)
+        cmd_none = cfg.build_session_command(skip_permissions=True, session_id=None)
+        cmd_omit = cfg.build_session_command(skip_permissions=True)
         assert cmd_none == cmd_omit
 
 
@@ -173,8 +173,8 @@ class TestEnsureAgentReady:
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
 
         with patch.object(sandbox, "_agent_process", None):
-            # Mock start_persistent on provider
-            provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+            # Mock start_session on provider
+            provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
             await sandbox._ensure_agent_ready()
             assert sandbox._agent_process is not None
 
@@ -184,8 +184,8 @@ class TestEnsureAgentReady:
         sandbox._paused_sandbox_id = "mock-sandbox-123"
         provider._running = False  # type: ignore[attr-defined]
 
-        # Mock start_persistent on provider
-        provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+        # Mock start_session on provider
+        provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
         await sandbox._ensure_agent_ready()
         assert sandbox._state == WorkspaceState.ACTIVE
         assert sandbox._paused_sandbox_id is None
@@ -202,7 +202,7 @@ class TestEnsureAgentReady:
         dead_process.is_running = False
         sandbox._agent_process = dead_process
 
-        provider.start_persistent = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+        provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
         await sandbox._ensure_agent_ready()
         assert sandbox._agent_process is not dead_process
 

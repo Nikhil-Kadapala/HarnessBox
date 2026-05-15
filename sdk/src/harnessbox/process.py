@@ -62,7 +62,7 @@ class AgentProcess:
         def on_stdout(data: Any) -> None:
             nonlocal buffer
             raw = data.line if hasattr(data, "line") else str(data)
-            _log.debug("stdout raw: %s", raw[:200])
+            _log.debug("stdout raw: %s", raw[:1000])
             buffer += raw + "\n"
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
@@ -70,15 +70,9 @@ class AgentProcess:
                 if line:
                     loop.call_soon_threadsafe(self._stdout_queue.put_nowait, line)
 
-        if hasattr(self._provider, "start_persistent"):
-            _log.info("Starting persistent process (native): %s", command[:200])
-            self._pid = await self._provider.start_persistent(command, cwd, on_stdout)
-            self._running = True
-        else:
-            _log.info("Starting persistent process (background task): %s", command[:200])
-            handle = await self._provider.run_background(command, cwd=cwd)
-            self._pid = handle.pid
-            self._running = True
+        _log.info("Starting session process: %s", command[:200])
+        self._pid = await self._provider.start_session(command, cwd, on_stdout)
+        self._running = True
 
         _log.info("Agent process started: pid=%s", self._pid)
 
@@ -135,8 +129,9 @@ class AgentProcess:
                 _log.info("Agent process exited during turn")
                 return
 
-            _log.debug("Turn line: %s", line[:200])
+            _log.debug("Turn line: %s", line[:1000])
             for event in self._parser.parse_line(line):
+                _log.info("Parsed event: %s (error: %s)", event.event_type, event.error_message)
                 yield event
                 if event.event_type in (EventType.SESSION_ENDED, EventType.TURN_ENDED):
                     if event.cost_usd is not None or event.duration_ms is not None:
@@ -176,9 +171,10 @@ class AgentProcess:
             msg_type = data.get("type")
             if msg_type == "user":
                 content = data.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    collected["output"] = content
-                    _log.debug("Command output captured: %s", content[:200])
+                output = self._extract_text_content(content)
+                if output:
+                    collected["output"] = output
+                    _log.debug("Command output captured: %s", output[:200])
             elif msg_type == "result":
                 collected.update(data)
                 _log.debug(
@@ -186,6 +182,31 @@ class AgentProcess:
                     {k: v for k, v in collected.items() if k != "raw"}.__repr__()[:300],
                 )
                 return collected
+
+    @classmethod
+    def _extract_text_content(cls, content: Any) -> str:
+        """Extract text from Claude message content blocks."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [cls._extract_text_content(item) for item in content]
+            return "\n".join(part for part in parts if part)
+        if not isinstance(content, dict):
+            return ""
+
+        text_parts: list[str] = []
+        for key in ("text", "output"):
+            value = content.get(key)
+            if isinstance(value, str):
+                text_parts.append(value)
+
+        nested_content = content.get("content")
+        if nested_content is not None:
+            nested = cls._extract_text_content(nested_content)
+            if nested:
+                text_parts.append(nested)
+
+        return "\n".join(text_parts)
 
     async def respond_permission(self, request_id: str, behavior: str = "allow") -> None:
         """Respond to a control_request permission gate."""

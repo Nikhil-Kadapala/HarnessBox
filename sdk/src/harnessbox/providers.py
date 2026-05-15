@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
+
+
+class SandboxDeadError(Exception):
+    """Raised when the sandbox is no longer reachable (timed out, destroyed, or killed)."""
 
 
 @dataclass
@@ -14,13 +18,6 @@ class CommandResult:
     exit_code: int
     stdout: str
     stderr: str
-
-
-@dataclass
-class CommandHandle:
-    """Handle for a background process in the sandbox."""
-
-    pid: int
 
 
 @runtime_checkable
@@ -65,8 +62,8 @@ class SandboxProvider(Protocol):
         """Create a point-in-time snapshot and return its identifier."""
         ...
 
-    async def write_file(self, path: str, content: str) -> None:
-        """Write text content to a file in the sandbox."""
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        """Write content to a file in the sandbox."""
         ...
 
     async def read_file(self, path: str) -> str:
@@ -86,16 +83,22 @@ class SandboxProvider(Protocol):
         """Run a command synchronously and return exit code, stdout, stderr."""
         ...
 
-    async def run_background(
+    async def start_session(
         self,
         command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
-        """Start a background process and return a handle with its PID."""
+        cwd: str,
+        on_stdout: Callable[[Any], None],
+    ) -> int:
+        """Start a long-lived session process and return its PID.
+
+        The process stays alive across multiple prompt turns. Use
+        ``send_stdin(pid, data)`` to write to its stdin. The ``on_stdout``
+        callback fires for each line of output.
+        """
         ...
 
     async def send_stdin(self, pid: int, data: str) -> None:
-        """Send data to the stdin of a running background process."""
+        """Send data to the stdin of a running process."""
         ...
 
     def stream_command(
@@ -105,4 +108,34 @@ class SandboxProvider(Protocol):
         timeout: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream stdout lines from a command as an async generator."""
+        ...
+
+
+@runtime_checkable
+class NativeGitCapable(Protocol):
+    """Provider supports native git operations (faster than shell fallback)."""
+
+    async def git_clone(
+        self,
+        url: str,
+        dest: str,
+        *,
+        branch: str | None = None,
+        depth: int | None = None,
+        auth_token: str | None = None,
+    ) -> None:
+        """Clone a git repository using the provider's native git API."""
+        ...
+
+
+@runtime_checkable
+class PTYCapable(Protocol):
+    """Provider supports interactive PTY sessions."""
+
+    async def pty_create(self, on_data: Callable[[bytes], None], *, cwd: str | None = None) -> int:
+        """Create a PTY with an output callback and return its PID."""
+        ...
+
+    async def pty_send(self, pid: int, data: bytes) -> None:
+        """Send data to a PTY's stdin."""
         ...

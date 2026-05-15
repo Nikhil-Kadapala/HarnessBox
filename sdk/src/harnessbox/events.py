@@ -55,6 +55,7 @@ class EventBuffer:
         self._ring: deque[UniversalEvent] = deque(maxlen=self.RING_SIZE)
         self._subscribers: dict[str, asyncio.Queue[UniversalEvent | None]] = {}
         self._closed = False
+        self._sequence = 0
 
         # Persistence
         self._storage = storage
@@ -74,13 +75,35 @@ class EventBuffer:
     @property
     def latest_sequence(self) -> int:
         """Return the sequence number of the most recent event, or 0 if empty."""
-        return self._ring[-1].sequence if self._ring else 0
+        return self._sequence
 
     async def push(self, event: UniversalEvent) -> None:
         """Push an event to the ring and broadcast to subscribers.
 
+        Assigns a monotonically increasing sequence number, making EventBuffer
+        the sole authority on event ordering regardless of source.
+
         If storage is enabled, the event is also queued for batched persistence.
         """
+        self._sequence += 1
+        event = UniversalEvent(
+            event_id=event.event_id,
+            sequence=self._sequence,
+            timestamp=event.timestamp,
+            session_id=event.session_id,
+            event_type=event.event_type,
+            item_id=event.item_id,
+            item_kind=event.item_kind,
+            item_status=event.item_status,
+            content=event.content,
+            delta=event.delta,
+            tool_kind=event.tool_kind,
+            cost_usd=event.cost_usd,
+            duration_ms=event.duration_ms,
+            error_message=event.error_message,
+            metadata=event.metadata,
+            raw=event.raw,
+        )
         self._ring.append(event)
 
         # Broadcast to subscribers

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 
-from harnessbox.providers import CommandHandle, CommandResult
+from harnessbox.providers import CommandResult
 
 
 class MockProvider:
@@ -15,7 +16,7 @@ class MockProvider:
     def __init__(self) -> None:
         self._sandbox_id: str | None = None
         self._running = False
-        self._files: dict[str, str] = {}
+        self._files: dict[str, str | bytes] = {}
         self._dirs: list[str] = []
         self._commands: list[str] = []
         self._env_vars: dict[str, str] = {}
@@ -60,13 +61,14 @@ class MockProvider:
             raise RuntimeError("Not running")
         return f"snapshot-{self._sandbox_id}"
 
-    async def write_file(self, path: str, content: str) -> None:
+    async def write_file(self, path: str, content: str | bytes) -> None:
         self._files[path] = content
 
     async def read_file(self, path: str) -> str:
         if path not in self._files:
             raise FileNotFoundError(path)
-        return self._files[path]
+        content = self._files[path]
+        return content if isinstance(content, str) else content.decode()
 
     async def make_dir(self, path: str) -> None:
         self._dirs.append(path)
@@ -80,13 +82,18 @@ class MockProvider:
         self._commands.append(command)
         return CommandResult(exit_code=0, stdout="", stderr="")
 
-    async def run_background(
+    async def start_session(
         self,
         command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
+        cwd: str,
+        on_stdout: Any,
+    ) -> int:
         self._commands.append(command)
-        return CommandHandle(pid=self._background_pid)
+        self._on_stdout = on_stdout
+        if self._stream_lines:
+            for line in self._stream_lines:
+                on_stdout(type("Data", (), {"line": line})())
+        return self._background_pid
 
     async def send_stdin(self, pid: int, data: str) -> None:
         self._commands.append(f"stdin:{pid}:{data}")

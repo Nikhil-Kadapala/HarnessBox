@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harnessbox.providers import CommandHandle, CommandResult, SandboxProvider
+from harnessbox.providers import CommandResult, SandboxProvider
 
 from .conftest import MockProvider
 
@@ -20,12 +20,6 @@ class TestCommandResult:
         r = CommandResult(exit_code=1, stdout="", stderr="error")
         assert r.exit_code == 1
         assert r.stderr == "error"
-
-
-class TestCommandHandle:
-    def test_construction(self):
-        h = CommandHandle(pid=42)
-        assert h.pid == 42
 
 
 class TestSandboxProviderProtocol:

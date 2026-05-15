@@ -32,8 +32,8 @@ try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import Response
-    from pydantic import BaseModel, field_validator
-    from sse_starlette.sse import EventSourceResponse
+    from pydantic import BaseModel, Field, field_validator
+    from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 except ImportError as e:
     raise ImportError(
         "Server dependencies not installed. Run: pip install harnessbox[server]"
@@ -188,6 +188,7 @@ class CreateSessionRequest(BaseModel):
     provider: str = "e2b"
     api_key: str | None = None
     harness: str = "claude-code"
+    model: str | None = None
     env_vars: dict[str, str] = {}
     setup_script: str | None = None
     cwd: str | None = None
@@ -238,10 +239,19 @@ class PRRequest(BaseModel):
     body: str = ""
 
 
+class AttachmentPayload(BaseModel):
+    """A single attachment in a prompt request."""
+
+    filename: str
+    mime_type: str = "application/octet-stream"
+    data_b64: str = Field(max_length=14_000_000)  # ~10MB decoded
+
+
 class PromptRequest(BaseModel):
     """Request body for sending a prompt to the agent."""
 
     prompt: str
+    attachments: list[AttachmentPayload] = []
 
 
 class TransitionRequest(BaseModel):
@@ -265,33 +275,48 @@ class PermissionRequest(BaseModel):
 def create_app(
     *,
     manager: WorkspaceManager | None = None,
-    storage: str | StorageBackend | None = None,
+    storage: str | StorageBackend | None = "sqlite",
 ) -> FastAPI:
-    """Create a FastAPI app with optional persistent storage.
+    """Create a FastAPI app with persistent storage (SQLite by default).
 
     Args:
         manager: Existing WorkspaceManager instance (or None to create).
-        storage: Storage backend name ("memory", "sqlite") or instance.
-                 If None, sessions are in-memory only (lost on restart).
+        storage: Storage backend name ("memory", "sqlite"), instance, or None.
+                 Defaults to "sqlite" for persistent sessions across restarts.
+                 Pass None for pure in-memory (tests only).
 
     Returns:
         FastAPI app ready to run with uvicorn.
 
     Example:
-        >>> app = create_app(storage="sqlite")
-        >>> # OR
+        >>> app = create_app()  # SQLite at ~/.harnessbox/sessions.db
+        >>> app = create_app(storage="memory")  # In-memory (no persistence)
+        >>> # OR custom path:
         >>> from harnessbox._storage import get_storage_backend
         >>> backend_cls = get_storage_backend("sqlite")
-        >>> storage = backend_cls(path="~/.harnessbox/sessions.db")
+        >>> storage = backend_cls(path="./my-sessions.db")
         >>> app = create_app(storage=storage)
     """
+    # Resolve storage from env vars when called as uvicorn factory
+    import os as _os
+
+    if storage == "sqlite":
+        env_storage = _os.environ.get("HARNESSBOX_STORAGE", "sqlite")
+        if env_storage != "sqlite":
+            storage = env_storage
+
     # Resolve storage backend by name if string
     resolved_storage: StorageBackend | None = None
     if isinstance(storage, str):
         from harnessbox._storage import get_storage_backend
 
         backend_cls = get_storage_backend(storage)
-        resolved_storage = backend_cls()
+        kwargs: dict[str, Any] = {}
+        if storage == "sqlite":
+            db_path = _os.environ.get("HARNESSBOX_DB_PATH")
+            if db_path:
+                kwargs["path"] = db_path
+        resolved_storage = backend_cls(**kwargs)
     elif storage is not None:
         resolved_storage = storage
 
@@ -482,12 +507,42 @@ def create_app(
 
         return {"remote": remote, "default_branch": default_branch, "name": name}
 
+    # ----- Account endpoints -----
+
+    @app.get("/v1/account/github")
+    async def get_github_profile() -> dict[str, Any]:
+        """Fetch GitHub profile using the local gh CLI."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["gh", "api", "user"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise HTTPException(status_code=404, detail="GitHub CLI not authenticated")
+            data = json.loads(result.stdout)
+            return {
+                "login": data.get("login", ""),
+                "name": data.get("name"),
+                "email": data.get("email"),
+                "avatar_url": data.get("avatar_url", ""),
+            }
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="GitHub CLI not installed")
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="GitHub API request timed out")
+
     # ----- Session endpoints -----
 
     @app.post("/v1/workspaces", response_model=SessionResponse, status_code=201)
     async def create_session(req: CreateSessionRequest) -> SessionResponse:
         env_vars = dict(req.env_vars)
         _inject_host_env_vars(env_vars)
+        logger.info("Injected env vars: %s", list(env_vars.keys()))
         credential_files: dict[str, str | Path] = dict(_inject_host_credential_files())
         if "/root/.config/gcloud/application_default_credentials.json" in credential_files:
             env_vars.setdefault(
@@ -550,6 +605,7 @@ def create_app(
             provider=req.provider,
             api_key=api_key,
             harness=req.harness,
+            model=req.model,
             env_vars=env_vars,
             files=credential_files or None,
             setup_script=req.setup_script,
@@ -818,6 +874,11 @@ def create_app(
 
     @app.post("/v1/workspaces/{session_id}/prompt")
     async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
+        import base64
+        import uuid as _uuid
+
+        from harnessbox.streaming import Attachment
+
         try:
             info = mgr.get_workspace(session_id)
         except WorkspaceNotFoundError as exc:
@@ -833,11 +894,51 @@ def create_app(
                 },
             )
 
+        attachments: list[Attachment] = []
+        total_size = 0
+        for att in req.attachments:
+            raw = base64.b64decode(att.data_b64)
+            total_size += len(raw)
+            if total_size > 10 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Total attachment size exceeds 10MB")
+
+            att_id = str(_uuid.uuid4())
+            size = len(raw)
+
+            if size >= 1024 * 1024:
+                att_dir = Path.home() / ".harnessbox" / "attachments" / session_id
+                att_dir.mkdir(parents=True, exist_ok=True)
+                safe_name = Path(att.filename).name or "attachment"
+                file_path = att_dir / f"{att_id}_{safe_name}"
+                file_path.write_bytes(raw)
+                attachments.append(
+                    Attachment(
+                        attachment_id=att_id,
+                        filename=att.filename,
+                        mime_type=att.mime_type,
+                        size_bytes=size,
+                        data_b64=None,
+                        storage_path=str(file_path),
+                    )
+                )
+            else:
+                attachments.append(
+                    Attachment(
+                        attachment_id=att_id,
+                        filename=att.filename,
+                        mime_type=att.mime_type,
+                        size_bytes=size,
+                        data_b64=att.data_b64,
+                    )
+                )
+
         async def event_generator() -> Any:
             logger.info("SSE stream started for session %s", session_id)
             event_count = 0
             try:
-                async for event in mgr.prompt(session_id, req.prompt):
+                async for event in mgr.prompt(
+                    session_id, req.prompt, attachments=attachments or None
+                ):
                     event_count += 1
                     logger.info(
                         "SSE event #%d: %s (kind=%s)",
@@ -845,19 +946,19 @@ def create_app(
                         event.event_type,
                         event.item_kind,
                     )
-                    yield {
-                        "event": "message",
-                        "id": str(event.sequence),
-                        "data": json.dumps(event.to_dict()),
-                    }
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
             except RuntimeError as exc:
                 logger.error("Stream error for session %s: %s", session_id, exc)
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"event_type": "error", "error_message": str(exc)}),
-                }
+                yield ServerSentEvent(
+                    data=json.dumps({"event_type": "error", "error_message": str(exc)}),
+                    event="message",
+                )
             logger.info("SSE stream ended for session %s (%d events)", session_id, event_count)
-            yield {"event": "message", "data": "[DONE]"}
+            yield ServerSentEvent(data="[DONE]", event="message")
 
         return EventSourceResponse(event_generator())
 
@@ -880,11 +981,11 @@ def create_app(
 
         async def event_generator() -> Any:
             async for event in info.sandbox.event_buffer.stream(last_seq):
-                yield {
-                    "event": "message",
-                    "id": str(event.sequence),
-                    "data": json.dumps(event.to_dict()),
-                }
+                yield ServerSentEvent(
+                    data=json.dumps(event.to_dict()),
+                    event="message",
+                    id=str(event.sequence),
+                )
 
         return EventSourceResponse(event_generator(), ping=15)
 
@@ -929,14 +1030,13 @@ def create_app(
             async for event_record in mgr._storage.get_events(
                 session_id, after_sequence=after_sequence, limit=limit
             ):
-                # Deserialize event_json
                 try:
                     event_data = json.loads(event_record["event_json"])
-                    yield {
-                        "event": "message",
-                        "id": str(event_record["sequence"]),
-                        "data": json.dumps(event_data),
-                    }
+                    yield ServerSentEvent(
+                        data=json.dumps(event_data),
+                        event="message",
+                        id=str(event_record["sequence"]),
+                    )
                 except json.JSONDecodeError as e:
                     logger.error(f"Malformed event_json for event {event_record['event_id']}: {e}")
 

@@ -12,6 +12,8 @@ HarnessBox is a platform for running AI coding agents in secure sandbox environm
 
 ## Commands
 
+### SDK (`sdk/`)
+
 ```bash
 cd sdk
 uv sync                          # Install all dependencies
@@ -22,6 +24,19 @@ uv run ruff check .              # Lint
 uv run ruff format --check .     # Format check
 uv run mypy .                    # Type check (strict for source, relaxed for tests)
 uv run ruff check . && uv run mypy . && uv run pytest tests/ -v  # Full CI check
+```
+
+### Web App (`apps/web/`)
+
+```bash
+cd apps/web
+bun install                      # Install all dependencies
+bun run dev                      # Dev server (Vite)
+bun run build                    # Type check + production build
+bun run test                     # Run vitest tests
+bun run lint                     # Lint with oxlint
+bunx tsc --noEmit                # Type check only
+bunx vitest run                  # Run tests directly
 ```
 
 CI runs lint → type check → tests on PRs targeting main.
@@ -165,3 +180,17 @@ All tests use `MockProvider` from `sdk/tests/conftest.py` — an in-memory provi
 - Mypy strict for `harnessbox/`, relaxed for `tests/`
 - `uv` for dependency management (not pip)
 - Conventional commits: `feat:`, `fix:`, `docs:`, `test:`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (`Nikhil-Kadapala/HarnessBox`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

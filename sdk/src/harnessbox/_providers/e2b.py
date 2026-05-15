@@ -8,9 +8,17 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from harnessbox.providers import CommandHandle, CommandResult
+from harnessbox.providers import CommandResult, SandboxDeadError
 
 logger = logging.getLogger("harnessbox.e2b")
+
+_DEAD_SANDBOX_SIGNALS = ("sandbox was not found", "502", "unavailable", "timeout")
+
+
+def _is_sandbox_dead(exc: Exception) -> bool:
+    """Check if an E2B exception indicates the sandbox is unreachable."""
+    msg = str(exc).lower()
+    return any(signal in msg for signal in _DEAD_SANDBOX_SIGNALS)
 
 
 class E2BProvider:
@@ -110,7 +118,7 @@ class E2BProvider:
 
     # -- File I/O --
 
-    async def write_file(self, path: str, content: str) -> None:
+    async def write_file(self, path: str, content: str | bytes) -> None:
         await self._sandbox.files.write(path, content)
 
     async def read_file(self, path: str) -> str:
@@ -133,36 +141,33 @@ class E2BProvider:
             kwargs["cwd"] = cwd
         if timeout:
             kwargs["timeout"] = timeout
-        result = await self._sandbox.commands.run(command, **kwargs)
+        try:
+            result = await self._sandbox.commands.run(command, **kwargs)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
         return CommandResult(
             exit_code=result.exit_code,
             stdout=result.stdout or "",
             stderr=result.stderr or "",
         )
 
-    async def run_background(
-        self,
-        command: str,
-        cwd: str | None = None,
-    ) -> CommandHandle:
-        kwargs: dict[str, Any] = {"background": True, "timeout": 0}
-        if cwd:
-            kwargs["cwd"] = cwd
-        handle = await self._sandbox.commands.run(command, **kwargs)
-        return CommandHandle(pid=handle.pid)
-
     async def send_stdin(self, pid: int, data: str) -> None:
-        await self._sandbox.commands.send_stdin(pid, data)
+        try:
+            await self._sandbox.commands.send_stdin(pid, data)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
 
-    # -- Persistent process (E2B-specific) --
-
-    async def start_persistent(
+    async def start_session(
         self,
         command: str,
         cwd: str,
         on_stdout: Any,
     ) -> int:
-        """Start a long-lived background process with stdin + stdout streaming.
+        """Start a long-lived session process with stdin + stdout streaming.
 
         Returns the PID. The process stays alive until killed. Use
         ``send_stdin(pid, data)`` to write JSON lines to the process.
@@ -176,7 +181,12 @@ class E2BProvider:
         }
         if cwd:
             kwargs["cwd"] = cwd
-        handle = await self._sandbox.commands.run(command, **kwargs)
+        try:
+            handle = await self._sandbox.commands.run(command, **kwargs)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
         pid: int = handle.pid
         logger.info("Persistent process started: pid=%d cmd=%s", pid, command[:200])
         return pid
@@ -319,6 +329,8 @@ class E2BProvider:
                         ),
                     )
             except Exception as e:
+                if _is_sandbox_dead(e):
+                    raise SandboxDeadError(str(e)) from e
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
                     json.dumps(

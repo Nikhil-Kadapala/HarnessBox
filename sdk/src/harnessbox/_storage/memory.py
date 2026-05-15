@@ -162,43 +162,15 @@ class MemoryBackend:
         for event in events:
             yield event
 
-    # -- Legacy Session CRUD (backward compat) --
+    # -- Cost history --
 
-    async def save_session(self, session_record: dict[str, Any]) -> None:
-        """DEPRECATED: Use save_workspace() instead."""
-        workspace_record = {**session_record}
-        if "session_id" in workspace_record:
-            workspace_record["workspace_id"] = workspace_record.pop("session_id")
-        if "updated_at" in workspace_record:
-            workspace_record["last_active"] = workspace_record.pop("updated_at")
-        workspace_record.setdefault("remote", "")
-        workspace_record.setdefault("branch", "")
-        workspace_record.setdefault("provider", "e2b")
-        await self.save_workspace(workspace_record)
-
-    async def get_session(self, session_id: str) -> dict[str, Any] | None:
-        """DEPRECATED: Use get_workspace() instead."""
-        return await self.get_workspace(session_id)
-
-    async def list_sessions(
-        self,
-        *,
-        status: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
+    async def get_cost_history(
+        self, workspace_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]:
-        """DEPRECATED: Use list_workspaces() instead."""
-        return await self.list_workspaces(status=status, limit=limit, offset=offset)
-
-    async def update_session(self, session_id: str, **fields: Any) -> None:
-        """DEPRECATED: Use update_workspace() instead."""
-        if "updated_at" in fields:
-            fields["last_active"] = fields.pop("updated_at")
-        await self.update_workspace(session_id, **fields)
-
-    async def delete_session(self, session_id: str) -> None:
-        """DEPRECATED: Use delete_workspace() instead."""
-        await self.delete_workspace(session_id)
+        events = self._events.get(workspace_id, [])
+        cost_events = [e for e in events if e.get("event_type") == "cost_update"]
+        cost_events.sort(key=lambda e: e.get("sequence", 0), reverse=True)
+        return cost_events[:limit]
 
     # -- Lifecycle --
 

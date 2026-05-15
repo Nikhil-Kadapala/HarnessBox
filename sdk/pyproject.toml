@@ -20,6 +20,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.scripts]
+harnessbox = "harnessbox.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/Nikhil-Kadapala/HarnessBox"
 Repository = "https://github.com/Nikhil-Kadapala/HarnessBox"

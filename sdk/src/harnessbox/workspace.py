@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
-from harnessbox.providers import CommandResult, SandboxProvider
+from harnessbox.providers import CommandResult, NativeGitCapable, SandboxProvider
 
 _log = logging.getLogger(__name__)
 
@@ -138,8 +138,7 @@ class GitWorkspace:
                 raise RuntimeError(f"Failed to create clone directory: {result.stderr}")
         _log.info(f"git_mkdir took {time.time() - mkdir_start:.2f}s")
 
-        # Use native git API if available, otherwise fall back to shell commands
-        use_native = hasattr(provider, "git_clone")
+        use_native = isinstance(provider, NativeGitCapable)
         clone_start = time.time()
 
         if use_native:

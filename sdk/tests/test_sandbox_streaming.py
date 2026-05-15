@@ -1,4 +1,4 @@
-"""Tests for Sandbox.run_prompt_events() and session_id tracking."""
+"""Tests for Sandbox.send_message() and session_id tracking."""
 
 from __future__ import annotations
 
@@ -33,11 +33,11 @@ class TestRunPromptEvents:
             ),
             json.dumps({"type": "result", "session_id": "s-1", "duration_ms": 100}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         events = []
-        async for e in sb.run_prompt_events("test"):
+        async for e in sb.send_message("test"):
             events.append(e)
 
         assert len(events) == 2
@@ -61,11 +61,11 @@ class TestRunPromptEvents:
             ),
             "not json at all",
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
         events = []
-        async for e in sb.run_prompt_events("test"):
+        async for e in sb.send_message("test"):
             events.append(e)
 
         assert len(events) == 1
@@ -78,11 +78,11 @@ class TestSessionIdTracking:
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "sess-abc", "duration_ms": 500}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
         assert sb.agent_session_id is None
 
-        async for _ in sb.run_prompt_events("first"):
+        async for _ in sb.send_message("first"):
             pass
 
         assert sb.agent_session_id == "sess-abc"
@@ -92,17 +92,17 @@ class TestSessionIdTracking:
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "sess-123", "duration_ms": 100}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
-        async for _ in sb.run_prompt_events("first"):
+        async for _ in sb.send_message("first"):
             pass
 
         provider._stream_lines = [
             json.dumps({"type": "result", "session_id": "sess-123", "duration_ms": 200}),
         ]
 
-        async for _ in sb.run_prompt_events("second"):
+        async for _ in sb.send_message("second"):
             pass
 
         stream_cmds = [c for c in provider._commands if "claude" in c]
@@ -111,14 +111,14 @@ class TestSessionIdTracking:
         assert "sess-123" in stream_cmds[-1]
 
     @pytest.mark.asyncio
-    async def test_raw_run_prompt_also_tracks_session(self, provider: MockProvider) -> None:
+    async def test_non_streaming_send_message_tracks_session(self, provider: MockProvider) -> None:
         provider._stream_lines = [
-            json.dumps({"type": "result", "session_id": "raw-sess"}),
+            json.dumps({"type": "result", "session_id": "raw-sess", "duration_ms": 100}),
         ]
-        sb = Sandbox(provider, skip_permissions=True)
+        sb = Sandbox(provider, skip_permissions=True, one_shot=True)
         await sb.setup()
 
-        async for _ in sb.run_prompt("test"):
-            pass
+        response = await sb.send_message("test", stream=False)
 
         assert sb.agent_session_id == "raw-sess"
+        assert response.session_id == "raw-sess"

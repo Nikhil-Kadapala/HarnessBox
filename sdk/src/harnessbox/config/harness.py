@@ -43,18 +43,25 @@ class HarnessTypeConfig:
         """Return whether this harness supports persistent stdin/stdout mode."""
         return self.cli_input_format_flag is not None
 
-    def build_persistent_command(
+    def build_session_command(
         self,
         *,
         skip_permissions: bool,
+        model: str | None = None,
         plugin_dirs: list[str] | None = None,
         session_id: str | None = None,
     ) -> str:
-        """Build CLI command for persistent stdin/stdout stream-json mode."""
+        """Build the CLI command that starts a persistent agent session.
+
+        The resulting process accepts prompts via stdin (JSON lines) and
+        streams responses on stdout. It stays alive across multiple turns.
+        """
         parts = [self.cli_command]
         if skip_permissions and self.skip_permissions_flag:
             parts.append(self.skip_permissions_flag)
         parts.extend(self.cli_base_flags)
+        if model:
+            parts.extend(["--model", model])
         if session_id and self.cli_resume_flag:
             parts.extend([self.cli_resume_flag, session_id])
         if self.cli_input_format_flag:
@@ -69,6 +76,7 @@ class HarnessTypeConfig:
         prompt: str,
         *,
         skip_permissions: bool,
+        model: str | None = None,
         session_id: str | None = None,
         plugin_dirs: list[str] | None = None,
     ) -> str:
@@ -77,6 +85,8 @@ class HarnessTypeConfig:
         if skip_permissions and self.skip_permissions_flag:
             parts.append(self.skip_permissions_flag)
         parts.extend(self.cli_base_flags)
+        if model:
+            parts.extend(["--model", model])
         if session_id and self.cli_resume_flag:
             parts.extend([self.cli_resume_flag, session_id])
         if plugin_dirs and self.plugin_flag:
@@ -182,20 +192,6 @@ register_harness_type(
         cli_oneshot_flags=("-q",),
         cli_prompt_flag="",
         skip_permissions_flag="--full-auto",
-    )
-)
-
-register_harness_type(
-    HarnessTypeConfig(
-        name="gemini-cli",
-        config_dir=".gemini",
-        settings_file=None,
-        hooks_dir=None,
-        system_prompt_file="GEMINI.md",
-        default_dirs=("/workspace",),
-        cli_command="gemini",
-        cli_base_flags=(),
-        cli_prompt_flag="-p",
     )
 )
 

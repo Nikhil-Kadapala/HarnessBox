@@ -19,7 +19,6 @@ class TestRegistry:
         types = list_harness_types()
         assert "claude-code" in types
         assert "codex" in types
-        assert "gemini-cli" in types
         assert "opencode" in types
 
     def test_list_returns_sorted(self):
@@ -144,10 +143,10 @@ class TestCommandBuilders:
         assert "-q" in cmd
 
     def test_harness_without_skip_flag(self):
-        config = get_harness_type("gemini-cli")
+        config = get_harness_type("opencode")
         cmd = config.build_oneshot_command('"hello"', skip_permissions=True)
         assert "--dangerously-skip-permissions" not in cmd
-        assert "gemini" in cmd
+        assert "opencode" in cmd
 
 
 class TestCodexConfig:
@@ -162,16 +161,6 @@ class TestCodexConfig:
     def test_no_hooks_dir(self):
         config = get_harness_type("codex")
         assert config.hooks_dir is None
-
-
-class TestGeminiCliConfig:
-    def test_system_prompt_file(self):
-        config = get_harness_type("gemini-cli")
-        assert config.system_prompt_file == "GEMINI.md"
-
-    def test_cli_command(self):
-        config = get_harness_type("gemini-cli")
-        assert config.cli_command == "gemini"
 
 
 class TestOpenCodeConfig:
