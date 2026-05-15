@@ -47,7 +47,7 @@ def main() -> None:  # noqa: D103
     serve_parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec B104 — runs inside E2B sandboxes, must be externally reachable
         help="Host to bind to (default: 0.0.0.0)",
     )
 
