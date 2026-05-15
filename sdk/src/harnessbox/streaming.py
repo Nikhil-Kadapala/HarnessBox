@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -210,6 +210,12 @@ class ParserState:
 
     Construct arbitrary states to test specific parsing branches without
     replaying full event sequences.
+
+    Note: ``tool_map`` and ``active_blocks`` are shallow-frozen — the dataclass
+    prevents rebinding, but the dicts themselves are mutable Python objects.
+    All pure functions in this module treat them as read-only, producing new
+    dicts on mutation. External code holding a ParserState reference must not
+    mutate the contained dicts.
     """
 
     session_id: str = ""
@@ -238,15 +244,7 @@ def _make_event(
     raw: dict[str, Any] | None = None,
 ) -> tuple[ParserState, UniversalEvent]:
     seq = state.sequence + 1
-    new_state = ParserState(
-        session_id=state.session_id,
-        sequence=seq,
-        tool_map=state.tool_map,
-        active_blocks=state.active_blocks,
-        turn_active=state.turn_active,
-        persistent=state.persistent,
-        turn_count=state.turn_count,
-    )
+    new_state = replace(state, sequence=seq)
     event = UniversalEvent(
         event_id=str(uuid.uuid4()),
         sequence=seq,
@@ -302,15 +300,7 @@ def _parse_system(
     event_type = (
         EventType.TURN_STARTED if state.persistent and turn_count > 1 else EventType.SESSION_STARTED
     )
-    intermediate = ParserState(
-        session_id=sid,
-        sequence=state.sequence,
-        tool_map=state.tool_map,
-        active_blocks=state.active_blocks,
-        turn_active=state.turn_active,
-        persistent=state.persistent,
-        turn_count=turn_count,
-    )
+    intermediate = replace(state, session_id=sid, turn_count=turn_count)
     new_state, event = _make_event(
         intermediate,
         event_type,
@@ -329,21 +319,11 @@ def _on_block_start(
 
     new_blocks = dict(state.active_blocks)
     new_blocks[index] = {"type": block_type, "id": block.get("id")}
-    turn_active = True
-    new_tool_map = state.tool_map
 
     if block_type == "thinking":
         item_id = str(uuid.uuid4())
         new_blocks[index]["item_id"] = item_id
-        intermediate = ParserState(
-            session_id=state.session_id,
-            sequence=state.sequence,
-            tool_map=new_tool_map,
-            active_blocks=new_blocks,
-            turn_active=turn_active,
-            persistent=state.persistent,
-            turn_count=state.turn_count,
-        )
+        intermediate = replace(state, active_blocks=new_blocks, turn_active=True)
         new_state, ev = _make_event(
             intermediate,
             EventType.ITEM_STARTED,
@@ -357,15 +337,7 @@ def _on_block_start(
     if block_type == "text":
         item_id = str(uuid.uuid4())
         new_blocks[index]["item_id"] = item_id
-        intermediate = ParserState(
-            session_id=state.session_id,
-            sequence=state.sequence,
-            tool_map=new_tool_map,
-            active_blocks=new_blocks,
-            turn_active=turn_active,
-            persistent=state.persistent,
-            turn_count=state.turn_count,
-        )
+        intermediate = replace(state, active_blocks=new_blocks, turn_active=True)
         new_state, ev = _make_event(
             intermediate,
             EventType.ITEM_STARTED,
@@ -383,14 +355,8 @@ def _on_block_start(
         new_blocks[index]["item_id"] = item_id
         new_tool_map = dict(state.tool_map)
         new_tool_map[call_id] = _ToolInfo(name=tool_name)
-        intermediate = ParserState(
-            session_id=state.session_id,
-            sequence=state.sequence,
-            tool_map=new_tool_map,
-            active_blocks=new_blocks,
-            turn_active=turn_active,
-            persistent=state.persistent,
-            turn_count=state.turn_count,
+        intermediate = replace(
+            state, tool_map=new_tool_map, active_blocks=new_blocks, turn_active=True
         )
         new_state, ev = _make_event(
             intermediate,
@@ -404,16 +370,7 @@ def _on_block_start(
         )
         return new_state, ev
 
-    intermediate = ParserState(
-        session_id=state.session_id,
-        sequence=state.sequence,
-        tool_map=new_tool_map,
-        active_blocks=new_blocks,
-        turn_active=turn_active,
-        persistent=state.persistent,
-        turn_count=state.turn_count,
-    )
-    return intermediate, None
+    return replace(state, active_blocks=new_blocks, turn_active=True), None
 
 
 def _on_block_delta(
@@ -460,15 +417,7 @@ def _on_block_delta(
                 name=old_info.name, input_buffer=old_info.input_buffer + chunk
             )
         tool_name = new_tool_map.get(call_id, _ToolInfo("")).name if call_id else None
-        intermediate = ParserState(
-            session_id=state.session_id,
-            sequence=state.sequence,
-            tool_map=new_tool_map,
-            active_blocks=state.active_blocks,
-            turn_active=state.turn_active,
-            persistent=state.persistent,
-            turn_count=state.turn_count,
-        )
+        intermediate = replace(state, tool_map=new_tool_map)
         new_state, ev = _make_event(
             intermediate,
             EventType.ITEM_DELTA,
@@ -492,15 +441,7 @@ def _on_block_stop(
     block_type = block_info.get("type", "")
     item_id = block_info.get("item_id")
 
-    intermediate = ParserState(
-        session_id=state.session_id,
-        sequence=state.sequence,
-        tool_map=state.tool_map,
-        active_blocks=new_blocks,
-        turn_active=state.turn_active,
-        persistent=state.persistent,
-        turn_count=state.turn_count,
-    )
+    intermediate = replace(state, active_blocks=new_blocks)
 
     if block_type == "tool_use":
         call_id = block_info.get("id", "")
@@ -568,15 +509,7 @@ def _parse_stream_event(
     if se_type == "content_block_stop":
         return _on_block_stop(state, event, data)
     if se_type == "message_stop":
-        intermediate = ParserState(
-            session_id=state.session_id,
-            sequence=state.sequence,
-            tool_map=state.tool_map,
-            active_blocks={},
-            turn_active=False,
-            persistent=state.persistent,
-            turn_count=state.turn_count,
-        )
+        intermediate = replace(state, active_blocks={}, turn_active=False)
         new_state, ev = _make_event(intermediate, EventType.TURN_ENDED, raw=data)
         return new_state, ev
 
@@ -602,15 +535,7 @@ def _parse_assistant(
     text_parts = [
         block.get("text", "") for block in message.get("content", []) if block.get("type") == "text"
     ]
-    intermediate = ParserState(
-        session_id=sid,
-        sequence=state.sequence,
-        tool_map=new_tool_map,
-        active_blocks=state.active_blocks,
-        turn_active=state.turn_active,
-        persistent=state.persistent,
-        turn_count=state.turn_count,
-    )
+    intermediate = replace(state, session_id=sid, tool_map=new_tool_map)
     new_state, ev = _make_event(
         intermediate,
         EventType.TURN_ENDED,
@@ -728,15 +653,7 @@ def _parse_result(
     if is_error:
         logger.error("Claude agent error - result data: %s", data)
 
-    current_state = ParserState(
-        session_id=sid,
-        sequence=state.sequence,
-        tool_map=state.tool_map,
-        active_blocks=state.active_blocks,
-        turn_active=state.turn_active,
-        persistent=state.persistent,
-        turn_count=state.turn_count,
-    )
+    current_state = replace(state, session_id=sid)
 
     events: list[UniversalEvent] = []
 
@@ -796,6 +713,9 @@ def _parse_result(
         raw=data,
     )
     events.append(ev)
+    # Clear tool_map at turn/session end — entries are only needed between
+    # tool_use start and the corresponding tool_result in the same turn.
+    current_state = replace(current_state, tool_map={})
     return current_state, events
 
 
@@ -911,15 +831,7 @@ class StreamParser:
 
     @_tool_map.setter
     def _tool_map(self, value: dict[str, _ToolInfo]) -> None:
-        self._state = ParserState(
-            session_id=self._state.session_id,
-            sequence=self._state.sequence,
-            tool_map=value,
-            active_blocks=self._state.active_blocks,
-            turn_active=self._state.turn_active,
-            persistent=self._state.persistent,
-            turn_count=self._state.turn_count,
-        )
+        self._state = replace(self._state, tool_map=value)
 
     def parse(self, line: str) -> UniversalEvent | None:
         """Parse a line and return the first event, or None."""

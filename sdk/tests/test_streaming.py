@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+
+import pytest
 
 from harnessbox.streaming import (
     EventType,
@@ -722,11 +725,8 @@ class TestParserState:
 
     def test_state_is_frozen(self) -> None:
         state = ParserState()
-        try:
+        with pytest.raises(dataclasses.FrozenInstanceError):
             state.session_id = "x"  # type: ignore[misc]
-            assert False, "Should raise"
-        except AttributeError:
-            pass
 
     def test_tool_result_from_prebuilt_state(self) -> None:
         """Reproduce a tool_result parse with a pre-seeded tool_map — no replay needed."""
