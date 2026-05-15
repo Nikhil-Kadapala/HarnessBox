@@ -273,7 +273,9 @@ def _make_event(
 # ---------------------------------------------------------------------------
 
 
-def _parse_system(state: ParserState, data: dict[str, Any]) -> tuple[ParserState, UniversalEvent | None]:
+def _parse_system(
+    state: ParserState, data: dict[str, Any]
+) -> tuple[ParserState, UniversalEvent | None]:
     subtype = data.get("subtype")
 
     if subtype == "api_retry":
@@ -298,9 +300,7 @@ def _parse_system(state: ParserState, data: dict[str, Any]) -> tuple[ParserState
     turn_count = state.turn_count + 1
     tools = data.get("tools", [])
     event_type = (
-        EventType.TURN_STARTED
-        if state.persistent and turn_count > 1
-        else EventType.SESSION_STARTED
+        EventType.TURN_STARTED if state.persistent and turn_count > 1 else EventType.SESSION_STARTED
     )
     intermediate = ParserState(
         session_id=sid,
@@ -600,9 +600,7 @@ def _parse_assistant(
             )
 
     text_parts = [
-        block.get("text", "")
-        for block in message.get("content", [])
-        if block.get("type") == "text"
+        block.get("text", "") for block in message.get("content", []) if block.get("type") == "text"
     ]
     intermediate = ParserState(
         session_id=sid,
