@@ -23,10 +23,11 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from harnessbox.agent_manager import AgentManager
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
+from harnessbox.providers import SandboxDeadError
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import Attachment, ContentPart, UniversalEvent
@@ -196,7 +197,14 @@ class WorkspaceManager:
         self._workspace_configs: dict[str, WorkspaceConfig] = {}  # For to_record()
         self._auto_pause = auto_pause
         self._pause_timeout = pause_timeout
-        self._pause_task: asyncio.Task[None] | None = None
+        # Per-workspace idle sleep tasks (replaces global 60s scan loop).
+        # Each entry is an asyncio.Task that fires _pause_workspace() after
+        # pause_timeout seconds of idle. Cancelled/restarted on turn boundaries.
+        self._idle_timers: dict[str, asyncio.Task[None]] = {}
+        # Count of in-flight turns per workspace (across all concurrent conversations).
+        # The idle timer only restarts when this count drops to zero, ensuring we
+        # never auto-pause a workspace that still has an active agent turn running.
+        self._active_turns: dict[str, int] = {}
 
     @classmethod
     async def create(
@@ -224,10 +232,6 @@ class WorkspaceManager:
         if storage:
             await storage.initialize()
             await mgr.load_workspaces()
-
-        # Start auto-pause background task
-        if mgr._auto_pause:
-            mgr._pause_task = asyncio.create_task(mgr._run_auto_pause_task())
 
         return mgr
 
@@ -318,6 +322,10 @@ class WorkspaceManager:
                 await self._storage.save_workspace(info.to_record(config))
             except Exception as e:
                 logger.error(f"Failed to persist workspace {wid}: {e}")
+
+        # Start idle countdown — workspace starts idle (no turn in flight yet)
+        if self._auto_pause:
+            self._start_idle_timer(wid)
 
         return info
 
@@ -424,105 +432,151 @@ class WorkspaceManager:
         if conversation_id is None:
             conversation_id = str(uuid.uuid4())
 
+        # Turn starting — cancel idle countdown and bump the in-flight counter.
+        # We only restart the timer once ALL concurrent turns have completed,
+        # so a workspace with multiple parallel conversations doesn't get paused
+        # while one conversation is still active.
+        self._cancel_idle_timer(workspace_id)
+        self._active_turns[workspace_id] = self._active_turns.get(workspace_id, 0) + 1
+
         # Update last_active
         info.last_active = datetime.now(timezone.utc).isoformat()
         if self._storage:
             await self._storage.update_workspace(workspace_id, last_active=info.last_active)
 
-        async with self._locks[workspace_id]:
-            # Write attachments to sandbox and build metadata
-            resolved_attachments: list[Attachment] = []
-            if attachments:
-                cwd = info.sandbox._cwd or "/workspace"
-                for att in attachments:
-                    safe_name = Path(att.filename).name or "attachment"
-                    sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{safe_name}"
-                    await info.sandbox._provider.make_dir(f"{cwd}/.attachments/{att.attachment_id}")
-                    raw_data = (
-                        base64.b64decode(att.data_b64 or "")
-                        if att.data_b64
-                        else (Path(att.storage_path).read_bytes() if att.storage_path else b"")
-                    )
-                    if raw_data:
-                        await info.sandbox._provider.write_file(sandbox_path, raw_data)
-                    resolved_attachments.append(
-                        Attachment(
-                            attachment_id=att.attachment_id,
-                            filename=att.filename,
-                            mime_type=att.mime_type,
-                            size_bytes=att.size_bytes,
-                            data_b64=att.data_b64,
-                            storage_path=att.storage_path,
-                            sandbox_path=sandbox_path,
+        try:
+            async with self._locks[workspace_id]:
+                # Write attachments to sandbox and build metadata
+                resolved_attachments: list[Attachment] = []
+                if attachments:
+                    cwd = info.sandbox._cwd or "/workspace"
+                    for att in attachments:
+                        safe_name = Path(att.filename).name or "attachment"
+                        sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{safe_name}"
+                        await info.sandbox._provider.make_dir(
+                            f"{cwd}/.attachments/{att.attachment_id}"
                         )
+                        raw_data = (
+                            base64.b64decode(att.data_b64 or "")
+                            if att.data_b64
+                            else (Path(att.storage_path).read_bytes() if att.storage_path else b"")
+                        )
+                        if raw_data:
+                            await info.sandbox._provider.write_file(sandbox_path, raw_data)
+                        resolved_attachments.append(
+                            Attachment(
+                                attachment_id=att.attachment_id,
+                                filename=att.filename,
+                                mime_type=att.mime_type,
+                                size_bytes=att.size_bytes,
+                                data_b64=att.data_b64,
+                                storage_path=att.storage_path,
+                                sandbox_path=sandbox_path,
+                            )
+                        )
+
+                # Emit USER_PROMPT event
+                attachment_meta = [
+                    {
+                        "attachment_id": a.attachment_id,
+                        "filename": a.filename,
+                        "mime_type": a.mime_type,
+                        "size_bytes": a.size_bytes,
+                        "sandbox_path": a.sandbox_path,
+                        **(
+                            {"data_b64": a.data_b64}
+                            if a.data_b64 and a.size_bytes < 1024 * 1024
+                            else {}
+                        ),
+                    }
+                    for a in resolved_attachments
+                ]
+                user_prompt_event = UniversalEvent(
+                    event_id=str(uuid.uuid4()),
+                    sequence=0,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    session_id=conversation_id,
+                    event_type=StreamEventType.USER_PROMPT,
+                    content=(ContentPart(type="text", text=prompt),),
+                    metadata={
+                        "conversation_id": conversation_id,
+                        **({"attachments": attachment_meta} if attachment_meta else {}),
+                    },
+                )
+                if info.sandbox._event_buffer:
+                    await info.sandbox._event_buffer.push(user_prompt_event)
+                yield user_prompt_event
+
+                # Augment prompt with file references for the agent
+                augmented_prompt = prompt
+                if resolved_attachments:
+                    file_list = "\n".join(f"- {a.sandbox_path}" for a in resolved_attachments)
+                    augmented_prompt = (
+                        f"{prompt}\n\n[Attached files written to sandbox:\n{file_list}]"
                     )
 
-            # Emit USER_PROMPT event
-            attachment_meta = [
-                {
-                    "attachment_id": a.attachment_id,
-                    "filename": a.filename,
-                    "mime_type": a.mime_type,
-                    "size_bytes": a.size_bytes,
-                    "sandbox_path": a.sandbox_path,
-                    **(
-                        {"data_b64": a.data_b64}
-                        if a.data_b64 and a.size_bytes < 1024 * 1024
-                        else {}
-                    ),
-                }
-                for a in resolved_attachments
-            ]
-            user_prompt_event = UniversalEvent(
-                event_id=str(uuid.uuid4()),
-                sequence=0,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                session_id=conversation_id,
-                event_type=StreamEventType.USER_PROMPT,
-                content=(ContentPart(type="text", text=prompt),),
-                metadata={
-                    "conversation_id": conversation_id,
-                    **({"attachments": attachment_meta} if attachment_meta else {}),
-                },
-            )
-            if info.sandbox._event_buffer:
-                await info.sandbox._event_buffer.push(user_prompt_event)
-            yield user_prompt_event
-
-            # Augment prompt with file references for the agent
-            augmented_prompt = prompt
-            if resolved_attachments:
-                file_list = "\n".join(f"- {a.sandbox_path}" for a in resolved_attachments)
-                augmented_prompt = f"{prompt}\n\n[Attached files written to sandbox:\n{file_list}]"
-
-            # Save conversation on first agent event
-            first_event = True
-            async for event in info.agent_manager.send_message(conversation_id, augmented_prompt):
-                if (
-                    event.event_type == "error"
-                    and event.metadata.get("error_code") == "SANDBOX_DEAD"
+                # Save conversation on first agent event
+                first_event = True
+                async for event in info.agent_manager.send_message(
+                    conversation_id, augmented_prompt
                 ):
-                    info.status = WorkspaceState.FAILED.value
+                    if (
+                        event.event_type == "error"
+                        and event.metadata.get("error_code") == "SANDBOX_DEAD"
+                    ):
+                        info.status = WorkspaceState.FAILED.value
 
-                if event.cost_usd is not None:
-                    info.total_cost_usd = event.cost_usd
+                    if event.cost_usd is not None:
+                        info.total_cost_usd = event.cost_usd
 
-                if first_event and self._storage:
-                    first_event = False
-                    try:
-                        await self._storage.save_conversation(
-                            {
-                                "conversation_id": conversation_id,
-                                "workspace_id": workspace_id,
-                                "agent_type": info.harness,
-                                "title": prompt[:50],
-                                "last_active": datetime.now(timezone.utc).isoformat(),
-                            }
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to save conversation {conversation_id}: {e}")
+                    if first_event and self._storage:
+                        first_event = False
+                        try:
+                            await self._storage.save_conversation(
+                                {
+                                    "conversation_id": conversation_id,
+                                    "workspace_id": workspace_id,
+                                    "agent_type": info.harness,
+                                    "title": prompt[:50],
+                                    "last_active": datetime.now(timezone.utc).isoformat(),
+                                }
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to save conversation {conversation_id}: {e}")
 
-                yield event
+                    yield event
+
+                    # Turn completed — decrement active-turn counter and restart
+                    # idle countdown only when all concurrent turns are done.
+                    if event.event_type in (
+                        StreamEventType.TURN_ENDED,
+                        StreamEventType.SESSION_ENDED,
+                    ):
+                        info.last_active = datetime.now(timezone.utc).isoformat()
+                        if self._storage:
+                            try:
+                                await self._storage.update_workspace(
+                                    workspace_id, last_active=info.last_active
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to persist last_active for {workspace_id}: {e}"
+                                )
+                        active = max(0, self._active_turns.get(workspace_id, 1) - 1)
+                        self._active_turns[workspace_id] = active
+                        if active == 0 and self._auto_pause:
+                            self._start_idle_timer(workspace_id)
+        finally:
+            # Safety net: decrement the counter even if the turn errors before TURN_ENDED
+            # fires, so the idle timer is never permanently suppressed by a failed turn.
+            active = self._active_turns.get(workspace_id, 0)
+            if active > 0:
+                active -= 1
+                self._active_turns[workspace_id] = active
+                if active == 0 and self._auto_pause:
+                    ws = self._workspaces.get(workspace_id)
+                    if ws and ws.status == WorkspaceState.ACTIVE.value:
+                        self._start_idle_timer(workspace_id)
 
     def find_by_repo_branch(self, remote: str, branch: str) -> WorkspaceInstance | None:
         """Find a workspace matching a repo remote URL and branch name."""
@@ -673,6 +727,7 @@ class WorkspaceManager:
 
         If storage is enabled, the workspace is marked as failed (not deleted).
         """
+        self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
         async with self._locks[workspace_id]:
             # Shutdown all agents
@@ -698,32 +753,36 @@ class WorkspaceManager:
         self._workspaces.pop(workspace_id, None)
         self._locks.pop(workspace_id, None)
         self._workspace_configs.pop(workspace_id, None)
+        self._idle_timers.pop(workspace_id, None)
+        self._active_turns.pop(workspace_id, None)
 
-    async def _run_auto_pause_task(self) -> None:
-        """Background task: scan for idle workspaces every 60 seconds."""
-        while True:
-            await asyncio.sleep(60)
-            now = datetime.now(timezone.utc)
+    def _start_idle_timer(self, workspace_id: str) -> None:
+        """Start (or restart) the per-workspace idle countdown task."""
+        self._cancel_idle_timer(workspace_id)
+        self._idle_timers[workspace_id] = asyncio.create_task(self._idle_countdown(workspace_id))
 
-            for wid, info in list(self._workspaces.items()):
-                if info.status != WorkspaceState.ACTIVE.value:
-                    continue
+    def _cancel_idle_timer(self, workspace_id: str) -> None:
+        """Cancel the per-workspace idle task if running."""
+        task = self._idle_timers.pop(workspace_id, None)
+        if task and not task.done():
+            task.cancel()
 
-                # Parse last_active
-                try:
-                    last_active = datetime.fromisoformat(info.last_active)
-                    idle_seconds = (now - last_active).total_seconds()
-
-                    if idle_seconds > self._pause_timeout:
-                        try:
-                            await self._pause_workspace(wid)
-                        except Exception as e:
-                            logger.error(f"Auto-pause failed for {wid}: {e}")
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid last_active timestamp for {wid}: {e}")
+    async def _idle_countdown(self, workspace_id: str) -> None:
+        """Sleep for pause_timeout seconds then auto-pause the workspace."""
+        try:
+            await asyncio.sleep(self._pause_timeout)
+        except asyncio.CancelledError:
+            return
+        info = self._workspaces.get(workspace_id)
+        if info and info.status == WorkspaceState.ACTIVE.value:
+            try:
+                await self._pause_workspace(workspace_id)
+            except Exception as e:
+                logger.error(f"Auto-pause failed for {workspace_id}: {e}")
 
     async def _pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace and create snapshot."""
+        self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
         if not info.sandbox:
             return
@@ -818,23 +877,10 @@ class WorkspaceManager:
             try:
                 # Try to resume with retries
                 await self._try_resume_sandbox(info)
-            except (TimeoutException, ConnectException) as e:
-                # Check if sandbox expired
-                if self._is_sandbox_expired(e):
-                    if not info.snapshot_id:
-                        raise ValueError(
-                            f"Workspace {workspace_id} expired and has no snapshot"
-                        ) from e
-
-                    # Create new sandbox from snapshot
-                    logger.warning(
-                        f"Sandbox {info.provider_sandbox_id} expired, recovering from snapshot {info.snapshot_id}"
-                    )
-                    # Note: This requires creating a new Sandbox instance from snapshot
-                    # For now, we re-raise. Full snapshot recovery requires provider support.
-                    raise ValueError(
-                        f"Snapshot recovery not yet implemented. Workspace {workspace_id} is unrecoverable."
-                    ) from e
+            except (TimeoutException, ConnectException, SandboxDeadError) as e:
+                # Check if sandbox expired or was killed
+                if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
+                    await self._recover_from_snapshot(workspace_id, info, cause=e)
                 else:
                     raise
 
@@ -847,19 +893,108 @@ class WorkspaceManager:
                     workspace_id,
                     status=WorkspaceState.ACTIVE.value,
                     last_active=info.last_active,
+                    provider_sandbox_id=info.provider_sandbox_id,
                 )
+
+            # Restart idle countdown now that workspace is active again
+            if self._auto_pause:
+                self._start_idle_timer(workspace_id)
 
             logger.info(f"Resumed workspace {workspace_id}")
 
-    async def shutdown_all(self) -> None:
-        """Destroy all active workspaces and cancel background tasks."""
-        # Stop auto-pause task
-        if self._pause_task:
-            self._pause_task.cancel()
+    async def _recover_from_snapshot(
+        self,
+        workspace_id: str,
+        info: WorkspaceInstance,
+        cause: Exception,
+    ) -> None:
+        """Recover a failed/expired workspace from its stored snapshot.
+
+        Creates a fresh E2B sandbox seeded from the snapshot, re-injects env
+        vars and credentials (they are not persisted in snapshots), and updates
+        the stored provider_sandbox_id.
+
+        Raises ValueError if no snapshot is available or the snapshot itself
+        is gone (provider returns "not found" for it).
+        """
+        if not info.snapshot_id:
+            raise ValueError(
+                f"Workspace {workspace_id} sandbox expired/killed and has no snapshot. "
+                "Session is unrecoverable."
+            ) from cause
+
+        logger.warning(
+            "Sandbox %s expired/killed, recovering from snapshot %s",
+            info.provider_sandbox_id,
+            info.snapshot_id,
+        )
+
+        if not info.sandbox:
+            raise ValueError(
+                f"Workspace {workspace_id} has no live sandbox to recover into."
+            ) from cause
+
+        provider = info.sandbox._provider
+
+        # The provider must support snapshot-based creation (E2B-specific).
+        # We check via duck-typing to stay compatible with custom providers.
+        if not hasattr(provider, "create"):
+            raise ValueError(
+                f"Provider {type(provider).__name__} does not support snapshot recovery."
+            ) from cause
+
+        # Retrieve env vars from the sandbox config so we can re-inject them
+        # (snapshots do not persist environment variables).
+        config = self._workspace_configs.get(workspace_id)
+        env_vars = dict(config.env_vars) if config and config.env_vars else {}
+        sandbox_timeout = config.timeout if config else 300
+
+        try:
+            # snapshot_id is an E2B-specific kwarg not on the base SandboxProvider
+            # protocol — use Any cast to bypass structural typing here.
+            await cast(Any, provider).create(
+                env_vars=env_vars,
+                timeout=sandbox_timeout,
+                snapshot_id=info.snapshot_id,
+            )
+        except Exception as snap_err:
+            snap_str = str(snap_err).lower()
+            if any(p in snap_str for p in ("not found", "404", "does not exist")):
+                raise ValueError(
+                    f"Snapshot {info.snapshot_id} no longer exists. "
+                    f"Workspace {workspace_id} is unrecoverable."
+                ) from snap_err
+            raise
+
+        new_sandbox_id = provider.sandbox_id
+        info.provider_sandbox_id = new_sandbox_id
+
+        # Update storage with the new sandbox ID immediately so a crash
+        # after create() but before the caller persists doesn't orphan the sandbox.
+        if self._storage and new_sandbox_id:
             try:
-                await self._pause_task
-            except asyncio.CancelledError:
-                pass
+                await self._storage.update_workspace(
+                    workspace_id, provider_sandbox_id=new_sandbox_id
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist new sandbox_id %s for workspace %s: %s",
+                    new_sandbox_id,
+                    workspace_id,
+                    e,
+                )
+
+        logger.info(
+            "Snapshot recovery successful: workspace %s running on new sandbox %s",
+            workspace_id,
+            new_sandbox_id,
+        )
+
+    async def shutdown_all(self) -> None:
+        """Destroy all active workspaces and cancel per-workspace idle tasks."""
+        # Cancel all idle countdown tasks
+        for wid in list(self._idle_timers):
+            self._cancel_idle_timer(wid)
 
         # Destroy all workspaces
         for wid in list(self._workspaces):

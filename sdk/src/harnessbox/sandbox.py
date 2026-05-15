@@ -817,6 +817,9 @@ class Sandbox:
             if use_persistent:
                 await self._ensure_agent_ready()
 
+                if hasattr(self._provider, "notify_turn_start"):
+                    self._provider.notify_turn_start()  # type: ignore[union-attr]
+
                 try:
                     await self._agent_process.send_prompt(prompt)
                 except RuntimeError:
@@ -834,8 +837,13 @@ class Sandbox:
                         StreamEventType.SESSION_ENDED,
                     ):
                         last_turn_end = event
+                        if hasattr(self._provider, "notify_turn_end"):
+                            self._provider.notify_turn_end()  # type: ignore[union-attr]
                     await self._event_buffer.push(event)
                     yield event
+
+                    if hasattr(self._provider, "maybe_extend_timeout"):
+                        await self._provider.maybe_extend_timeout()  # type: ignore[union-attr]
 
                 result_model_usage = (
                     (last_turn_end.metadata or {}).get("model_usage") if last_turn_end else None
@@ -863,6 +871,8 @@ class Sandbox:
                         yield event
 
         except SandboxDeadError as e:
+            if hasattr(self._provider, "notify_turn_end"):
+                self._provider.notify_turn_end()  # type: ignore[union-attr]
             _log.error(
                 f"Sandbox {self._provider.sandbox_id} is dead: {e}",
                 extra={"sandbox_id": self._provider.sandbox_id},
