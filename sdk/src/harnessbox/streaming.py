@@ -713,9 +713,6 @@ def _parse_result(
         raw=data,
     )
     events.append(ev)
-    # Clear tool_map at turn/session end — entries are only needed between
-    # tool_use start and the corresponding tool_result in the same turn.
-    current_state = replace(current_state, tool_map={})
     return current_state, events
 
 
@@ -826,8 +823,12 @@ class StreamParser:
 
     @property
     def _tool_map(self) -> dict[str, _ToolInfo]:
-        """Backward-compatible access to tool_map for tests."""
-        return self._state.tool_map
+        """Backward-compatible access to tool_map for tests.
+
+        Returns a shallow copy to prevent accidental mutation of
+        ParserState internals. Use the setter to replace the entire map.
+        """
+        return dict(self._state.tool_map)
 
     @_tool_map.setter
     def _tool_map(self, value: dict[str, _ToolInfo]) -> None:
