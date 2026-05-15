@@ -81,6 +81,10 @@ def _serve(args: argparse.Namespace) -> None:
         db_path = args.db or str(Path.home() / ".harnessbox" / "sessions.db")
         print(f"Database: {db_path}")
 
+    os.environ.setdefault("HARNESSBOX_STORAGE", storage_arg or "sqlite")
+    if args.db:
+        os.environ.setdefault("HARNESSBOX_DB_PATH", args.db)
+
     uvicorn.run(
         "harnessbox.server:create_app",
         factory=True,

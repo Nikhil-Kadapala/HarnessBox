@@ -32,7 +32,7 @@ try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import Response
-    from pydantic import BaseModel, field_validator
+    from pydantic import BaseModel, Field, field_validator
     from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 except ImportError as e:
     raise ImportError(
@@ -244,7 +244,7 @@ class AttachmentPayload(BaseModel):
 
     filename: str
     mime_type: str = "application/octet-stream"
-    data_b64: str
+    data_b64: str = Field(max_length=14_000_000)  # ~10MB decoded
 
 
 class PromptRequest(BaseModel):
@@ -297,13 +297,26 @@ def create_app(
         >>> storage = backend_cls(path="./my-sessions.db")
         >>> app = create_app(storage=storage)
     """
+    # Resolve storage from env vars when called as uvicorn factory
+    import os as _os
+
+    if storage == "sqlite":
+        env_storage = _os.environ.get("HARNESSBOX_STORAGE", "sqlite")
+        if env_storage != "sqlite":
+            storage = env_storage
+
     # Resolve storage backend by name if string
     resolved_storage: StorageBackend | None = None
     if isinstance(storage, str):
         from harnessbox._storage import get_storage_backend
 
         backend_cls = get_storage_backend(storage)
-        resolved_storage = backend_cls()
+        kwargs: dict[str, Any] = {}
+        if storage == "sqlite":
+            db_path = _os.environ.get("HARNESSBOX_DB_PATH")
+            if db_path:
+                kwargs["path"] = db_path
+        resolved_storage = backend_cls(**kwargs)
     elif storage is not None:
         resolved_storage = storage
 
@@ -895,7 +908,8 @@ def create_app(
             if size >= 1024 * 1024:
                 att_dir = Path.home() / ".harnessbox" / "attachments" / session_id
                 att_dir.mkdir(parents=True, exist_ok=True)
-                file_path = att_dir / f"{att_id}_{att.filename}"
+                safe_name = Path(att.filename).name or "attachment"
+                file_path = att_dir / f"{att_id}_{safe_name}"
                 file_path.write_bytes(raw)
                 attachments.append(Attachment(
                     attachment_id=att_id,

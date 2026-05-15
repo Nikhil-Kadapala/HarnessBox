@@ -435,7 +435,8 @@ class WorkspaceManager:
             if attachments:
                 cwd = info.sandbox._cwd or "/workspace"
                 for att in attachments:
-                    sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{att.filename}"
+                    safe_name = Path(att.filename).name or "attachment"
+                    sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{safe_name}"
                     await info.sandbox._provider.make_dir(
                         f"{cwd}/.attachments/{att.attachment_id}"
                     )
