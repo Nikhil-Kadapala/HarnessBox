@@ -88,6 +88,9 @@ class E2BProvider:
                 "auto_resume": True,
             },
         )
+        # Reset extension counters — each new sandbox has a fresh TTL budget.
+        self._total_extensions = 0
+        self._extended_this_turn = False
 
     async def kill(self) -> None:
         if self._sandbox is None:
@@ -165,8 +168,13 @@ class E2BProvider:
 
         extension = min(self._timeout // 2, max_extra - self._total_extensions)
 
+        # E2B set_timeout(N) sets remaining TTL to N from now (not "+N"). Pass the
+        # estimated remaining lifetime plus the extension so we don't accidentally
+        # shrink the sandbox TTL if called before the halfway point is fully elapsed.
+        remaining = max(0, int(self._timeout - elapsed))
+
         try:
-            await self.set_timeout(extension)
+            await self.set_timeout(remaining + extension)
             self._total_extensions += extension
             self._extended_this_turn = True
             logger.info(

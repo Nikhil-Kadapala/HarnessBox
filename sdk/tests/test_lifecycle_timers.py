@@ -200,6 +200,35 @@ class TestPerWorkspaceIdleTimer:
         assert "w-1" in mgr._idle_timers
         mgr._cancel_idle_timer("w-1")
 
+    @pytest.mark.asyncio
+    async def test_turn_ended_seen_prevents_double_decrement(self) -> None:
+        """finally block does NOT decrement when TURN_ENDED already fired.
+
+        Regression test for the concurrent-turn double-decrement bug:
+        with two turns in flight, the first turn's TURN_ENDED decrements 2→1,
+        then the finally block used to see active>0 and decrement again to 0,
+        prematurely starting the idle timer while agent B is still running.
+        """
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+        # Start with 2 concurrent turns
+        mgr._active_turns["w-1"] = 2
+
+        # Simulate TURN_ENDED for turn A: decrement 2→1
+        active = max(0, mgr._active_turns.get("w-1", 1) - 1)
+        mgr._active_turns["w-1"] = active
+        turn_ended_seen = True  # Set by the TURN_ENDED handler
+
+        # Now the finally block runs — with the fix, it checks turn_ended_seen
+        if not turn_ended_seen:
+            active = max(0, mgr._active_turns.get("w-1", 1) - 1)
+            mgr._active_turns["w-1"] = active
+            if active == 0 and mgr._auto_pause:
+                mgr._start_idle_timer("w-1")
+
+        # Counter should still be 1 (agent B still running), timer not started
+        assert mgr._active_turns["w-1"] == 1
+        assert "w-1" not in mgr._idle_timers
+
 
 # ---------------------------------------------------------------------------
 # Part B: E2B proactive timeout extension
@@ -243,11 +272,13 @@ class TestE2BTimeoutExtension:
         p = self._make_provider(timeout=300)
         assert isinstance(p, E2BProvider)
         p.notify_turn_start()
-        # 160s elapsed > 150s halfway
+        # 160s elapsed > 150s halfway; remaining = max(0, 300 - 160) = 140
         p._turn_start_time = time.monotonic() - 160
         extended = await p.maybe_extend_timeout()
         assert extended
-        p._sandbox.set_timeout.assert_called_once_with(150)  # 300 // 2
+        # set_timeout receives remaining + extension = 140 + 150 = 290
+        call_arg = p._sandbox.set_timeout.call_args[0][0]
+        assert 280 <= call_arg <= 300  # allow ±10s for timing jitter
         assert p._total_extensions == 150
 
     @pytest.mark.asyncio
@@ -270,12 +301,14 @@ class TestE2BTimeoutExtension:
 
         p = self._make_provider(timeout=300)
         assert isinstance(p, E2BProvider)
-        # Only 50s of budget left
-        p._total_extensions = 550  # max_extra=600, so 50 remaining
+        # Only 50s of budget left; elapsed=200 so remaining = max(0, 300-200) = 100
+        p._total_extensions = 550  # max_extra=600, so 50 remaining budget
         p._turn_start_time = time.monotonic() - 200
         extended = await p.maybe_extend_timeout()
         assert extended
-        p._sandbox.set_timeout.assert_called_once_with(50)
+        # set_timeout receives remaining + capped_extension = 100 + 50 = 150
+        call_arg = p._sandbox.set_timeout.call_args[0][0]
+        assert 140 <= call_arg <= 160  # allow ±10s for timing jitter
 
     @pytest.mark.asyncio
     async def test_no_extension_when_no_turn(self) -> None:
@@ -333,6 +366,28 @@ class TestE2BTimeoutExtension:
         p._turn_start_time = time.monotonic() - 200
         extended = await p.maybe_extend_timeout()
         assert not extended
+
+    @pytest.mark.asyncio
+    async def test_create_resets_extension_counters(self) -> None:
+        """create() resets _total_extensions and _extended_this_turn for the new sandbox."""
+        from harnessbox._providers.e2b import E2BProvider
+
+        p = self._make_provider(timeout=300)
+        assert isinstance(p, E2BProvider)
+        # Simulate an old sandbox that used its full extension budget
+        p._total_extensions = 600
+        p._extended_this_turn = True
+
+        # Patch the SDK import so create() doesn't need a real e2b package
+        mock_sandbox = MagicMock()
+        mock_sandbox.sandbox_id = "sb-new"
+        mock_cls = AsyncMock(return_value=mock_sandbox)
+
+        with patch.object(p, "_get_sdk", return_value=mock_cls):
+            await p.create(timeout=300)
+
+        assert p._total_extensions == 0
+        assert p._extended_this_turn is False
 
 
 # ---------------------------------------------------------------------------

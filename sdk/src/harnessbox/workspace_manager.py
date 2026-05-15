@@ -438,6 +438,10 @@ class WorkspaceManager:
         # while one conversation is still active.
         self._cancel_idle_timer(workspace_id)
         self._active_turns[workspace_id] = self._active_turns.get(workspace_id, 0) + 1
+        # Per-invocation flag: True once TURN_ENDED or SESSION_ENDED fires normally.
+        # The finally block uses this to avoid double-decrementing when concurrent
+        # turns are running (shared counter would still be >0 after normal completion).
+        turn_ended_seen = False
 
         # Update last_active
         info.last_active = datetime.now(timezone.utc).isoformat()
@@ -552,6 +556,7 @@ class WorkspaceManager:
                         StreamEventType.TURN_ENDED,
                         StreamEventType.SESSION_ENDED,
                     ):
+                        turn_ended_seen = True
                         info.last_active = datetime.now(timezone.utc).isoformat()
                         if self._storage:
                             try:
@@ -567,11 +572,11 @@ class WorkspaceManager:
                         if active == 0 and self._auto_pause:
                             self._start_idle_timer(workspace_id)
         finally:
-            # Safety net: decrement the counter even if the turn errors before TURN_ENDED
-            # fires, so the idle timer is never permanently suppressed by a failed turn.
-            active = self._active_turns.get(workspace_id, 0)
-            if active > 0:
-                active -= 1
+            # Safety net: decrement the counter if the turn errored before TURN_ENDED
+            # fired (turn_ended_seen=False). Skip if TURN_ENDED already ran to avoid
+            # double-decrementing the shared counter for concurrent turns.
+            if not turn_ended_seen:
+                active = max(0, self._active_turns.get(workspace_id, 1) - 1)
                 self._active_turns[workspace_id] = active
                 if active == 0 and self._auto_pause:
                     ws = self._workspaces.get(workspace_id)
@@ -948,6 +953,11 @@ class WorkspaceManager:
         config = self._workspace_configs.get(workspace_id)
         env_vars = dict(config.env_vars) if config and config.env_vars else {}
         sandbox_timeout = config.timeout if config else 300
+
+        # Clear stale AgentProcess PIDs from the dead sandbox before creating the
+        # replacement — matches what _pause_workspace already does.
+        if info.agent_manager:
+            await info.agent_manager.shutdown_all()
 
         try:
             # snapshot_id is an E2B-specific kwarg not on the base SandboxProvider
