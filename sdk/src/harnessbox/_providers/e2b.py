@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -27,6 +28,9 @@ class E2BProvider:
     Requires the ``e2b`` package to be installed separately.
     """
 
+    # Maximum total extensions = 3x the original timeout. Prevents runaway sessions.
+    _MAX_EXTENSION_MULTIPLIER = 3
+
     def __init__(
         self,
         *,
@@ -38,6 +42,9 @@ class E2BProvider:
         self._template = template
         self._timeout = timeout
         self._sandbox: Any = None
+        self._turn_start_time: float | None = None
+        self._total_extensions: int = 0  # accumulated extra seconds granted across all turns
+        self._extended_this_turn: bool = False  # grant at most one extension per turn
 
     @staticmethod
     def _get_sdk() -> Any:
@@ -67,10 +74,12 @@ class E2BProvider:
         self,
         env_vars: dict[str, str] | None = None,
         timeout: int = 300,
+        snapshot_id: str | None = None,
     ) -> None:
         async_sandbox_cls = self._get_sdk()
+        source = {"snapshot": snapshot_id} if snapshot_id else {"template": self._template}
         self._sandbox = await async_sandbox_cls.create(
-            template=self._template,
+            **source,
             api_key=self._api_key,
             envs=env_vars or {},
             timeout=timeout,
@@ -79,6 +88,9 @@ class E2BProvider:
                 "auto_resume": True,
             },
         )
+        # Reset extension counters — each new sandbox has a fresh TTL budget.
+        self._total_extensions = 0
+        self._extended_this_turn = False
 
     async def kill(self) -> None:
         if self._sandbox is None:
@@ -115,6 +127,66 @@ class E2BProvider:
             raise RuntimeError("Sandbox not running")
         snapshot = await self._sandbox.create_snapshot()
         return snapshot.snapshot_id
+
+    async def set_timeout(self, timeout: int) -> None:
+        """Extend the E2B sandbox timeout to at least `timeout` more seconds."""
+        if self._sandbox is None:
+            raise RuntimeError("Sandbox not running")
+        await self._sandbox.set_timeout(timeout)
+
+    def notify_turn_start(self) -> None:
+        """Record turn start; resets per-turn extension flag so we extend at most once."""
+        self._turn_start_time = time.monotonic()
+        self._extended_this_turn = False
+
+    def notify_turn_end(self) -> None:
+        """Clear turn tracking so maybe_extend_timeout is a no-op between turns."""
+        self._turn_start_time = None
+        self._extended_this_turn = False
+
+    async def maybe_extend_timeout(self) -> bool:
+        """Extend sandbox timeout proactively if the turn is past the halfway mark.
+
+        Fires at most once per turn (guarded by _extended_this_turn) and caps total
+        extra time at (_MAX_EXTENSION_MULTIPLIER - 1) * original timeout across all turns.
+        """
+        if self._sandbox is None or self._turn_start_time is None:
+            return False
+        if self._extended_this_turn:
+            return False
+
+        elapsed = time.monotonic() - self._turn_start_time
+        if elapsed < self._timeout / 2.0:
+            return False
+
+        max_extra = (self._MAX_EXTENSION_MULTIPLIER - 1) * self._timeout
+        if self._total_extensions >= max_extra:
+            logger.warning(
+                "E2B timeout extension cap reached (%ds extra already granted)", max_extra
+            )
+            return False
+
+        extension = min(self._timeout // 2, max_extra - self._total_extensions)
+
+        # E2B set_timeout(N) sets remaining TTL to N from now (not "+N"). Pass the
+        # estimated remaining lifetime plus the extension so we don't accidentally
+        # shrink the sandbox TTL if called before the halfway point is fully elapsed.
+        remaining = max(0, int(self._timeout - elapsed))
+
+        try:
+            await self.set_timeout(remaining + extension)
+            self._total_extensions += extension
+            self._extended_this_turn = True
+            logger.info(
+                "Extended E2B sandbox timeout by %ds (total extra: %ds / %ds cap)",
+                extension,
+                self._total_extensions,
+                max_extra,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to extend E2B sandbox timeout: %s", e)
+            return False
 
     # -- File I/O --
 
