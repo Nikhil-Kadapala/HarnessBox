@@ -68,11 +68,13 @@ class TestSetupPipeline:
         async def step_c(ctx: SetupContext) -> None:
             order.append("c")
 
-        pipeline = SetupPipeline([
-            SetupStep(name="a", execute=step_a),
-            SetupStep(name="b", execute=step_b),
-            SetupStep(name="c", execute=step_c),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="a", execute=step_a),
+                SetupStep(name="b", execute=step_b),
+                SetupStep(name="c", execute=step_c),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -85,9 +87,11 @@ class TestSetupPipeline:
         async def noop(ctx: SetupContext) -> None:
             pass
 
-        pipeline = SetupPipeline([
-            SetupStep(name="fast_step", execute=noop),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="fast_step", execute=noop),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -108,10 +112,12 @@ class TestSetupPipeline:
         async def step_b(ctx: SetupContext) -> None:
             order.append("b")
 
-        pipeline = SetupPipeline([
-            SetupStep(name="a", execute=step_a, skip_if=lambda ctx: True),
-            SetupStep(name="b", execute=step_b),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="a", execute=step_a, skip_if=lambda ctx: True),
+                SetupStep(name="b", execute=step_b),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -133,11 +139,13 @@ class TestSetupPipeline:
         async def step_after(ctx: SetupContext) -> None:
             order.append("after")
 
-        pipeline = SetupPipeline([
-            SetupStep(name="ok", execute=step_ok),
-            SetupStep(name="fail", execute=step_fail),
-            SetupStep(name="after", execute=step_after),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="ok", execute=step_ok),
+                SetupStep(name="fail", execute=step_fail),
+                SetupStep(name="after", execute=step_after),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -155,10 +163,12 @@ class TestSetupPipeline:
         async def step_read(ctx: SetupContext) -> None:
             assert ctx.cwd == "/workspace/myrepo"
 
-        pipeline = SetupPipeline([
-            SetupStep(name="write", execute=step_write),
-            SetupStep(name="read", execute=step_read),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="write", execute=step_write),
+                SetupStep(name="read", execute=step_read),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -168,11 +178,13 @@ class TestSetupPipeline:
         async def noop(ctx: SetupContext) -> None:
             pass
 
-        pipeline = SetupPipeline([
-            SetupStep(name="a", execute=noop),
-            SetupStep(name="b", execute=noop),
-            SetupStep(name="c", execute=noop),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="a", execute=noop),
+                SetupStep(name="b", execute=noop),
+                SetupStep(name="c", execute=noop),
+            ]
+        )
 
         assert pipeline.step_names() == ["a", "b", "c"]
 
@@ -180,11 +192,15 @@ class TestSetupPipeline:
         async def noop(ctx: SetupContext) -> None:
             pass
 
-        pipeline = SetupPipeline([
-            SetupStep(name="always", execute=noop),
-            SetupStep(name="skipped", execute=noop, skip_if=lambda ctx: True),
-            SetupStep(name="conditional", execute=noop, skip_if=lambda ctx: ctx.workspace is None),
-        ])
+        pipeline = SetupPipeline(
+            [
+                SetupStep(name="always", execute=noop),
+                SetupStep(name="skipped", execute=noop, skip_if=lambda ctx: True),
+                SetupStep(
+                    name="conditional", execute=noop, skip_if=lambda ctx: ctx.workspace is None
+                ),
+            ]
+        )
 
         provider = MockProvider()
         ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
@@ -214,9 +230,7 @@ class TestBuildSetupPipeline:
         async def custom(ctx: SetupContext) -> None:
             pass
 
-        pipeline = build_setup_pipeline(
-            extra_steps=[SetupStep(name="custom_step", execute=custom)]
-        )
+        pipeline = build_setup_pipeline(extra_steps=[SetupStep(name="custom_step", execute=custom)])
         names = pipeline.step_names()
         assert names[-1] == "custom_step"
 

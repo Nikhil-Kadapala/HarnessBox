@@ -295,6 +295,7 @@ class Sandbox:
     def _resolve_plugins(self) -> dict[str, str] | None:
         if not self._plugins:
             return None
+        self._plugin_dirs = []
         resolved: dict[str, str] = {}
         for plugin_path in self._plugins:
             p = Path(plugin_path)

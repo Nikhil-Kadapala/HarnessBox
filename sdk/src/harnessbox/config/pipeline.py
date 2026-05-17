@@ -294,6 +294,4 @@ async def _step_run_setup_script(ctx: SetupContext) -> None:
         return
     result = await ctx.provider.run_command(ctx.setup_script, cwd=ctx.manifest_target_dir)
     if result.exit_code != 0:
-        raise RuntimeError(
-            f"Setup script failed (exit {result.exit_code}): {result.stderr}"
-        )
+        raise RuntimeError(f"Setup script failed (exit {result.exit_code}): {result.stderr}")
