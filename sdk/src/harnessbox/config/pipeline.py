@@ -112,7 +112,14 @@ class SetupPipeline:
         return ctx.timings
 
     def dry_run(self, ctx: SetupContext) -> list[str]:
-        """Return step names that would execute (respecting skip_if)."""
+        """Return step names that would execute (respecting skip_if).
+
+        Note: skip_if predicates are evaluated against the initial context
+        without running preceding steps. Predicates should only inspect
+        fields set at construction time, not fields populated during
+        execution (e.g., ctx.manifest). Extra steps with execution-dependent
+        predicates will always appear in dry_run output.
+        """
         result: list[str] = []
         for step in self._steps:
             if step.skip_if and step.skip_if(ctx):

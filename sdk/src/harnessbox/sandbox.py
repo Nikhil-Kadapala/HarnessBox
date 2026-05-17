@@ -292,10 +292,14 @@ class Sandbox:
                 raise FileNotFoundError(f"Skill not found: {p}")
         return resolved
 
-    def _resolve_plugins(self) -> dict[str, str] | None:
+    def _resolve_plugins(self) -> tuple[dict[str, str] | None, list[str]]:
+        """Resolve plugin directories into sandbox file mappings.
+
+        Returns (resolved_files, plugin_dirs) without mutating self.
+        """
         if not self._plugins:
-            return None
-        self._plugin_dirs = []
+            return None, []
+        plugin_dirs: list[str] = []
         resolved: dict[str, str] = {}
         for plugin_path in self._plugins:
             p = Path(plugin_path)
@@ -304,7 +308,7 @@ class Sandbox:
             plugin_sandbox_dir = (
                 f"{self._harness_config.workspace_root}/.harnessbox/plugins/{p.name}"
             )
-            self._plugin_dirs.append(plugin_sandbox_dir)
+            plugin_dirs.append(plugin_sandbox_dir)
             for file in p.rglob("*"):
                 if file.is_file():
                     try:
@@ -313,7 +317,7 @@ class Sandbox:
                         continue
                     rel = file.relative_to(p)
                     resolved[f"{plugin_sandbox_dir}/{rel}"] = content
-        return resolved
+        return resolved, plugin_dirs
 
     # ------------------------------------------------------------------
     # Properties
@@ -419,9 +423,12 @@ class Sandbox:
     # ------------------------------------------------------------------
 
     def _build_setup_context(self) -> SetupContext:
-        """Build the SetupContext from Sandbox configuration."""
+        """Build the SetupContext from Sandbox configuration.
+
+        Pure: does not mutate Sandbox state, safe to call from dry_run().
+        """
         resolved_skills = self._resolve_skills()
-        resolved_plugins = self._resolve_plugins()
+        resolved_plugins, plugin_dirs = self._resolve_plugins()
 
         return SetupContext(
             provider=self._provider,
@@ -435,7 +442,7 @@ class Sandbox:
             system_prompt=self._system_prompt_content,
             resolved_skills=resolved_skills,
             resolved_plugins=resolved_plugins,
-            plugin_dirs=self._plugin_dirs,
+            plugin_dirs=plugin_dirs,
             skill_installs=self._skill_installs,
             setup_script=self._setup_script,
             cwd=self._cwd,
@@ -466,6 +473,8 @@ class Sandbox:
         # Sync back state that setup may have changed
         if ctx.cwd:
             self._cwd = ctx.cwd
+        if ctx.plugin_dirs:
+            self._plugin_dirs = ctx.plugin_dirs
 
         self._transition(WorkspaceState.ACTIVE)
         await self._emit_event(EventType.SETUP_COMPLETE, action="setup")

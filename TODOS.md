@@ -22,7 +22,7 @@ hb_id = hb.create()
 - Keep `Sandbox` as a deprecated alias for one release cycle
 - Update all docstrings, README, CLAUDE.md references
 
-**Depends on:** Issue #3 pipeline refactor (in progress). Do this as the immediate follow-up PR.
+**Depends on:** Issue #3 pipeline refactor (completed, PR #10). Do this as the immediate follow-up PR.
 
 ## Subagent Visibility — Parallel Execution UI
 
