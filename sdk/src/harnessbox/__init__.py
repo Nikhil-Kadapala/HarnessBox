@@ -7,6 +7,12 @@ from harnessbox.config.harness import (
     list_harness_types,
     register_harness_type,
 )
+from harnessbox.config.pipeline import (
+    SetupContext,
+    SetupPipeline,
+    SetupStep,
+    build_setup_pipeline,
+)
 from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.credentials import (
     CredentialProbe,
@@ -108,6 +114,10 @@ __all__ = [
     "Sandbox",
     "SandboxDeadError",
     "SandboxProvider",
+    "SetupContext",
+    "SetupPipeline",
+    "SetupStep",
+    "build_setup_pipeline",
     "get_harness_type",
     "list_harness_types",
     "register_harness_type",
