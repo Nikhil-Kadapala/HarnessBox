@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -13,7 +12,7 @@ from pathlib import Path
 from typing import Any, Coroutine, Literal, cast, overload
 
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
-from harnessbox.config.manifest import build_manifest
+from harnessbox.config.pipeline import SetupContext, SetupPipeline, build_setup_pipeline
 from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
@@ -418,155 +417,68 @@ class Sandbox:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def _check_installed_tools(self) -> dict[str, bool]:
-        """Check which tools are pre-installed in E2B base image.
+    def _build_setup_context(self) -> SetupContext:
+        """Build the SetupContext from Sandbox configuration."""
+        resolved_skills = self._resolve_skills()
+        resolved_plugins = self._resolve_plugins()
 
-        This is a diagnostic check to determine if E2B templates would provide
-        meaningful performance improvement. Logs results but doesn't affect setup.
-        """
-        tools = {
-            "git": "git",
-            "python3": "python3",
-            "node": "node",
-            "npm": "npm",
-            "bun": "bun",
-            "gh": "gh",
-            "uv": "uv",
-            "tree": "tree",
-            "rg": "rg",  # ripgrep
-            "fd": "fd",
-        }
-
-        installed = {}
-        for name, cmd in tools.items():
-            result = await self._provider.run_command(
-                f"command -v {cmd} >/dev/null 2>&1 && echo FOUND || echo MISSING"
-            )
-            installed[name] = "FOUND" in result.stdout
-
-        # Log as structured data for easy parsing
-        installed_names = [name for name, found in installed.items() if found]
-        missing_names = [name for name, found in installed.items() if not found]
-
-        _log.info(
-            f"Pre-installed tools: {', '.join(installed_names) if installed_names else 'none'}"
+        return SetupContext(
+            provider=self._provider,
+            harness_config=self._harness_config,
+            security_policy=self._security_policy,
+            workspace=self._workspace,
+            env_vars=self._env_vars,
+            timeout=self._timeout,
+            dirs=self._dirs,
+            files=self._files,
+            system_prompt=self._system_prompt_content,
+            resolved_skills=resolved_skills,
+            resolved_plugins=resolved_plugins,
+            plugin_dirs=self._plugin_dirs,
+            skill_installs=self._skill_installs,
+            setup_script=self._setup_script,
+            cwd=self._cwd,
         )
-        if missing_names:
-            _log.info(f"Missing tools: {', '.join(missing_names)}")
 
-        return installed
+    def _build_pipeline(self) -> SetupPipeline:
+        """Build the setup pipeline for this sandbox."""
+        return build_setup_pipeline()
 
     async def setup(self) -> None:
         """Create the sandbox, inject all files and config.
 
         Transitions: STARTING -> ACTIVE
 
-        Ordering: create sandbox -> dirs -> workspace inject -> files ->
-        security hooks -> skill installs -> setup script -> ACTIVE.
+        Uses a sequential pipeline:
+        create sandbox -> check tools -> workspace root -> workspace inject ->
+        build manifest -> create dirs -> inject files -> hook permissions ->
+        install skills -> setup script -> ACTIVE.
 
         Agent behavior files (system prompt, skills, plugins) are written
         AFTER workspace injection so they take precedence over repo contents.
         """
-        setup_start = time.time()
+        ctx = self._build_setup_context()
+        pipeline = self._build_pipeline()
 
-        # Phase 1: Create sandbox
-        sandbox_start = time.time()
-        await self._provider.create(
-            env_vars=self._env_vars or {},
-            timeout=self._timeout,
-        )
-        _log.info(f"sandbox_creation took {time.time() - sandbox_start:.2f}s")
+        await pipeline.execute(ctx)
 
-        # Phase 2: Check pre-installed tools (skip for mock providers in tests)
-        if not hasattr(self._provider, "_commands"):  # Skip MockProvider
-            await self._check_installed_tools()
-
-        # Phase 3: Create workspace root directory
-        workspace_root_start = time.time()
-        await self._provider.make_dir(self._harness_config.workspace_root)
-        _log.info(f"workspace_root_creation took {time.time() - workspace_root_start:.2f}s")
-
-        # Phase 4: Inject workspace (git clone into subdirectory)
-        if self._workspace:
-            workspace_start = time.time()
-            await self._workspace.inject(self._provider, self._harness_config.workspace_root)
-            if hasattr(self._workspace, "clone_dir_name") and self._workspace.clone_dir_name:
-                self._cwd = (
-                    f"{self._harness_config.workspace_root}/{self._workspace.clone_dir_name}"
-                )
-            _log.info(f"workspace_inject took {time.time() - workspace_start:.2f}s")
-
-        # Determine the actual working directory for manifest files
-        # If we cloned into a subdirectory, use that. Otherwise use workspace_root.
-        manifest_target_dir = self._cwd if self._cwd else self._harness_config.workspace_root
-
-        resolved_skills = self._resolve_skills()
-        resolved_plugins = self._resolve_plugins()
-
-        # Phase 4: Build manifest (using the actual working directory)
-        manifest_start = time.time()
-        manifest = build_manifest(
-            harness_config=self._harness_config,
-            security_policy=self._security_policy,
-            workspace_root=manifest_target_dir,
-            env_vars=self._env_vars,
-            dirs=self._dirs,
-            files=self._files,
-            system_prompt=self._system_prompt_content,
-            skills=resolved_skills,
-            plugins=resolved_plugins,
-        )
-        _log.info(f"manifest_build took {time.time() - manifest_start:.2f}s")
-
-        # Phase 5: Create directories
-        dirs_start = time.time()
-        for d in manifest.dirs:
-            await self._provider.make_dir(d)
-        _log.info(f"directory_creation took {time.time() - dirs_start:.2f}s")
-
-        # Phase 6: Inject manifest files (into cloned directory)
-        files_start = time.time()
-        for path, content in manifest.files.items():
-            await self._provider.write_file(path, content)
-        _log.info(f"manifest_file_injection took {time.time() - files_start:.2f}s")
-
-        # Phase 7: Set hook permissions
-        hooks_start = time.time()
-        if self._security_policy and self._harness_config.hooks_dir:
-            hook_path = f"{manifest_target_dir}/{self._harness_config.hooks_dir}/guard_bash.py"
-            if hook_path in manifest.files:
-                await self._provider.run_command(f"chmod +x {hook_path}")
-        _log.info(f"hook_setup took {time.time() - hooks_start:.2f}s")
-
-        # Phase 8: Install skills
-        skills_start = time.time()
-        if self._skill_installs and self._harness_config.skill_install_cmd:
-            for skill_spec in self._skill_installs:
-                cmd = f"{self._harness_config.skill_install_cmd} {skill_spec}"
-                result = await self._provider.run_command(cmd, cwd=manifest_target_dir)
-                if result.exit_code != 0:
-                    raise RuntimeError(f"Skill install failed ({skill_spec}): {result.stderr}")
-        _log.info(f"skill_install took {time.time() - skills_start:.2f}s")
-
-        # Phase 9: Run setup script
-        script_start = time.time()
-        if self._setup_script:
-            result = await self._provider.run_command(
-                self._setup_script,
-                cwd=manifest_target_dir,
-            )
-            if result.exit_code != 0:
-                raise RuntimeError(
-                    f"Setup script failed (exit {result.exit_code}): {result.stderr}"
-                )
-        _log.info(f"setup_script took {time.time() - script_start:.2f}s")
-
-        total_time = time.time() - setup_start
-        _log.info(f"setup_total took {total_time:.2f}s")
+        # Sync back state that setup may have changed
+        if ctx.cwd:
+            self._cwd = ctx.cwd
 
         self._transition(WorkspaceState.ACTIVE)
         await self._emit_event(EventType.SETUP_COMPLETE, action="setup")
         await self._push_lifecycle_event(StreamEventType.SESSION_STARTED)
+
+    def dry_run(self) -> list[str]:
+        """Return the list of setup steps that would execute.
+
+        Useful for testing and debugging the setup sequence without
+        actually provisioning a sandbox.
+        """
+        ctx = self._build_setup_context()
+        pipeline = self._build_pipeline()
+        return pipeline.dry_run(ctx)
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""

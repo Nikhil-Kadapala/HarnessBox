@@ -2,6 +2,28 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
+## Rename Sandbox -> HarnessBox + setup() -> create()
+
+**What:** Rename the `Sandbox` class to `HarnessBox` and its `setup()` method to `create()`. The target public API:
+
+```python
+from harnessbox import HarnessBox
+
+hb = HarnessBox(provider="e2b", harness="claude-code", provider_api_key="...", setup_script="./setup.sh", secrets="./secrets.json")
+hb_id = hb.create()
+```
+
+**Why:** `HarnessBox` is the product name and maps directly to what users are creating. `create()` is what they mentally do -- provision a sandbox, inject config, run setup. The current `Sandbox.setup()` naming is an internal implementation detail that leaked into the API.
+
+**Scope:**
+- Rename class `Sandbox` -> `HarnessBox` across all modules (sandbox.py, server.py, session.py, workspace_manager.py, __init__.py, all tests)
+- Rename method `setup()` -> `create()`, return `sandbox_id`
+- Add `secrets` parameter (path to secrets.json with standardized format)
+- Keep `Sandbox` as a deprecated alias for one release cycle
+- Update all docstrings, README, CLAUDE.md references
+
+**Depends on:** Issue #3 pipeline refactor (in progress). Do this as the immediate follow-up PR.
+
 ## Subagent Visibility — Parallel Execution UI
 
 **What:** When the agent spawns subagents (via the `Agent` tool), the frontend should render dedicated subagent cards showing status, description, and results — with side-by-side layout for parallel subagents.
