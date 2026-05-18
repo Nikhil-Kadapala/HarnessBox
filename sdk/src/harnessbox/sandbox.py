@@ -492,11 +492,17 @@ class Sandbox:
         pipeline = self._build_pipeline()
         return pipeline.dry_run(ctx)
 
+    def _snapshot_process_metrics(self) -> None:
+        """Preserve cost metrics before discarding the agent process."""
+        if self._agent_process:
+            self._cost_metrics = self._agent_process.cost_metrics
+
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
         if self._state in (WorkspaceState.MERGED, WorkspaceState.FAILED):
             return
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -558,6 +564,7 @@ class Sandbox:
             return
         _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -569,6 +576,7 @@ class Sandbox:
         """Gracefully end the session."""
         self._transition(WorkspaceState.ENDING)
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -748,10 +756,11 @@ class Sandbox:
                     await self._agent_process.send_prompt(prompt)
                 except RuntimeError:
                     _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
-                    prev_metrics = self._agent_process.cost_metrics
+                    self._snapshot_process_metrics()
                     self._agent_process = None
                     await self._ensure_agent_ready()
-                    self._agent_process._cost_metrics = prev_metrics
+                    if self._agent_process:
+                        self._agent_process.restore_cost_metrics(self._cost_metrics)
                     await self._agent_process.send_prompt(prompt)
 
                 last_turn_end: UniversalEvent | None = None

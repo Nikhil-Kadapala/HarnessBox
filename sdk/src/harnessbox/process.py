@@ -69,6 +69,10 @@ class AgentProcess:
         """Return accumulated cost metrics across all turns."""
         return self._cost_metrics
 
+    def restore_cost_metrics(self, metrics: CostMetrics) -> None:
+        """Restore previously accumulated cost metrics (e.g. after restart)."""
+        self._cost_metrics = metrics
+
     async def start(self, command: str, cwd: str) -> None:
         """Launch the agent as a persistent background process."""
         if self._running:
@@ -253,6 +257,12 @@ class AgentProcess:
 
         Must only be called between turns (after stream_turn completes).
         Raises RuntimeError if called during an active turn.
+
+        Callers must pass ``skip_cost=True`` when ``cost_update_from_result``
+        has already been invoked for this turn to avoid double-counting.
+
+        Note: AgentProcess is single-task by contract. The ``_turn_active``
+        guard catches sequential misuse but does not use a lock.
         """
         if self._turn_active:
             raise RuntimeError("Cannot poll status during an active turn")
