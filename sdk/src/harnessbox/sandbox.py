@@ -13,7 +13,7 @@ from typing import Any, Coroutine, Literal, cast, overload
 
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.pipeline import SetupContext, SetupPipeline, build_setup_pipeline
-from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
+from harnessbox.cost import CostMetrics
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
 from harnessbox.process import AgentProcess
@@ -371,6 +371,8 @@ class Sandbox:
             for model, cost in metrics.per_model.items():
                 print(f"  {model}: ${cost.cost_usd:.4f}")
         """
+        if self._agent_process:
+            return self._agent_process.cost_metrics
         return self._cost_metrics
 
     # ------------------------------------------------------------------
@@ -490,11 +492,17 @@ class Sandbox:
         pipeline = self._build_pipeline()
         return pipeline.dry_run(ctx)
 
+    def _snapshot_process_metrics(self) -> None:
+        """Preserve cost metrics before discarding the agent process."""
+        if self._agent_process:
+            self._cost_metrics = self._agent_process.cost_metrics
+
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
         if self._state in (WorkspaceState.MERGED, WorkspaceState.FAILED):
             return
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -556,6 +564,7 @@ class Sandbox:
             return
         _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -567,6 +576,7 @@ class Sandbox:
         """Gracefully end the session."""
         self._transition(WorkspaceState.ENDING)
         if self._agent_process:
+            self._snapshot_process_metrics()
             try:
                 await self._agent_process.stop()
             except Exception:
@@ -746,8 +756,11 @@ class Sandbox:
                     await self._agent_process.send_prompt(prompt)
                 except RuntimeError:
                     _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
+                    self._snapshot_process_metrics()
                     self._agent_process = None
                     await self._ensure_agent_ready()
+                    if self._agent_process:
+                        self._agent_process.restore_cost_metrics(self._cost_metrics)
                     await self._agent_process.send_prompt(prompt)
 
                 last_turn_end: UniversalEvent | None = None
@@ -772,13 +785,18 @@ class Sandbox:
                 )
                 skip_cost = bool(result_model_usage)
 
+                sid = self._agent_session_id or ""
                 if skip_cost and last_turn_end:
-                    cost_event = self._cost_update_from_result(last_turn_end)
+                    cost_event = self._agent_process.cost_update_from_result(
+                        last_turn_end, session_id=sid
+                    )
                     if cost_event:
                         await self._event_buffer.push(cost_event)
                         yield cost_event
 
-                for status_event in await self._poll_status_events(skip_cost=skip_cost):
+                for status_event in await self._agent_process.poll_status(
+                    skip_cost=skip_cost, session_id=sid
+                ):
                     await self._event_buffer.push(status_event)
                     yield status_event
 
@@ -825,238 +843,12 @@ class Sandbox:
 
             return
 
-    def _cost_update_from_result(self, turn_end_event: UniversalEvent) -> UniversalEvent | None:
-        """Build a COST_UPDATE event from enriched result metadata (snapshot overwrite)."""
-        metadata = turn_end_event.metadata or {}
-        model_usage = metadata.get("model_usage", {})
-
-        if not model_usage:
-            return None
-
-        total_cost = turn_end_event.cost_usd
-
-        per_model: dict[str, ModelCost] = {}
-        for model_name, usage in model_usage.items():
-            if not isinstance(usage, dict):
-                continue
-            input_tokens = usage.get("inputTokens", usage.get("input_tokens", 0))
-            output_tokens = usage.get("outputTokens", usage.get("output_tokens", 0))
-            per_model[model_name] = ModelCost(
-                input_tokens=int(input_tokens or 0),
-                output_tokens=int(output_tokens or 0),
-                cost_usd=0.0,
-            )
-
-        self._cost_metrics = CostMetrics(
-            total_cost_usd=float(total_cost) if total_cost else self._cost_metrics.total_cost_usd,
-            per_model=per_model,
-            turn_count=self._cost_metrics.turn_count + 1,
-            last_updated=datetime.now(timezone.utc).isoformat(),
-        )
-
-        return UniversalEvent(
-            event_id=str(uuid.uuid4()),
-            sequence=0,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._agent_session_id or "",
-            event_type=StreamEventType.COST_UPDATE,
-            metadata={
-                "total_cost_usd": self._cost_metrics.total_cost_usd,
-                "turn_count": self._cost_metrics.turn_count,
-                "per_model": {
-                    model: {
-                        "input_tokens": mc.input_tokens,
-                        "output_tokens": mc.output_tokens,
-                        "cost_usd": mc.cost_usd,
-                    }
-                    for model, mc in self._cost_metrics.per_model.items()
-                },
-            },
-        )
-
-    async def _poll_status_events(self, *, skip_cost: bool = False) -> list[UniversalEvent]:
-        """Poll /context and optionally /cost after a turn, emit typed events."""
-        if not self._agent_process or not self._agent_process.is_running:
-            return []
-        try:
-            context_data = await self._agent_process.send_command("/context", timeout=5)
-            cost_data = (
-                await self._agent_process.send_command("/cost", timeout=5) if not skip_cost else {}
-            )
-        except asyncio.TimeoutError:
-            _log.warning("Status poll timed out")
-            return []
-        except Exception as e:
-            _log.warning("Status poll failed: %s", e)
-            return []
-
-        events: list[UniversalEvent] = []
-        session_id = self._agent_session_id or ""
-        now = datetime.now(timezone.utc).isoformat()
-
-        # --- CONTEXT_UPDATE event ---
-        context_output = context_data.get("output", "")
-        if context_output:
-            parsed = self._parse_context_output(context_output)
-            if parsed:
-                events.append(
-                    UniversalEvent(
-                        event_id=str(uuid.uuid4()),
-                        sequence=0,
-                        timestamp=now,
-                        session_id=session_id,
-                        event_type=StreamEventType.CONTEXT_UPDATE,
-                        metadata=parsed,
-                    )
-                )
-
-        # --- COST_UPDATE event (only when not already emitted from result) ---
-        if not skip_cost and cost_data:
-            try:
-                parsed_cost = parse_cost_data(cost_data)
-                if parsed_cost:
-                    self._cost_metrics = parsed_cost
-                    events.append(
-                        UniversalEvent(
-                            event_id=str(uuid.uuid4()),
-                            sequence=0,
-                            timestamp=now,
-                            session_id=session_id,
-                            event_type=StreamEventType.COST_UPDATE,
-                            metadata={
-                                "total_cost_usd": parsed_cost.total_cost_usd,
-                                "turn_count": parsed_cost.turn_count,
-                                "per_model": {
-                                    model: {
-                                        "input_tokens": mc.input_tokens,
-                                        "output_tokens": mc.output_tokens,
-                                        "cost_usd": mc.cost_usd,
-                                    }
-                                    for model, mc in parsed_cost.per_model.items()
-                                },
-                            },
-                        )
-                    )
-            except Exception as e:
-                _log.warning("Failed to parse cost data: %s", e)
-
-        return events
-
     @staticmethod
     def _parse_context_output(text: str) -> dict[str, Any] | None:
         """Parse the markdown output from /context into structured data."""
-        import re
+        from harnessbox.status import parse_context_output
 
-        def parse_token_count(value: str, suffix: str | None = None) -> int:
-            multiplier = 1
-            if suffix:
-                normalized_suffix = suffix.lower()
-                if normalized_suffix == "k":
-                    multiplier = 1_000
-                elif normalized_suffix == "m":
-                    multiplier = 1_000_000
-            return int(float(value.replace(",", "")) * multiplier)
-
-        result: dict[str, Any] = {}
-        tokens_match = re.search(
-            r"(?:\*\*)?Tokens:(?:\*\*)?\s*([\d,.]+)\s*([kKmM]?)\s*/\s*([\d,.]+)\s*([kKmM]?)\s*\((\d+)%\)",
-            text,
-            re.IGNORECASE,
-        )
-        if not tokens_match:
-            tokens_match = re.search(
-                r"\b([\d,.]+)\s*([kKmM])\s*/\s*([\d,.]+)\s*([kKmM])\s+tokens\s*\((\d+)%\)",
-                text,
-                re.IGNORECASE,
-            )
-        if tokens_match:
-            percent = int(tokens_match.group(5))
-            result["tokens_used"] = parse_token_count(tokens_match.group(1), tokens_match.group(2))
-            result["context_window"] = parse_token_count(
-                tokens_match.group(3), tokens_match.group(4)
-            )
-            result["percent_used"] = percent
-
-        model_match = re.search(r"(?:\*\*)?Model:(?:\*\*)?\s*(\S+)", text, re.IGNORECASE)
-        if not model_match:
-            model_match = re.search(
-                r"\b([A-Za-z][A-Za-z0-9 ._-]+)\s+\((?:[\d.]+[kKmM]\s+)?context\)",
-                text,
-                re.IGNORECASE,
-            )
-        if model_match:
-            result["model"] = model_match.group(1).strip()
-
-        category_labels = [
-            ("system prompt", "system_prompt", "System prompt"),
-            ("system tools", "system_tools", "System tools"),
-            ("memory files", "memory_files", "Memory files"),
-            ("tools", "tools", "Tools"),
-            ("rules", "rules", "Rules"),
-            ("skills", "skills", "Skills"),
-            ("mcp", "mcp", "MCP"),
-            ("subagents", "subagents", "Subagents"),
-            ("messages", "messages", "Messages"),
-            ("conversation", "conversation", "Conversation"),
-            ("free space", "free_space", "Free space"),
-            ("autocompact buffer", "autocompact_buffer", "Autocompact buffer"),
-        ]
-        categories: list[dict[str, Any]] = []
-        seen_category_keys: set[str] = set()
-        for raw_line in text.splitlines():
-            line = raw_line.strip().strip("|").strip()
-            if not line or "tokens:" in line.lower() or "model:" in line.lower():
-                continue
-            normalized_line = re.sub(r"[*_`]", "", line)
-            for label, key, display_label in category_labels:
-                if key in seen_category_keys:
-                    continue
-                category_match = re.search(
-                    rf"\b{re.escape(label)}\b\s*(?:\||:|-|\u2014|\u2013)?\s*~?\$?([\d,.]+)\s*([kKmM]?)\s*(?:tokens?)?\b",
-                    normalized_line,
-                    re.IGNORECASE,
-                )
-                if not category_match:
-                    continue
-                categories.append(
-                    {
-                        "key": key,
-                        "label": display_label,
-                        "tokens": parse_token_count(
-                            category_match.group(1),
-                            category_match.group(2),
-                        ),
-                    }
-                )
-                seen_category_keys.add(key)
-                break
-
-        if categories:
-            if any(category["key"] in {"system_tools", "free_space"} for category in categories):
-                terminal_category_defaults = [
-                    ("system_prompt", "System prompt"),
-                    ("system_tools", "System tools"),
-                    ("memory_files", "Memory files"),
-                    ("skills", "Skills"),
-                    ("messages", "Messages"),
-                    ("free_space", "Free space"),
-                    ("autocompact_buffer", "Autocompact buffer"),
-                ]
-                existing_categories = {category["key"]: category for category in categories}
-                categories = [
-                    existing_categories.get(
-                        key,
-                        {
-                            "key": key,
-                            "label": label,
-                            "tokens": 0,
-                        },
-                    )
-                    for key, label in terminal_category_defaults
-                ]
-            result["categories"] = categories
-
-        return result if result else None
+        return parse_context_output(text)
 
     async def start_interactive_session(self) -> InteractiveSession:
         """Start a live interactive terminal session via PTY.
