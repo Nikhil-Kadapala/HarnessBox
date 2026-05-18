@@ -832,7 +832,6 @@ class Sandbox:
 
             return
 
-
     @staticmethod
     def _parse_context_output(text: str) -> dict[str, Any] | None:
         """Parse the markdown output from /context into structured data."""

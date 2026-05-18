@@ -102,9 +102,12 @@ async def test_poll_status_returns_context_and_cost_events() -> None:
         if cmd == "/context":
             return {"output": "**Tokens:** 50k / 200k (25%)"}
         if cmd == "/cost":
-            return {"total_cost_usd": 0.05, "modelUsage": {
-                "claude-sonnet-4.5": {"inputTokens": 1000, "outputTokens": 500, "costUSD": 0.05}
-            }}
+            return {
+                "total_cost_usd": 0.05,
+                "modelUsage": {
+                    "claude-sonnet-4.5": {"inputTokens": 1000, "outputTokens": 500, "costUSD": 0.05}
+                },
+            }
         return {}
 
     process.send_command = mock_send_command  # type: ignore[assignment]
@@ -192,11 +195,7 @@ def test_cost_update_from_result_with_model_usage() -> None:
         session_id="sess-1",
         event_type=EventType.TURN_ENDED,
         cost_usd=0.08,
-        metadata={
-            "model_usage": {
-                "claude-sonnet-4.5": {"inputTokens": 2000, "outputTokens": 800}
-            }
-        },
+        metadata={"model_usage": {"claude-sonnet-4.5": {"inputTokens": 2000, "outputTokens": 800}}},
     )
 
     event = process.cost_update_from_result(turn_end, session_id="sess-1")
@@ -219,11 +218,7 @@ def test_cost_update_from_result_updates_cost_metrics() -> None:
         session_id="sess-1",
         event_type=EventType.TURN_ENDED,
         cost_usd=0.10,
-        metadata={
-            "model_usage": {
-                "claude-opus-4": {"inputTokens": 5000, "outputTokens": 2000}
-            }
-        },
+        metadata={"model_usage": {"claude-opus-4": {"inputTokens": 5000, "outputTokens": 2000}}},
     )
 
     process.cost_update_from_result(turn_end)
@@ -264,9 +259,7 @@ def test_cost_metrics_accumulates_across_turns() -> None:
             event_type=EventType.TURN_ENDED,
             cost_usd=0.01 * (i + 1),
             metadata={
-                "model_usage": {
-                    "claude-haiku-4.5": {"inputTokens": 100, "outputTokens": 50}
-                }
+                "model_usage": {"claude-haiku-4.5": {"inputTokens": 100, "outputTokens": 50}}
             },
         )
         process.cost_update_from_result(turn_end)

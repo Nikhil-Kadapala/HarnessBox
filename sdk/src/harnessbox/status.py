@@ -34,9 +34,7 @@ def parse_context_output(text: str) -> dict[str, Any] | None:
     if tokens_match:
         percent = int(tokens_match.group(5))
         result["tokens_used"] = parse_token_count(tokens_match.group(1), tokens_match.group(2))
-        result["context_window"] = parse_token_count(
-            tokens_match.group(3), tokens_match.group(4)
-        )
+        result["context_window"] = parse_token_count(tokens_match.group(3), tokens_match.group(4))
         result["percent_used"] = percent
 
     model_match = re.search(r"(?:\*\*)?Model:(?:\*\*)?\s*(\S+)", text, re.IGNORECASE)

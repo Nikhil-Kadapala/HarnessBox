@@ -153,9 +153,7 @@ class AgentProcess:
 
                 _log.debug("Turn line: %s", line[:1000])
                 for event in self._parser.parse_line(line):
-                    _log.info(
-                        "Parsed event: %s (error: %s)", event.event_type, event.error_message
-                    )
+                    _log.info("Parsed event: %s (error: %s)", event.event_type, event.error_message)
                     yield event
                     if event.event_type in (EventType.SESSION_ENDED, EventType.TURN_ENDED):
                         if event.cost_usd is not None or event.duration_ms is not None:
