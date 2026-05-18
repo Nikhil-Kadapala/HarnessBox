@@ -143,7 +143,7 @@ class AgentProcess:
                     _log.warning("No output for %ss — turn timed out", self._turn_timeout)
                     yield self._parser._make_event(
                         EventType.ERROR,
-                        error_message=f"No output for {int(self._turn_timeout)}s — turn timed out",
+                        error_message=f"No output for {self._turn_timeout:g}s — turn timed out",
                     )
                     return
 
@@ -247,7 +247,7 @@ class AgentProcess:
         await self._provider.send_stdin(self._pid, msg + "\n")
 
     async def poll_status(
-        self, *, skip_cost: bool = False, session_id: str = ""
+        self, *, skip_cost: bool = False, session_id: str = "", timeout: float = 5
     ) -> list[UniversalEvent]:
         """Run /context and optionally /cost after a turn, return typed events.
 
@@ -263,8 +263,10 @@ class AgentProcess:
         events: list[UniversalEvent] = []
 
         try:
-            context_data = await self.send_command("/context", timeout=5)
-            cost_data = await self.send_command("/cost", timeout=5) if not skip_cost else {}
+            context_data = await self.send_command("/context", timeout=timeout)
+            cost_data = (
+                await self.send_command("/cost", timeout=timeout) if not skip_cost else {}
+            )
         except asyncio.TimeoutError:
             _log.warning("Status poll timed out")
             return []

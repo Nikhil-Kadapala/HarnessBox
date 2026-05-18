@@ -66,7 +66,9 @@ class AgentManager:
                 await self._sandbox.event_buffer.push(event)
                 yield event
 
-            for status_event in await process.poll_status(session_id=conversation_id):
+            for status_event in await process.poll_status(
+                session_id=conversation_id, timeout=10
+            ):
                 await self._sandbox.event_buffer.push(status_event)
                 yield status_event
 

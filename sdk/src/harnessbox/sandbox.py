@@ -748,8 +748,10 @@ class Sandbox:
                     await self._agent_process.send_prompt(prompt)
                 except RuntimeError:
                     _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
+                    prev_metrics = self._agent_process.cost_metrics
                     self._agent_process = None
                     await self._ensure_agent_ready()
+                    self._agent_process._cost_metrics = prev_metrics
                     await self._agent_process.send_prompt(prompt)
 
                 last_turn_end: UniversalEvent | None = None

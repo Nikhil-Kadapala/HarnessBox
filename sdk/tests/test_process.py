@@ -284,4 +284,4 @@ async def test_turn_timeout_configurable() -> None:
 
     assert len(events) == 1
     assert events[0].event_type == EventType.ERROR
-    assert "0s" in (events[0].error_message or "")
+    assert "0.01s" in (events[0].error_message or "")
