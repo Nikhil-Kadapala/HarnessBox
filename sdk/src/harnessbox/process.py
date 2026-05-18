@@ -264,9 +264,7 @@ class AgentProcess:
 
         try:
             context_data = await self.send_command("/context", timeout=timeout)
-            cost_data = (
-                await self.send_command("/cost", timeout=timeout) if not skip_cost else {}
-            )
+            cost_data = await self.send_command("/cost", timeout=timeout) if not skip_cost else {}
         except asyncio.TimeoutError:
             _log.warning("Status poll timed out")
             return []
