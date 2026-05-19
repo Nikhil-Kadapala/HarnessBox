@@ -267,8 +267,10 @@ class HarnessBox:
     async def kill(self) -> None:
         """Destroy the sandbox and release resources."""
         if self._sandbox is not None:
-            await self._sandbox.kill()
-            self._sandbox = None
+            try:
+                await self._sandbox.kill()
+            finally:
+                self._sandbox = None
 
     async def __aenter__(self) -> HarnessBox:
         await self.create()

@@ -62,16 +62,18 @@ await hb.kill()
 
 ## How It Works
 
-HarnessBox is a Python library. You import it, create sessions, and stream agent output. That's the whole product.
+HarnessBox is a Python library. You import it, provision a sandbox, and stream agent output. That's the whole product.
 
 ```python
 from harnessbox import HarnessBox
 
 hb = HarnessBox(provider="e2b", harness="claude-code", secrets={...})
-session = await hb.create_session(branch="feat/auth")
+await hb.create()
 
-async for event in hb.send_message(session.id, "Fix the failing test"):
+async for event in hb.send_message("Fix the failing test"):
     print(event.delta or "", end="")
+
+await hb.kill()
 ```
 
 Everything else is a deployment choice:
@@ -127,12 +129,11 @@ harnessbox serve --port 8080
 docker run -p 8080:8080 harnessbox/server
 ```
 
-Point the SDK at your server:
+Point the SDK at your server (planned for v0.4.0):
 
 ```python
 # SDK becomes a thin client — all orchestration happens server-side
 hb = HarnessBox(base_url="http://localhost:8080", secrets={...})
-session = await hb.create_session(branch="feat/auth")
 # Same API, same streaming, same everything
 ```
 
@@ -204,7 +205,7 @@ hb = HarnessBox(
         harness_secrets={"ANTHROPIC_API_KEY": "sk-ant-..."},
     ),
     model="claude-sonnet-4-6-20250514",
-    system_prompt="CLAUDE.md",         # str content or Path to file
+    system_prompt=Path("CLAUDE.md"),    # Path to load from file, or str for inline content
     workspace=GitWorkspace(...),
     security_policy=SecurityPolicy(...),
     setup_script="npm install",
