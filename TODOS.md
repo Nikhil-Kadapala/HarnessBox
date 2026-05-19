@@ -2,27 +2,115 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
-## Rename Sandbox -> HarnessBox + setup() -> create()
+## ~~Rename Sandbox -> HarnessBox~~ ✅ DONE (v0.3.0)
 
-**What:** Rename the `Sandbox` class to `HarnessBox` and its `setup()` method to `create()`. The target public API:
+**Decision:** Added `HarnessBox` as a public wrapper class via composition instead of a mechanical rename. `Sandbox` stays as the internal orchestration layer used by `WorkspaceManager` and `server.py`.
+
+**What shipped:**
+- `HarnessBox` class in `harnessbox.py` — wraps `Sandbox` via composition
+- `HarnessBoxSecrets` dataclass — separates `provider_api_key` from `harness_secrets`
+- `api_key` field for platform auth (future cloud service, `None` = self-hosted)
+- Context manager support (`async with HarnessBox(...) as hb`)
+- 18 tests covering init, lifecycle, delegation, and error paths
+
+**Secrets architecture (future work):**
+- Credential probing for self-hosted: server layer detects available credentials at startup
+- Agent vault for enterprise: encrypted store with sealed token injection (see "Secret Management" TODO below)
+- Current state: `harness_secrets` dict merged into env vars for sandbox injection
+
+## Workspace Modes + Worktree Support (v0.4.0)
+
+**What:** HarnessBox becomes the sole orchestrator for workspaces. Users specify a git remote + branch and a workspace mode (SHARED or NEW). HarnessBox manages all lifecycle internally. WorkspaceManager becomes a private implementation detail — never imported by users.
+
+**Domain model (see CONTEXT.md):**
+- **Sandbox** = cloud VM (compute unit)
+- **Workspace** = sandbox + git repo config + mode (logical unit HarnessBox manages)
+- **Session** = agent conversation (one agent process + one branch/worktree)
+
+**Two modes:**
 
 ```python
-from harnessbox import HarnessBox
+from harnessbox import HarnessBox, WorkspaceMode
 
-hb = HarnessBox(provider="e2b", harness="claude-code", provider_api_key="...", setup_script="./setup.sh", secrets="./secrets.json")
-hb_id = hb.create()
+# NEW mode: each session gets its own sandbox + branch
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    remote="https://github.com/user/repo.git",
+    workspace_mode=WorkspaceMode.NEW,
+    secrets={...},
+)
+
+session1 = await hb.create_session(branch="feat/auth")
+session2 = await hb.create_session(branch="feat/ui")
+# session1 → Sandbox A (isolated VM, branch feat/auth)
+# session2 → Sandbox B (isolated VM, branch feat/ui)
+
+async for event in hb.send_message(session1.id, "Fix the auth bug"):
+    print(event.delta)
+
+# SHARED mode: all sessions share one sandbox via git worktrees
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    remote="https://github.com/user/repo.git",
+    workspace_mode=WorkspaceMode.SHARED,
+    secrets={...},
+)
+
+session1 = await hb.create_session(branch="feat/auth")
+session2 = await hb.create_session(branch="feat/ui")
+# session1 → worktree at /workspace/worktrees/feat-auth (shared VM)
+# session2 → worktree at /workspace/worktrees/feat-ui (shared VM)
+# Agents CAN see each other's worktrees (feature, not a bug)
 ```
 
-**Why:** `HarnessBox` is the product name and maps directly to what users are creating. `create()` is what they mentally do -- provision a sandbox, inject config, run setup. The current `Sandbox.setup()` naming is an internal implementation detail that leaked into the API.
+**Key design decisions:**
+- One agent process per session (concurrent, independent conversations)
+- In SHARED mode, cross-worktree visibility is intentional (enables cross-branch awareness)
+- Sessions provisioned eagerly (sandbox created immediately, not on first message)
+- Workspaces auto-pause after idle timeout, resume transparently
+- WorkspaceManager, Sandbox, AgentManager are private — users never import them
 
-**Scope:**
-- Rename class `Sandbox` -> `HarnessBox` across all modules (sandbox.py, server.py, session.py, workspace_manager.py, __init__.py, all tests)
-- Rename method `setup()` -> `create()`, return `sandbox_id`
-- Add `secrets` parameter (path to secrets.json with standardized format)
-- Keep `Sandbox` as a deprecated alias for one release cycle
-- Update all docstrings, README, CLAUDE.md references
+**Implementation plan:**
+1. Add `remote`, `workspace_mode` params to `HarnessBox.__init__`
+2. Add `create_session(branch=...)` method that returns a `Session` object
+3. Add `send_message(session_id, prompt)` overload (in addition to current no-session mode)
+4. In NEW mode: `create_session` spins up a new `Sandbox` per session
+5. In SHARED mode: `create_session` runs `git worktree add` in the shared sandbox
+6. HarnessBox internally delegates to WorkspaceManager for lifecycle
+7. Remove WorkspaceManager, WorkspaceConfig, WorkspaceInstance from `__init__.py` exports
+8. Update server.py to use HarnessBox as the top-level orchestrator
 
-**Depends on:** Issue #3 pipeline refactor (completed, PR #10). Do this as the immediate follow-up PR.
+**Backwards compatibility:**
+- Current `HarnessBox(workspace=GitWorkspace(...))` + `hb.create()` + `hb.send_message(prompt)` continues to work as a single-session shorthand (no workspace_mode = legacy single-sandbox behavior)
+- Multi-session requires explicit `workspace_mode` + `create_session()`
+
+**Depends on:** Nothing. This is the next major feature after v0.3.0.
+
+## HarnessBox as Server Client (base_url pattern)
+
+**What:** Add `base_url` param to `HarnessBox` so the SDK can act as a client to a running HarnessBox server (like LiteLLM's proxy pattern). When `base_url` is set, all methods (`create_session`, `send_message`, etc.) make HTTP calls to the server instead of orchestrating locally.
+
+**Why:** Enables parity between SDK-only and web-app usage. Teams deploy the server once, developers interact via SDK or web UI interchangeably.
+
+**API sketch:**
+```python
+# Local mode (default): HarnessBox orchestrates directly
+hb = HarnessBox(provider="e2b", secrets={...})
+
+# Client mode: HarnessBox proxies through a server
+hb = HarnessBox(base_url="http://hbox.internal:8080", api_key="hb_live_...")
+# Same methods, same types — different transport
+```
+
+**Implementation:**
+- Add `base_url: str | None = None` to `HarnessBox.__init__`
+- When set, all lifecycle methods use httpx to call server endpoints
+- SSE streaming via httpx async streaming for `send_message()`
+- Server validates `api_key` on each request
+
+**Depends on:** Workspace Modes (v0.4.0) must ship first so the server and SDK have the same API shape.
 
 ## Subagent Visibility — Parallel Execution UI
 
