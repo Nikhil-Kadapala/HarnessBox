@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Coroutine, Literal, overload
 
-from harnessbox.providers import CommandResult
+from harnessbox.providers import CommandResult, SandboxProvider
 from harnessbox.sandbox import InteractiveSession, Sandbox
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import UniversalEvent
@@ -60,7 +60,7 @@ class HarnessBox:
     def __init__(
         self,
         *,
-        provider: str = "e2b",
+        provider: SandboxProvider | str = "e2b",
         harness: str = "claude-code",
         api_key: str | None = None,
         secrets: dict[str, Any] | HarnessBoxSecrets | None = None,
@@ -80,7 +80,8 @@ class HarnessBox:
         """Create a HarnessBox instance.
 
         Args:
-            provider: Sandbox provider name (``"e2b"``, ``"daytona"``).
+            provider: Sandbox provider — a name (``"e2b"``, ``"daytona"``)
+                or a ``SandboxProvider`` instance.
             harness: Agent harness type (``"claude-code"``, ``"codex"``).
             api_key: HarnessBox platform API key. Required for paid
                 features. Use ``"hb_self_hosted"`` for self-hosted mode.
@@ -100,7 +101,7 @@ class HarnessBox:
             template: Override the provider sandbox template.
             cwd: Working directory for agent commands.
         """
-        self._provider_name = provider
+        self._provider = provider
         self._harness = harness
         self._api_key = api_key
         self._model = model
@@ -155,11 +156,17 @@ class HarnessBox:
     async def create(self) -> str:
         """Provision the sandbox and inject all configuration.
 
+        Permission prompts are disabled (``skip_permissions=True``) because
+        HarnessBox targets headless/programmatic use where sandboxes are
+        isolated. For interactive sessions requiring permission prompts, use
+        the lower-level ``Sandbox`` class directly.
+
         Returns:
             The provider sandbox ID.
 
         Raises:
-            RuntimeError: If create() has already been called.
+            RuntimeError: If create() has already been called or if the
+                provider fails to assign a sandbox ID.
         """
         if self._sandbox is not None:
             raise RuntimeError("HarnessBox already created. Call kill() before re-creating.")
@@ -170,7 +177,7 @@ class HarnessBox:
             merged_env.update(self._secrets.harness_secrets)
 
         self._sandbox = Sandbox(
-            client=self._provider_name,
+            client=self._provider,
             api_key=self._secrets.provider_api_key,
             harness=self._harness,
             model=self._model,
@@ -189,8 +196,11 @@ class HarnessBox:
         )
 
         await self._sandbox.setup()
-        _log.info("HarnessBox created: %s", self._sandbox.sandbox_id)
-        return self._sandbox.sandbox_id or ""
+        sandbox_id = self._sandbox.sandbox_id
+        if not sandbox_id:
+            raise RuntimeError("Sandbox setup completed but no sandbox_id was assigned by provider.")
+        _log.info("HarnessBox created: %s", sandbox_id)
+        return sandbox_id
 
     def _require_sandbox(self) -> Sandbox:
         if self._sandbox is None:

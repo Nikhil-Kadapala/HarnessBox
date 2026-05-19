@@ -63,7 +63,7 @@ pip install "harnessbox[e2b]"
 
 ```python
 import os
-from harnessbox import HarnessBox
+from harnessbox import HarnessBox, GitWorkspace
 
 hb = HarnessBox(
     provider="e2b",

@@ -3,13 +3,12 @@
 import pytest
 
 from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets
-from harnessbox.sandbox import Sandbox
 
 
 class TestHarnessBoxInit:
     def test_minimal_construction(self):
         hb = HarnessBox(provider="e2b")
-        assert hb._provider_name == "e2b"
+        assert hb._provider == "e2b"
         assert hb._harness == "claude-code"
         assert hb._sandbox is None
         assert hb.is_self_hosted is True
@@ -55,36 +54,29 @@ class TestHarnessBoxInit:
         hb = HarnessBox(provider="e2b")
         assert hb.sandbox_id is None
 
+    def test_accepts_provider_instance(self, mock_provider):
+        hb = HarnessBox(provider=mock_provider)
+        assert hb._provider is mock_provider
+
 
 class TestHarnessBoxLifecycle:
     async def test_create_provisions_sandbox(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
-        await hb._sandbox.setup()
+        hb = HarnessBox(provider=mock_provider)
+        sandbox_id = await hb.create()
+        assert sandbox_id == "mock-sandbox-123"
         assert hb.sandbox_id == "mock-sandbox-123"
+        assert hb._sandbox is not None
 
     async def test_create_merges_harness_secrets_into_env(self, mock_provider):
         hb = HarnessBox(
-            provider="e2b",
+            provider=mock_provider,
             env_vars={"EXISTING": "yes"},
             secrets={
                 "provider_api_key": None,
                 "harness_secrets": {"ANTHROPIC_API_KEY": "sk-test"},
             },
         )
-        # Simulate what create() does internally: merge secrets into env_vars
-        merged_env = dict(hb._env_vars)
-        if hb._secrets.harness_secrets:
-            merged_env.update(hb._secrets.harness_secrets)
-
-        hb._sandbox = Sandbox(
-            client=mock_provider,
-            env_vars=merged_env,
-            skip_permissions=True,
-        )
-        await hb._sandbox.setup()
-
-        # MockProvider stores env_vars passed to provider.create()
+        await hb.create()
         assert mock_provider._env_vars.get("EXISTING") == "yes"
         assert mock_provider._env_vars.get("ANTHROPIC_API_KEY") == "sk-test"
 
@@ -94,15 +86,14 @@ class TestHarnessBoxLifecycle:
             hb._require_sandbox()
 
     async def test_double_create_raises(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
+        hb = HarnessBox(provider=mock_provider)
+        await hb.create()
         with pytest.raises(RuntimeError, match="already created"):
             await hb.create()
 
     async def test_kill_clears_sandbox(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
-        await hb._sandbox.setup()
+        hb = HarnessBox(provider=mock_provider)
+        await hb.create()
         await hb.kill()
         assert hb._sandbox is None
         assert hb.sandbox_id is None
@@ -112,28 +103,22 @@ class TestHarnessBoxLifecycle:
         await hb.kill()
 
     async def test_run_command_delegates(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
-        await hb._sandbox.setup()
-
+        hb = HarnessBox(provider=mock_provider)
+        await hb.create()
         result = await hb.run_command("echo hello")
         assert result.exit_code == 0
         assert "echo hello" in mock_provider._commands
 
     async def test_write_and_read_file(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
-        await hb._sandbox.setup()
-
+        hb = HarnessBox(provider=mock_provider)
+        await hb.create()
         await hb.write_file("/workspace/test.txt", "content")
         content = await hb.read_file("/workspace/test.txt")
         assert content == "content"
 
     async def test_write_files_delegates(self, mock_provider):
-        hb = HarnessBox(provider="e2b")
-        hb._sandbox = Sandbox(client=mock_provider, skip_permissions=True)
-        await hb._sandbox.setup()
-
+        hb = HarnessBox(provider=mock_provider)
+        await hb.create()
         await hb.write_files({"/workspace/a.txt": "aaa", "/workspace/b.txt": "bbb"})
         assert mock_provider._files["/workspace/a.txt"] == "aaa"
         assert mock_provider._files["/workspace/b.txt"] == "bbb"
@@ -143,3 +128,8 @@ class TestHarnessBoxLifecycle:
         with pytest.raises(RuntimeError, match="not created"):
             async for _ in hb.send_message("hello"):
                 pass
+
+    async def test_context_manager(self, mock_provider):
+        async with HarnessBox(provider=mock_provider) as hb:
+            assert hb.sandbox_id == "mock-sandbox-123"
+        assert hb._sandbox is None
