@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0.0] - 2026-05-14
+## [0.3.0] - 2026-05-19
+
+### Added
+- **`HarnessBox` class** — sole public SDK entry point, wraps `Sandbox` via composition
+- **`HarnessBoxSecrets` dataclass** — separates `provider_api_key` from `harness_secrets`
+- **Platform API key** support (`api_key` param, `None` or `"hb_self_hosted"` = self-hosted mode)
+- **Context manager** support (`async with HarnessBox(...) as hb`)
+- **`CONTEXT.md`** — domain glossary defining Sandbox, Workspace, Session hierarchy
+- **Provider instance** param — `HarnessBox(provider=my_provider)` for direct testing
+
+### Changed
+- **README rewritten** — `HarnessBox` is the sole documented API; `WorkspaceManager`, `Sandbox`, `AgentManager` hidden from user-facing docs
+- **`CLAUDE.md`** architecture section updated to document HarnessBox as public layer above Sandbox
+- `kill()` uses `try/finally` so internal state is always cleared even if provider teardown raises
+- `create()` raises `RuntimeError` if provider returns no `sandbox_id` post-setup
+
+### Fixed
+- Upgraded `idna` 3.14 → 3.15 (CVE-2026-45409)
+
+## [0.3.0-alpha] - 2026-05-14
 
 ### Added
 - **Streaming architecture** with full event coverage: `UniversalEvent` schema, `StreamParser` for Claude Code's NDJSON output, typed `CONTEXT_UPDATE`, `COST_UPDATE`, and `USER_PROMPT` events
@@ -86,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git credential deny rules (.git/config, .git-credentials, git config credential.*)
 - 214 tests
 
-[0.3.0.0]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.2.0...v0.3.0.0
+[0.3.0]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.1.1...v0.3.0
+[0.3.0-alpha]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Nikhil-Kadapala/HarnessBox/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Nikhil-Kadapala/HarnessBox/releases/tag/v0.1.0
