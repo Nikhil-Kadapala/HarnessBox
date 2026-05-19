@@ -7,15 +7,31 @@
 
 Workspace orchestration, sandbox security, and agent lifecycle management for AI coding agents.
 
-HarnessBox gives you a `WorkspaceManager` that pools long-lived workspaces across cloud providers (E2B, Docker, Daytona, EC2), auto-pauses idle sandboxes to save costs (87% reduction), manages multiple concurrent agent conversations per workspace, and handles git-based workflows with automatic commit/push.
+```python
+import os
+from harnessbox import HarnessBox
+
+async with HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    secrets={
+        "provider_api_key": os.getenv("E2B_API_KEY"),
+        "harness_secrets": {"ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")},
+    },
+) as hb:
+    async for event in hb.send_message("Fix the failing test"):
+        print(event.delta or "", end="")
+```
+
+`HarnessBox` is the primary SDK entry point — provision a sandbox, inject credentials, and run an agent in three lines. Under the hood it wraps `Sandbox` (low-level orchestration) and composes cleanly with `WorkspaceManager` (pooling, auto-pause, multi-agent).
+
+For multi-workspace orchestration with auto-pause and branch-based pooling:
 
 ```python
 from harnessbox import WorkspaceManager, WorkspaceConfig, GitWorkspace
 
-# Create workspace manager with auto-pause
 mgr = await WorkspaceManager.create(auto_pause=True, pause_timeout=1800)
 
-# Get or create workspace (reuses paused workspace for same repo+branch)
 config = WorkspaceConfig(
     provider="e2b",
     api_key="your-e2b-key",
@@ -33,12 +49,8 @@ workspace = await mgr.get_or_create_workspace(
     config=config,
 )
 
-# Run prompts (auto-resumes if paused, spawns agents lazily)
 async for event in mgr.prompt(workspace.workspace_id, "Fix the failing tests"):
     print(event.delta)
-
-# Workspace auto-pauses after 30min idle → $0/hr
-# Next prompt auto-resumes → transparent to caller
 ```
 
 Zero runtime dependencies. Stdlib only. Provider SDKs are optional extras.
@@ -50,16 +62,16 @@ pip install "harnessbox[e2b]"
 ```
 
 ```python
-from harnessbox import WorkspaceManager, WorkspaceConfig, GitWorkspace
+import os
+from harnessbox import HarnessBox
 
-# Create manager
-mgr = await WorkspaceManager.create(auto_pause=True)
-
-# Create workspace
-config = WorkspaceConfig(
+hb = HarnessBox(
     provider="e2b",
-    api_key="your-e2b-key",
     harness="claude-code",
+    secrets={
+        "provider_api_key": os.getenv("E2B_API_KEY"),
+        "harness_secrets": {"ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")},
+    },
     workspace=GitWorkspace(
         remote="https://github.com/user/repo.git",
         branch="main",
@@ -67,14 +79,10 @@ config = WorkspaceConfig(
     ),
 )
 
-workspace = await mgr.create_workspace(config)
-
-# Run prompt
-async for event in mgr.prompt(workspace.workspace_id, "Fix the tests"):
-    print(event.delta)
-
-# Workspace auto-pauses after 30min idle
-# Costs $0/hr while paused, resumes transparently on next prompt
+sandbox_id = await hb.create()
+async for event in hb.send_message("Fix the tests"):
+    print(event.delta or "", end="")
+await hb.kill()
 ```
 
 ## Install
@@ -413,6 +421,43 @@ policy = SecurityPolicy(
 
 ## API Reference
 
+### HarnessBox (Primary SDK Entry Point)
+
+```python
+from harnessbox import HarnessBox, HarnessBoxSecrets
+
+hb = HarnessBox(
+    provider="e2b",                    # Sandbox provider
+    harness="claude-code",             # Agent harness type
+    api_key="hb_live_...",             # Platform key (None = self-hosted)
+    secrets=HarnessBoxSecrets(         # Or pass as dict
+        provider_api_key="e2b_...",
+        harness_secrets={"ANTHROPIC_API_KEY": "sk-ant-..."},
+    ),
+    model="claude-sonnet-4-6-20250514",  # Override default model
+    system_prompt="CLAUDE.md",         # str content or Path
+    workspace=GitWorkspace(...),       # Git workspace to clone
+    security_policy=SecurityPolicy(...),
+    setup_script="npm install",
+    timeout=300,
+)
+
+# Lifecycle
+sandbox_id = await hb.create()         # Provision sandbox
+async for event in hb.send_message("Fix tests"):  # Stream events
+    print(event.delta)
+response = await hb.send_message("Fix tests", stream=False)  # Await response
+result = await hb.run_command("pytest")  # Run shell command
+await hb.write_file("/workspace/f.py", "content")
+content = await hb.read_file("/workspace/f.py")
+await hb.kill()                        # Destroy sandbox
+
+# Context manager (auto create + kill)
+async with HarnessBox(provider="e2b") as hb:
+    async for event in hb.send_message("Hello"):
+        print(event.delta)
+```
+
 ### WorkspaceManager
 
 ```python
@@ -621,9 +666,10 @@ class StorageBackend(Protocol):
 ```
 harnessbox/
   __init__.py                   # public API
+  harnessbox.py                 # HarnessBox — primary SDK entry point
   workspace_manager.py          # WorkspaceManager, WorkspaceInstance, WorkspaceConfig
   agent_manager.py              # AgentManager (lazy agent spawning)
-  sandbox.py                    # Sandbox class (low-level API)
+  sandbox.py                    # Sandbox class (internal orchestration)
   workspace.py                  # Workspace protocol, GitWorkspace
   providers.py                  # SandboxProvider protocol
   lifecycle.py                  # WorkspaceState machine
@@ -644,7 +690,7 @@ harnessbox/
   _storage/
     sqlite.py                   # SQLite backend
     memory.py                   # In-memory backend
-tests/                          # 499 tests
+tests/                          # 649 tests
 ```
 
 ## License

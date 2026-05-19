@@ -2,27 +2,21 @@
 
 Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
 
-## Rename Sandbox -> HarnessBox + setup() -> create()
+## ~~Rename Sandbox -> HarnessBox~~ ✅ DONE (v0.3.0)
 
-**What:** Rename the `Sandbox` class to `HarnessBox` and its `setup()` method to `create()`. The target public API:
+**Decision:** Added `HarnessBox` as a public wrapper class via composition instead of a mechanical rename. `Sandbox` stays as the internal orchestration layer used by `WorkspaceManager` and `server.py`.
 
-```python
-from harnessbox import HarnessBox
+**What shipped:**
+- `HarnessBox` class in `harnessbox.py` — wraps `Sandbox` via composition
+- `HarnessBoxSecrets` dataclass — separates `provider_api_key` from `harness_secrets`
+- `api_key` field for platform auth (future cloud service, `None` = self-hosted)
+- Context manager support (`async with HarnessBox(...) as hb`)
+- 18 tests covering init, lifecycle, delegation, and error paths
 
-hb = HarnessBox(provider="e2b", harness="claude-code", provider_api_key="...", setup_script="./setup.sh", secrets="./secrets.json")
-hb_id = hb.create()
-```
-
-**Why:** `HarnessBox` is the product name and maps directly to what users are creating. `create()` is what they mentally do -- provision a sandbox, inject config, run setup. The current `Sandbox.setup()` naming is an internal implementation detail that leaked into the API.
-
-**Scope:**
-- Rename class `Sandbox` -> `HarnessBox` across all modules (sandbox.py, server.py, session.py, workspace_manager.py, __init__.py, all tests)
-- Rename method `setup()` -> `create()`, return `sandbox_id`
-- Add `secrets` parameter (path to secrets.json with standardized format)
-- Keep `Sandbox` as a deprecated alias for one release cycle
-- Update all docstrings, README, CLAUDE.md references
-
-**Depends on:** Issue #3 pipeline refactor (completed, PR #10). Do this as the immediate follow-up PR.
+**Secrets architecture (future work):**
+- Credential probing for self-hosted: server layer detects available credentials at startup
+- Agent vault for enterprise: encrypted store with sealed token injection (see "Secret Management" TODO below)
+- Current state: `harness_secrets` dict merged into env vars for sandbox injection
 
 ## Subagent Visibility — Parallel Execution UI
 

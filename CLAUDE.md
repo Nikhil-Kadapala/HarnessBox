@@ -124,8 +124,15 @@ Before marking any task done, confirm:
 
 ### Core Flow
 
-`Sandbox` is the main orchestrator. A typical lifecycle:
+`HarnessBox` is the public SDK entry point. `Sandbox` is the internal orchestrator.
 
+**Public API (for SDK users):**
+1. **Construct** — `HarnessBox(provider="e2b", harness="claude-code", secrets=..., workspace=...)`
+2. **Create** — `await hb.create()` provisions sandbox, injects config, clones workspace, runs setup
+3. **Execute** — `async for event in hb.send_message(prompt)` or `await hb.run_command(cmd)`
+4. **Kill** — `await hb.kill()` destroys sandbox
+
+**Internal orchestration (Sandbox, used by WorkspaceManager and server):**
 1. **Construct** — `Sandbox(client="e2b", harness="claude-code", security_policy=..., workspace=...)`
 2. **Setup** — `await sandbox.setup()` creates the sandbox, builds a manifest of files/dirs/env vars, injects them, clones the git workspace, runs the setup script
 3. **Execute** — `await sandbox.run_prompt(prompt)` streams agent output (text or typed events), or `await sandbox.start_interactive_session()` for PTY
@@ -137,7 +144,8 @@ All SDK source lives under `sdk/src/harnessbox/`.
 
 | Module | Role |
 |--------|------|
-| `sandbox.py` | Core orchestration — lifecycle, provider delegation, file I/O, agent execution |
+| `harnessbox.py` | Public API — `HarnessBox` wrapper, `HarnessBoxSecrets`, credential separation |
+| `sandbox.py` | Internal orchestration — lifecycle, provider delegation, file I/O, agent execution |
 | `streaming.py` | `UniversalEvent` schema + `StreamParser` — stateful NDJSON parser for Claude Code's `--output-format stream-json`, maps to UI events (text, thinking, tool calls, results) |
 | `events.py` | `EventBuffer` — per-session ring buffer (1024) with async broadcast for SSE replay on reconnection |
 | `session.py` | `SessionManager` + `SessionConfig` — multi-session registry with per-session locking |
