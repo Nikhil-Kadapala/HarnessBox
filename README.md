@@ -62,57 +62,86 @@ await hb.kill()
 
 ## How It Works
 
+HarnessBox is a Python library. You import it, create sessions, and stream agent output. That's the whole product.
+
+```python
+from harnessbox import HarnessBox
+
+hb = HarnessBox(provider="e2b", harness="claude-code", secrets={...})
+session = await hb.create_session(branch="feat/auth")
+
+async for event in hb.send_message(session.id, "Fix the failing test"):
+    print(event.delta or "", end="")
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      YOUR APPLICATION                          │
-│                                                                │
-│   from harnessbox import HarnessBox                           │
-│   hb = HarnessBox(provider="e2b", harness="claude-code")     │
-└───────────────────────────┬────────────────────────────────────┘
-                            │
-               ┌────────────▼────────────┐
-               │       HarnessBox        │
-               │                         │
-               │  • Workspace lifecycle  │
-               │  • Auto-pause/resume    │
-               │  • Multi-session        │
-               │  • Security policies    │
-               └────────────┬────────────┘
-                            │
-              ┌─────────────┼─────────────┐
-              ▼             ▼             ▼
-      ┌───────────┐  ┌─────────────┐  ┌─────────────┐
-      │ Session 1 │  │ Session 2   │  │ Session N   │
-      │ (branch)  │  │ (branch)    │  │ (branch)    │
-      │ Agent     │  │ Agent       │  │ Agent       │
-      └─────┬─────┘  └──────┬──────┘  └──────┬──────┘
-            │               │                 │
-      ┌─────▼───────────────▼─────────────────▼──────┐
-      │         E2B / Docker / Daytona / EC2         │
-      └──────────────────────────────────────────────┘
+
+Everything else is a deployment choice:
+
 ```
+┌────────────────────────────────────────────────────────────┐
+│              HarnessBox (Python SDK)                         │
+│                                                             │
+│  • Create workspaces and sessions                          │
+│  • Stream agent output as async events                     │
+│  • Auto-pause idle sandboxes, resume on next message       │
+│  • Persist state across restarts (SQLite)                  │
+│  • Security policies, credential guards                    │
+└─────────────────────┬───────────────────┬──────────────────┘
+                      │                   │
+        "I'm a script │                   │ "I need a web UI
+        or service"   │                   │  or team access"
+                      ▼                   ▼
+           ┌─────────────────┐  ┌────────────────────────────┐
+           │  Use the SDK    │  │  Run `harnessbox serve`    │
+           │  directly       │  │  (same SDK + HTTP/SSE)     │
+           │                 │  │                            │
+           │  No server.     │  │  Adds: multi-client,      │
+           │  No infra.      │  │  web dashboard, shared    │
+           │  Just Python.   │  │  state across consumers.  │
+           └─────────────────┘  └────────────────────────────┘
+```
+
+Think of it like SQLite vs Postgres. SQLite is embedded — no server, works great for one process. Postgres adds a server for shared access. Same SQL, same data model, different deployment. HarnessBox works the same way.
+
+**When you don't need the server:**
+- Scripts and CI pipelines
+- Single-developer tools
+- Programmatic agents (backend services)
+- Anything where one Python process is enough
+
+**When you add the server:**
+- You're building a web UI for your team
+- Multiple clients (web + CLI + SDK) need to see the same workspaces
+- You want an always-on orchestrator that survives process restarts
+- You're running our hosted platform (`base_url="https://api.harnessbox.dev"`)
 
 ## Server
 
-For web applications, deploy the HarnessBox server. Same SDK, exposed over HTTP/SSE:
+The server is the SDK running as a long-lived process that accepts HTTP connections. Same features, accessible over the network.
 
 ```bash
-# Run with Docker
-docker run -p 8080:8080 harnessbox/server
-
-# Or directly
+# Self-hosted
 pip install "harnessbox[server]"
 harnessbox serve --port 8080
+
+# Or with Docker
+docker run -p 8080:8080 harnessbox/server
 ```
 
-The server provides:
+Point the SDK at your server:
+
+```python
+# SDK becomes a thin client — all orchestration happens server-side
+hb = HarnessBox(base_url="http://localhost:8080", secrets={...})
+session = await hb.create_session(branch="feat/auth")
+# Same API, same streaming, same everything
+```
+
+Server endpoints:
 - `POST /v1/workspaces` — create workspace
 - `GET /v1/workspaces` — list workspaces
 - `DELETE /v1/workspaces/{id}` — destroy workspace
 - `POST /v1/workspaces/{id}/prompt` — send prompt (SSE stream)
 - `GET /v1/workspaces/{id}/events` — subscribe to live events (SSE)
-
-Both SDK and server use the same `HarnessBox` orchestration. Users get identical features regardless of interface.
 
 ## Security
 
