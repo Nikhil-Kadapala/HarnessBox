@@ -23,6 +23,7 @@ from harnessbox.credentials import (
     detect_credentials,
 )
 from harnessbox.events import EventBuffer
+from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets
 from harnessbox.lifecycle import (
     VALID_TRANSITIONS,
     InvalidTransitionError,
@@ -107,7 +108,10 @@ __all__ = [
     "build_gcloud_env_vars",
     "detect_claude_auth_mode",
     "detect_credentials",
-    # Sandbox
+    # HarnessBox (public API)
+    "HarnessBox",
+    "HarnessBoxSecrets",
+    # Sandbox (internal orchestration)
     "AgentResponse",
     "CommandResult",
     "HarnessTypeConfig",
