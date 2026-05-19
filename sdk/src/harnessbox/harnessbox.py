@@ -198,7 +198,9 @@ class HarnessBox:
         await self._sandbox.setup()
         sandbox_id = self._sandbox.sandbox_id
         if not sandbox_id:
-            raise RuntimeError("Sandbox setup completed but no sandbox_id was assigned by provider.")
+            raise RuntimeError(
+                "Sandbox setup completed but no sandbox_id was assigned by provider."
+            )
         _log.info("HarnessBox created: %s", sandbox_id)
         return sandbox_id
 
