@@ -394,12 +394,12 @@ class TestWorkspacePooling:
         instance.resume.assert_called_once_with("storage-sandbox")
 
 
-class TestReviveWorkspace:
-    """Test auto-revive of storage-loaded view-only workspaces."""
+class TestConnectSandbox:
+    """Test lazy sandbox reconnection for storage-loaded workspaces."""
 
     @pytest.mark.asyncio
-    async def test_revive_reconnects_via_provider_sandbox_id(self):
-        """Should resume sandbox using stored provider_sandbox_id."""
+    async def test_connect_via_provider_sandbox_id(self):
+        """Should reconnect sandbox using stored provider_sandbox_id."""
         from harnessbox._storage.memory import MemoryBackend
         from harnessbox.workspace_manager import WorkspaceInstance
 
@@ -424,7 +424,7 @@ class TestReviveWorkspace:
             }
         )
 
-        # Simulate a view-only workspace (loaded from storage, no live sandbox)
+        # Simulate a disconnected workspace (loaded from storage)
         info = WorkspaceInstance(
             workspace_id="w-revive",
             remote="https://github.com/user/repo.git",
@@ -450,7 +450,7 @@ class TestReviveWorkspace:
             mock_sandbox._provider = MockProvider()
             mock_sandbox._provider._sandbox_id = "live-sandbox-42"
 
-            await mgr._revive_workspace("w-revive")
+            await mgr._connect_sandbox("w-revive")
 
         assert info.sandbox is not None
         assert info.agent_manager is not None
@@ -458,7 +458,7 @@ class TestReviveWorkspace:
         mock_sandbox.resume.assert_called_once_with("live-sandbox-42")
 
     @pytest.mark.asyncio
-    async def test_revive_falls_back_to_snapshot_when_sandbox_expired(self):
+    async def test_connect_falls_back_to_snapshot_when_sandbox_expired(self):
         """Should recover from snapshot when provider_sandbox_id is stale."""
         from harnessbox._storage.memory import MemoryBackend
         from harnessbox.providers import SandboxDeadError
@@ -514,7 +514,7 @@ class TestReviveWorkspace:
             mock_provider._sandbox_id = "new-sandbox-99"
             mock_sandbox._provider = mock_provider
 
-            await mgr._revive_workspace("w-expired")
+            await mgr._connect_sandbox("w-expired")
 
         assert info.status == WorkspaceState.ACTIVE.value
         assert info.sandbox is not None
@@ -525,7 +525,7 @@ class TestReviveWorkspace:
         )
 
     @pytest.mark.asyncio
-    async def test_revive_raises_when_no_sandbox_id_or_snapshot(self):
+    async def test_connect_raises_when_no_sandbox_id_or_snapshot(self):
         """Should raise ValueError when workspace has no way to reconnect."""
         from harnessbox._storage.memory import MemoryBackend
         from harnessbox.workspace_manager import WorkspaceInstance
@@ -572,10 +572,10 @@ class TestReviveWorkspace:
                 patch("harnessbox.workspace_manager.Sandbox"),
                 patch("harnessbox.workspace_manager.AgentManager"),
             ):
-                await mgr._revive_workspace("w-dead")
+                await mgr._connect_sandbox("w-dead")
 
     @pytest.mark.asyncio
-    async def test_revive_raises_without_storage(self):
+    async def test_connect_raises_without_storage(self):
         """Should raise ValueError when no storage backend is available."""
         from harnessbox.workspace_manager import WorkspaceInstance
 
@@ -599,11 +599,11 @@ class TestReviveWorkspace:
         mgr._workspaces["w-orphan"] = info
 
         with pytest.raises(ValueError, match="no storage backend"):
-            await mgr._revive_workspace("w-orphan")
+            await mgr._connect_sandbox("w-orphan")
 
     @pytest.mark.asyncio
-    async def test_prompt_auto_revives_view_only_workspace(self):
-        """prompt() should auto-revive instead of raising ValueError."""
+    async def test_prompt_connects_sandbox_lazily(self):
+        """prompt() should connect sandbox on demand for storage-loaded workspaces."""
         from harnessbox._storage.memory import MemoryBackend
         from harnessbox.workspace_manager import WorkspaceInstance
 
@@ -661,7 +661,7 @@ class TestReviveWorkspace:
             # After revive, prompt() should proceed without error.
             # We just need to verify that revive was called (sandbox gets assigned).
             # The actual prompt streaming is tested elsewhere.
-            await mgr._revive_workspace("w-prompt")
+            await mgr._connect_sandbox("w-prompt")
 
         assert info.sandbox is not None
         assert info.agent_manager is not None

@@ -98,11 +98,11 @@ class WorkspaceConfig:
 
 @dataclass
 class WorkspaceInstance:
-    """Live workspace record.
+    """Workspace record — in-memory state + persistent metadata.
 
-    Contains both in-memory state (sandbox reference, agent manager) and
-    persistent metadata (status, branch, cost). Use ``to_record()`` to
-    serialize for storage.
+    The sandbox and agent_manager fields may be None when the workspace is
+    loaded from storage (disconnected). They are connected lazily on first
+    prompt via WorkspaceManager._ensure_sandbox().
     """
 
     workspace_id: str
@@ -350,14 +350,14 @@ class WorkspaceManager:
         return list(self._workspaces.values())
 
     async def load_workspaces(self, limit: int = 100) -> None:
-        """Load recent workspaces from storage into memory (view-only).
+        """Load recent workspaces from storage into memory.
 
         Args:
             limit: Maximum number of workspaces to load (default: 100).
 
         Note:
-            Loaded workspaces have sandbox=None (view-only). They appear in
-            list_workspaces() but cannot receive new prompts until resumed.
+            Loaded workspaces start with sandbox=None (disconnected). The sandbox
+            connection is established lazily on first prompt via _ensure_sandbox().
         """
         if not self._storage:
             return
@@ -376,7 +376,6 @@ class WorkspaceManager:
                     logger.warning(f"Malformed config_json for workspace {wid}, skipping")
                     continue
 
-                # Create view-only WorkspaceInstance
                 info = WorkspaceInstance(
                     workspace_id=wid,
                     remote=record.get("remote", ""),
@@ -388,7 +387,7 @@ class WorkspaceManager:
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
                     harness=record["harness"],
-                    sandbox=None,  # No live sandbox
+                    sandbox=None,
                     agent_manager=None,
                     workspace_name=record.get("workspace_name"),
                     base_branch=record.get("base_branch"),
@@ -398,7 +397,6 @@ class WorkspaceManager:
                     total_cost_usd=record.get("total_cost_usd", 0.0),
                 )
                 self._workspaces[wid] = info
-                # No lock for view-only workspaces
 
             logger.info(f"Loaded {len(records)} workspaces from storage")
         except Exception as e:
@@ -412,7 +410,12 @@ class WorkspaceManager:
         conversation_id: str | None = None,
         attachments: list[Attachment] | None = None,
     ) -> AsyncGenerator[UniversalEvent, None]:
-        """Send prompt to workspace (auto-resumes if paused).
+        """Send prompt to workspace.
+
+        Ensures the sandbox is connected before forwarding. If the sandbox
+        connection is cold (loaded from storage) or paused, it is reconnected
+        lazily. No pre-flight status checks on every request — errors from
+        the provider trigger reconnection.
 
         Args:
             workspace_id: Target workspace
@@ -424,17 +427,8 @@ class WorkspaceManager:
 
         info = self.get_workspace(workspace_id)
 
-        # Auto-revive storage-loaded workspaces on first prompt
-        if info.sandbox is None:
-            await self._revive_workspace(workspace_id)
-
-        # Auto-resume if paused
-        if info.status == WorkspaceState.PAUSED.value:
-            await self._resume_workspace(workspace_id)
-
-        # Route to agent manager
-        if not info.agent_manager:
-            raise ValueError(f"Workspace {workspace_id} has no agent manager")
+        # Ensure sandbox is connected (lazy init for cold/paused workspaces)
+        await self._ensure_sandbox(workspace_id)
 
         # Generate conversation_id if not provided
         if conversation_id is None:
@@ -744,15 +738,28 @@ class WorkspaceManager:
 
         return None
 
-    async def _revive_workspace(self, workspace_id: str) -> None:
-        """Revive a storage-loaded view-only workspace into a live session.
+    async def _ensure_sandbox(self, workspace_id: str) -> None:
+        """Ensure workspace has a live sandbox connection.
 
-        Reconstructs Sandbox + AgentManager from the stored config_json, then
-        attempts to reconnect to the existing provider sandbox. Falls back to
-        snapshot recovery if the original sandbox expired.
+        Handles all cold-start cases without pre-flight status checks:
+        - sandbox=None (loaded from storage) → reconnect from stored config
+        - status=paused (sandbox object exists but is paused) → resume
 
-        After this method returns, the workspace has a live sandbox and
-        agent_manager assigned, with status set to ACTIVE.
+        If the workspace is already active with a live sandbox, this is a no-op.
+        """
+        info = self.get_workspace(workspace_id)
+
+        if info.sandbox is None:
+            await self._connect_sandbox(workspace_id)
+        elif info.status == WorkspaceState.PAUSED.value:
+            await self._resume_workspace(workspace_id)
+
+    async def _connect_sandbox(self, workspace_id: str) -> None:
+        """Reconnect a workspace to its sandbox from stored configuration.
+
+        Constructs a fresh Sandbox + AgentManager using config_json from storage,
+        then reconnects via provider_sandbox_id. Falls back to snapshot recovery
+        if the original sandbox has expired.
         """
         info = self.get_workspace(workspace_id)
 
@@ -761,14 +768,14 @@ class WorkspaceManager:
 
         if not self._storage:
             raise ValueError(
-                f"Workspace {workspace_id} is view-only and no storage backend is "
-                "configured — cannot revive without stored configuration."
+                f"Workspace {workspace_id} has no live sandbox and no storage backend "
+                "is configured — cannot reconnect without stored configuration."
             )
 
         record = await self._storage.get_workspace(workspace_id)
         if record is None:
             raise ValueError(
-                f"Workspace {workspace_id} not found in storage — cannot revive."
+                f"Workspace {workspace_id} not found in storage — cannot reconnect."
             )
 
         config_dict = json.loads(record.get("config_json", "{}"))
@@ -789,7 +796,6 @@ class WorkspaceManager:
             session_id=workspace_id,
         )
 
-        # Ensure we have a lock for this workspace
         if workspace_id not in self._locks:
             self._locks[workspace_id] = asyncio.Lock()
 
@@ -808,7 +814,7 @@ class WorkspaceManager:
                                 "Session is unrecoverable."
                             ) from e
                         logger.warning(
-                            "Sandbox %s expired during revive, recovering from snapshot %s",
+                            "Sandbox %s expired, recovering from snapshot %s",
                             provider_sandbox_id,
                             snapshot_id,
                         )
@@ -832,7 +838,7 @@ class WorkspaceManager:
             else:
                 raise ValueError(
                     f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
-                    "Cannot revive without a way to reconnect."
+                    "Cannot reconnect without a way to reach the sandbox."
                 )
 
         agent_mgr = AgentManager(sandbox)
@@ -854,7 +860,7 @@ class WorkspaceManager:
         if self._auto_pause:
             self._start_idle_timer(workspace_id)
 
-        logger.info(f"Revived workspace {workspace_id} from storage")
+        logger.info(f"Reconnected workspace {workspace_id}")
 
     def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace to a new state with validation.
@@ -1025,7 +1031,7 @@ class WorkspaceManager:
             return
 
         if not info.sandbox:
-            await self._revive_workspace(workspace_id)
+            await self._connect_sandbox(workspace_id)
             return
 
         async with self._locks[workspace_id]:
