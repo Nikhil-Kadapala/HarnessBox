@@ -43,7 +43,6 @@ class TestEventBufferPush:
         buf = EventBuffer()
         assert buf.latest_sequence == 0
 
-
     @pytest.mark.asyncio
     async def test_push_returns_sequenced_event(self) -> None:
         buf = EventBuffer()

@@ -915,9 +915,12 @@ class WorkspaceManager:
     async def pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace: shutdown agents, snapshot, suspend sandbox, persist."""
         info = self.get_workspace(workspace_id)
-        if info.status != WorkspaceState.ACTIVE.value:
-            raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.PAUSED)
-        await self._pause_workspace(workspace_id)
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+        async with self._locks[workspace_id]:
+            if info.status != WorkspaceState.ACTIVE.value:
+                raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.PAUSED)
+            await self._pause_workspace_locked(workspace_id, info)
 
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox, restart idle timer."""
@@ -985,41 +988,48 @@ class WorkspaceManager:
                 logger.error(f"Auto-pause failed for {workspace_id}: {e}")
 
     async def _pause_workspace(self, workspace_id: str) -> None:
-        """Pause workspace and create snapshot."""
+        """Pause workspace and create snapshot (acquires lock internally)."""
         self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
         if not info.sandbox:
             return
 
         async with self._locks[workspace_id]:
-            # Stop all agents
-            if info.agent_manager:
-                await info.agent_manager.shutdown_all()
+            await self._pause_workspace_locked(workspace_id, info)
 
-            # Create snapshot (captures filesystem including ~/.claude/sessions/)
+    async def _pause_workspace_locked(self, workspace_id: str, info: WorkspaceInstance) -> None:
+        """Pause workspace internals. Caller must hold self._locks[workspace_id]."""
+        # Stop all agents (best-effort: don't let agent stop failure block pause)
+        if info.agent_manager:
             try:
-                snapshot_id = await info.sandbox.create_snapshot()
+                await info.agent_manager.shutdown_all()
             except Exception as e:
-                logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
-                snapshot_id = None
+                logger.warning(f"Agent shutdown failed for {workspace_id}: {e}")
 
-            # Pause sandbox
-            provider_sandbox_id = await info.sandbox.pause()
+        # Create snapshot (captures filesystem including ~/.claude/sessions/)
+        try:
+            snapshot_id = await info.sandbox.create_snapshot()
+        except Exception as e:
+            logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
+            snapshot_id = None
 
-            info.provider_sandbox_id = provider_sandbox_id
-            info.snapshot_id = snapshot_id
-            info.status = WorkspaceState.PAUSED.value
+        # Pause sandbox
+        provider_sandbox_id = await info.sandbox.pause()
 
-            # Persist
-            if self._storage:
-                await self._storage.update_workspace(
-                    workspace_id,
-                    provider_sandbox_id=provider_sandbox_id,
-                    snapshot_id=snapshot_id,
-                    status=WorkspaceState.PAUSED.value,
-                )
+        info.provider_sandbox_id = provider_sandbox_id
+        info.snapshot_id = snapshot_id
+        info.status = WorkspaceState.PAUSED.value
 
-            logger.info(f"Paused workspace {workspace_id}")
+        # Persist
+        if self._storage:
+            await self._storage.update_workspace(
+                workspace_id,
+                provider_sandbox_id=provider_sandbox_id,
+                snapshot_id=snapshot_id,
+                status=WorkspaceState.PAUSED.value,
+            )
+
+        logger.info(f"Paused workspace {workspace_id}")
 
     def _is_sandbox_expired(self, error: Exception) -> bool:
         """Detect if error indicates sandbox no longer exists."""
