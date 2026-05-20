@@ -510,7 +510,7 @@ class WorkspaceManager:
                     },
                 )
                 if info.sandbox._event_buffer:
-                    await info.sandbox._event_buffer.push(user_prompt_event)
+                    user_prompt_event = await info.sandbox._event_buffer.push(user_prompt_event)
                 yield user_prompt_event
 
                 # Augment prompt with file references for the agent
@@ -911,6 +911,20 @@ class WorkspaceManager:
             )
 
         return info
+
+    async def pause_workspace(self, workspace_id: str) -> None:
+        """Pause workspace: shutdown agents, snapshot, suspend sandbox, persist."""
+        info = self.get_workspace(workspace_id)
+        if info.status != WorkspaceState.ACTIVE.value:
+            raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.PAUSED)
+        await self._pause_workspace(workspace_id)
+
+    async def resume_workspace(self, workspace_id: str) -> None:
+        """Resume paused workspace: reconnect sandbox, restart idle timer."""
+        info = self.get_workspace(workspace_id)
+        if info.status != WorkspaceState.PAUSED.value:
+            raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.ACTIVE)
+        await self._resume_workspace(workspace_id)
 
     async def destroy_workspace(self, workspace_id: str) -> None:
         """Destroy a workspace and kill its sandbox.

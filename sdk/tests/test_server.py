@@ -249,11 +249,14 @@ class TestPauseSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
+            instance.create_snapshot = AsyncMock(return_value="snap-1")
             client.post("/v1/workspaces", json={"session_id": "s-1"})
 
         resp = client.post("/v1/workspaces/s-1/pause")
         assert resp.status_code == 200
         assert resp.json()["status"] == "paused"
+        instance.create_snapshot.assert_called_once()
+        instance.pause.assert_called_once()
 
     def test_pause_non_active_returns_409(
         self, client: TestClient, manager: WorkspaceManager
@@ -262,6 +265,7 @@ class TestPauseSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-1")
+            instance.create_snapshot = AsyncMock(return_value="snap-1")
             client.post("/v1/workspaces", json={"session_id": "s-1"})
 
         # Pause first
@@ -281,8 +285,8 @@ class TestResumeSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
+            instance.create_snapshot = AsyncMock(return_value="snap-1")
             instance.resume = AsyncMock()
-            instance._paused_sandbox_id = "sb-paused-1"
             client.post("/v1/workspaces", json={"session_id": "s-1"})
 
         client.post("/v1/workspaces/s-1/pause")

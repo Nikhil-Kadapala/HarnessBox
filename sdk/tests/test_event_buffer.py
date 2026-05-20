@@ -44,6 +44,24 @@ class TestEventBufferPush:
         assert buf.latest_sequence == 0
 
 
+    @pytest.mark.asyncio
+    async def test_push_returns_sequenced_event(self) -> None:
+        buf = EventBuffer()
+        original = _make_event(0)
+        returned = await buf.push(original)
+        assert returned.sequence == 1
+        assert returned.event_id == original.event_id
+        assert returned.delta == original.delta
+
+    @pytest.mark.asyncio
+    async def test_push_return_matches_ring(self) -> None:
+        buf = EventBuffer()
+        returned = await buf.push(_make_event(0))
+        ring_events = buf.replay()
+        assert ring_events[0].sequence == returned.sequence
+        assert ring_events[0] is returned
+
+
 class TestEventBufferReplay:
     @pytest.mark.asyncio
     async def test_replay_all(self) -> None:

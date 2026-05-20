@@ -774,7 +774,7 @@ class Sandbox:
                         last_turn_end = event
                         if hasattr(self._provider, "notify_turn_end"):
                             self._provider.notify_turn_end()  # type: ignore[union-attr]
-                    await self._event_buffer.push(event)
+                    event = await self._event_buffer.push(event)
                     yield event
 
                     if hasattr(self._provider, "maybe_extend_timeout"):
@@ -791,13 +791,13 @@ class Sandbox:
                         last_turn_end, session_id=sid
                     )
                     if cost_event:
-                        await self._event_buffer.push(cost_event)
+                        cost_event = await self._event_buffer.push(cost_event)
                         yield cost_event
 
                 for status_event in await self._agent_process.poll_status(
                     skip_cost=skip_cost, session_id=sid
                 ):
-                    await self._event_buffer.push(status_event)
+                    status_event = await self._event_buffer.push(status_event)
                     yield status_event
 
                 self._start_idle_timer()
@@ -807,7 +807,7 @@ class Sandbox:
                     for event in parser.parse_line(line):
                         if event.session_id:
                             self._agent_session_id = event.session_id
-                        await self._event_buffer.push(event)
+                        event = await self._event_buffer.push(event)
                         yield event
 
         except SandboxDeadError as e:
@@ -831,7 +831,7 @@ class Sandbox:
                     "recoverable": False,
                 },
             )
-            await self._event_buffer.push(error_event)
+            error_event = await self._event_buffer.push(error_event)
             yield error_event
 
             try:
