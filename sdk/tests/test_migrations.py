@@ -192,11 +192,7 @@ class TestSQLiteBackendIntegration:
         ]
         await backend.append_events("ws-prune", events)
 
-        # Force flush
-        async with backend._write_lock:
-            await backend._flush_events()
-
-        # Count events in DB
+        # Count events in DB (writes are immediate, no flush needed)
         cursor = backend._conn.execute(
             "SELECT COUNT(*) FROM events WHERE workspace_id = ?", ("ws-prune",)
         )
@@ -222,7 +218,7 @@ class TestSQLiteBackendIntegration:
                 "event_id": f"cost-{i}",
                 "sequence": i,
                 "timestamp": "2026-01-01T00:00:00Z",
-                "event_type": "cost_update",
+                "event_type": "cost.update",
                 "event_json": f'{{"cost_usd": {0.01 * i}}}',
             }
             for i in range(5)
@@ -238,8 +234,6 @@ class TestSQLiteBackendIntegration:
             }
         )
         await backend.append_events("ws-cost", events)
-        async with backend._write_lock:
-            await backend._flush_events()
 
         history = await backend.get_cost_history("ws-cost", limit=10)
         assert len(history) == 5
@@ -278,10 +272,6 @@ class TestSQLiteBackendIntegration:
 
         # Run 5 concurrent append batches
         await asyncio.gather(*[append_batch(i * 10) for i in range(5)])
-
-        # Force flush
-        async with backend._write_lock:
-            await backend._flush_events()
 
         cursor = backend._conn.execute(
             "SELECT COUNT(*) FROM events WHERE workspace_id = ?", ("ws-concurrent",)

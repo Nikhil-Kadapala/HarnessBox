@@ -147,6 +147,7 @@ class WorkspaceInstance:
                     "skip_permissions": config.skip_permissions,
                     "template": config.template,
                     "session_timeout": config.session_timeout,
+                    "env_var_keys": list(config.env_vars.keys()) if config.env_vars else [],
                 }
             )
 
@@ -738,6 +739,23 @@ class WorkspaceManager:
 
         return None
 
+    @staticmethod
+    def _resolve_env_vars(key_names: list[str]) -> dict[str, str]:
+        """Resolve environment variable values from the host by key name.
+
+        Only keys present in the host environment are included in the result.
+        Missing keys are silently skipped (the agent will surface the error
+        if a required var is absent).
+        """
+        import os
+
+        resolved: dict[str, str] = {}
+        for key in key_names:
+            val = os.environ.get(key, "").strip()
+            if val:
+                resolved[key] = val
+        return resolved
+
     async def _ensure_sandbox(self, workspace_id: str) -> None:
         """Ensure workspace has a live sandbox connection.
 
@@ -815,6 +833,11 @@ class WorkspaceManager:
             provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
             snapshot_id = info.snapshot_id or record.get("snapshot_id")
 
+            env_var_keys = config_dict.get("env_var_keys") or list(
+                config_dict.get("env_vars", {}).keys()
+            )
+            resolved_env_vars = self._resolve_env_vars(env_var_keys)
+
             if provider_sandbox_id:
                 try:
                     await sandbox.resume(provider_sandbox_id)
@@ -830,11 +853,15 @@ class WorkspaceManager:
                             provider_sandbox_id,
                             snapshot_id,
                         )
-                        await self._create_from_snapshot(sandbox, config_dict, snapshot_id)
+                        await self._create_from_snapshot(
+                            sandbox, config_dict, snapshot_id, env_vars=resolved_env_vars
+                        )
                     else:
                         raise
             elif snapshot_id:
-                await self._create_from_snapshot(sandbox, config_dict, snapshot_id)
+                await self._create_from_snapshot(
+                    sandbox, config_dict, snapshot_id, env_vars=resolved_env_vars
+                )
             else:
                 raise ValueError(
                     f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
@@ -851,7 +878,7 @@ class WorkspaceManager:
                 skip_permissions=config_dict.get("skip_permissions", False),
                 template=config_dict.get("template"),
                 session_timeout=config_dict.get("session_timeout", 1800),
-                env_vars=config_dict.get("env_vars", {}),
+                env_vars=resolved_env_vars,
             )
 
             info.sandbox = sandbox
@@ -875,13 +902,17 @@ class WorkspaceManager:
 
     @staticmethod
     async def _create_from_snapshot(
-        sandbox: Sandbox, config_dict: dict[str, Any], snapshot_id: str
+        sandbox: Sandbox,
+        config_dict: dict[str, Any],
+        snapshot_id: str,
+        *,
+        env_vars: dict[str, str] | None = None,
     ) -> None:
         """Create a sandbox from a snapshot and transition to ACTIVE state."""
-        env_vars = config_dict.get("env_vars", {})
+        resolved_vars = env_vars if env_vars is not None else config_dict.get("env_vars", {})
         timeout = config_dict.get("timeout", 300)
         await cast(Any, sandbox._provider).create(
-            env_vars=env_vars,
+            env_vars=resolved_vars,
             timeout=timeout,
             snapshot_id=snapshot_id,
         )

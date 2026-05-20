@@ -679,7 +679,7 @@ class TestConnectSandbox:
                 "status": WorkspaceState.PAUSED.value,
                 "created_at": now,
                 "last_active": now,
-                "config_json": '{"timeout": 600, "session_timeout": 3600, "env_vars": {"MY_KEY": "val"}}',
+                "config_json": '{"timeout": 600, "session_timeout": 3600, "env_var_keys": ["MY_KEY"]}',
             }
         )
 
@@ -703,6 +703,7 @@ class TestConnectSandbox:
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
             patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch.dict("os.environ", {"MY_KEY": "val"}),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
