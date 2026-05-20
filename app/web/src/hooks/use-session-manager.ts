@@ -13,8 +13,8 @@ import {
   createSession as apiCreateSession,
   destroySession as apiDestroySession,
   listSessions,
+  renameSession as apiRenameSession,
 } from "@/lib/api";
-import { renameSession as apiRenameSession } from "@/lib/sessions/client";
 import { sessionsReducer, statusFromEvent } from "@/lib/sessions/reducer";
 import { SessionConnections } from "@/lib/sessions/connections";
 import type {

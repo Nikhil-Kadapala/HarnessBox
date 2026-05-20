@@ -97,3 +97,58 @@ export interface GitHubProfile {
 export async function fetchGitHubProfile(): Promise<GitHubProfile> {
   return fetchJSON<GitHubProfile>("/v1/account/github");
 }
+
+export async function renameSession(sessionId: string, name: string): Promise<void> {
+  await fetchJSON(`/v1/workspaces/${sessionId}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function transitionSession(
+  sessionId: string,
+  targetState: string,
+): Promise<SessionResponse> {
+  return fetchJSON<SessionResponse>(
+    `/v1/workspaces/${sessionId}/transition`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_state: targetState }),
+    },
+  );
+}
+
+export async function pauseSession(sessionId: string): Promise<SessionResponse> {
+  return fetchJSON<SessionResponse>(
+    `/v1/workspaces/${sessionId}/pause`,
+    { method: "POST" },
+  );
+}
+
+export async function resumeSession(sessionId: string): Promise<SessionResponse> {
+  return fetchJSON<SessionResponse>(
+    `/v1/workspaces/${sessionId}/resume`,
+    { method: "POST" },
+  );
+}
+
+export async function stopSession(sessionId: string): Promise<void> {
+  await fetchJSON(`/v1/workspaces/${sessionId}/stop`, { method: "POST" });
+}
+
+export async function createPR(
+  sessionId: string,
+  title: string,
+  body: string = "",
+): Promise<SessionResponse> {
+  return fetchJSON<SessionResponse>(
+    `/v1/workspaces/${sessionId}/pr`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body }),
+    },
+  );
+}

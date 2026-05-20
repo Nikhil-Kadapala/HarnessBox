@@ -193,8 +193,10 @@ class EventBuffer:
                 event_records = []
                 for event in batch:
                     event_dict = asdict(event)
+                    # asdict() recursively converts nested dataclasses (ContentPart)
+                    # into dicts and tuples into lists — no further conversion needed.
                     if "content" in event_dict and event_dict["content"]:
-                        event_dict["content"] = [asdict(c) for c in event_dict["content"]]
+                        event_dict["content"] = list(event_dict["content"])
 
                     event_records.append(
                         {

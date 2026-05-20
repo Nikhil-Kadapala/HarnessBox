@@ -17,9 +17,6 @@ export function ContextTracker({ contextStats }: ContextTrackerProps) {
     [contextStats],
   );
 
-  const usedPercent = contextStats
-    ? Math.min(Math.max(contextStats.percentUsed, 0), 100)
-    : 0;
 
   const totalSegmentTokens = displayCategories.reduce(
     (sum, category) => sum + category.tokens,

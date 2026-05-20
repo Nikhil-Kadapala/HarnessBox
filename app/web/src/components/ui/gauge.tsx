@@ -56,7 +56,6 @@ export function Gauge({
   const startAngle = -135; // Start at 7 o'clock position
   const endAngle = 135; // End at 5 o'clock position
   const totalAngle = endAngle - startAngle;
-  const angle = startAngle + (clampedValue / 100) * totalAngle;
 
   const radius = 45;
   const strokeWidth = 8;

@@ -973,7 +973,7 @@ def create_app(
         if info.sandbox is None:
             raise HTTPException(
                 status_code=400,
-                detail="Session is view-only (loaded from storage). Use GET /v1/sessions/{id}/history for historical events.",
+                detail="Session has no active sandbox. Send a prompt to connect, or use GET /v1/workspaces/{id}/history for historical events.",
             )
 
         last_event_id_str = request.headers.get("last-event-id")
