@@ -424,11 +424,9 @@ class WorkspaceManager:
 
         info = self.get_workspace(workspace_id)
 
+        # Auto-revive storage-loaded workspaces on first prompt
         if info.sandbox is None:
-            raise ValueError(
-                f"Workspace {workspace_id} is view-only (no live sandbox). "
-                "Cannot send prompts to workspaces loaded from storage."
-            )
+            await self._revive_workspace(workspace_id)
 
         # Auto-resume if paused
         if info.status == WorkspaceState.PAUSED.value:
@@ -714,6 +712,114 @@ class WorkspaceManager:
             total_cost_usd=record.get("total_cost_usd", 0.0),
         )
 
+    async def _revive_workspace(self, workspace_id: str) -> None:
+        """Revive a storage-loaded view-only workspace into a live session.
+
+        Reconstructs Sandbox + AgentManager from the stored config_json, then
+        attempts to reconnect to the existing provider sandbox. Falls back to
+        snapshot recovery if the original sandbox expired.
+
+        After this method returns, the workspace has a live sandbox and
+        agent_manager assigned, with status set to ACTIVE.
+        """
+        info = self.get_workspace(workspace_id)
+
+        if info.sandbox is not None:
+            return
+
+        if not self._storage:
+            raise ValueError(
+                f"Workspace {workspace_id} is view-only and no storage backend is "
+                "configured — cannot revive without stored configuration."
+            )
+
+        record = await self._storage.get_workspace(workspace_id)
+        if record is None:
+            raise ValueError(
+                f"Workspace {workspace_id} not found in storage — cannot revive."
+            )
+
+        config_dict = json.loads(record.get("config_json", "{}"))
+
+        sandbox = Sandbox(
+            client=record["provider"],
+            harness=record["harness"],
+            model=config_dict.get("model"),
+            timeout=config_dict.get("timeout", 300),
+            skip_permissions=config_dict.get("skip_permissions", False),
+            template=config_dict.get("template"),
+            session_timeout=config_dict.get("session_timeout", 1800),
+            storage=self._storage,
+            session_id=workspace_id,
+        )
+
+        # Ensure we have a lock for this workspace
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+
+        provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
+        snapshot_id = info.snapshot_id or record.get("snapshot_id")
+
+        async with self._locks[workspace_id]:
+            if provider_sandbox_id:
+                try:
+                    await sandbox.resume(provider_sandbox_id)
+                except (TimeoutException, ConnectException, SandboxDeadError) as e:
+                    if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
+                        if not snapshot_id:
+                            raise ValueError(
+                                f"Workspace {workspace_id} sandbox expired and has no snapshot. "
+                                "Session is unrecoverable."
+                            ) from e
+                        logger.warning(
+                            "Sandbox %s expired during revive, recovering from snapshot %s",
+                            provider_sandbox_id,
+                            snapshot_id,
+                        )
+                        env_vars = config_dict.get("env_vars", {})
+                        timeout = config_dict.get("timeout", 300)
+                        await cast(Any, sandbox._provider).create(
+                            env_vars=env_vars,
+                            timeout=timeout,
+                            snapshot_id=snapshot_id,
+                        )
+                    else:
+                        raise
+            elif snapshot_id:
+                env_vars = config_dict.get("env_vars", {})
+                timeout = config_dict.get("timeout", 300)
+                await cast(Any, sandbox._provider).create(
+                    env_vars=env_vars,
+                    timeout=timeout,
+                    snapshot_id=snapshot_id,
+                )
+            else:
+                raise ValueError(
+                    f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
+                    "Cannot revive without a way to reconnect."
+                )
+
+        agent_mgr = AgentManager(sandbox)
+
+        info.sandbox = sandbox
+        info.agent_manager = agent_mgr
+        info.status = WorkspaceState.ACTIVE.value
+        info.last_active = datetime.now(timezone.utc).isoformat()
+        info.provider_sandbox_id = sandbox._provider.sandbox_id
+
+        if self._storage:
+            await self._storage.update_workspace(
+                workspace_id,
+                status=WorkspaceState.ACTIVE.value,
+                last_active=info.last_active,
+                provider_sandbox_id=info.provider_sandbox_id,
+            )
+
+        if self._auto_pause:
+            self._start_idle_timer(workspace_id)
+
+        logger.info(f"Revived workspace {workspace_id} from storage")
+
     def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace to a new state with validation.
 
@@ -883,10 +989,8 @@ class WorkspaceManager:
             return
 
         if not info.sandbox:
-            raise ValueError(
-                f"Workspace {workspace_id} is view-only (no live sandbox). "
-                "Cannot resume workspaces loaded from storage."
-            )
+            await self._revive_workspace(workspace_id)
+            return
 
         async with self._locks[workspace_id]:
             try:
