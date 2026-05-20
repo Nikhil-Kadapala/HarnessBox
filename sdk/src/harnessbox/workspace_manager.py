@@ -712,6 +712,38 @@ class WorkspaceManager:
             total_cost_usd=record.get("total_cost_usd", 0.0),
         )
 
+    @staticmethod
+    def _resolve_provider_api_key(provider: str) -> str | None:
+        """Resolve provider API key from environment or CLI config files.
+
+        Secrets are never stored in the database — they are re-resolved from the
+        host environment at revive time, matching the behavior of workspace creation.
+        """
+        import os
+
+        key_names = {
+            "e2b": ["E2B_API_KEY", "E2B_ACCESS_TOKEN"],
+        }
+
+        for key_name in key_names.get(provider, []):
+            val = os.environ.get(key_name, "").strip()
+            if val:
+                return val
+
+        if provider == "e2b":
+            try:
+                config_path = Path.home() / ".e2b" / "config.json"
+                if config_path.is_file():
+                    data = json.loads(config_path.read_text(encoding="utf-8"))
+                    for field in ("teamApiKey", "accessToken"):
+                        val = (data.get(field) or "").strip()
+                        if val:
+                            return val
+            except Exception:
+                pass
+
+        return None
+
     async def _revive_workspace(self, workspace_id: str) -> None:
         """Revive a storage-loaded view-only workspace into a live session.
 
@@ -741,8 +773,12 @@ class WorkspaceManager:
 
         config_dict = json.loads(record.get("config_json", "{}"))
 
+        # Resolve provider API key from environment (secrets are never stored in DB)
+        api_key = self._resolve_provider_api_key(record["provider"])
+
         sandbox = Sandbox(
             client=record["provider"],
+            api_key=api_key,
             harness=record["harness"],
             model=config_dict.get("model"),
             timeout=config_dict.get("timeout", 300),
