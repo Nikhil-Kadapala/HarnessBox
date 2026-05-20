@@ -332,8 +332,8 @@ def create_app(
         # Initialize storage and load sessions
         if mgr._storage:
             await mgr._storage.initialize()
-            await mgr.load_sessions()
-            logger.info("Storage initialized and sessions loaded")
+            await mgr.load_workspaces()
+            logger.info("Storage initialized and workspaces loaded")
 
         yield
 
