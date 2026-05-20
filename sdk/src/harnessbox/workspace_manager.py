@@ -309,7 +309,7 @@ class WorkspaceManager:
             remote=remote,
             branch=branch,
             provider=provider_name,
-            provider_sandbox_id=sandbox._provider.sandbox_id,
+            provider_sandbox_id=sandbox.sandbox_id,
             snapshot_id=None,
             status=WorkspaceState.ACTIVE.value,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -761,48 +761,53 @@ class WorkspaceManager:
         then reconnects via provider_sandbox_id. Falls back to snapshot recovery
         if the original sandbox has expired.
         """
-        info = self.get_workspace(workspace_id)
-
-        if info.sandbox is not None:
-            return
-
         if not self._storage:
             raise ValueError(
                 f"Workspace {workspace_id} has no live sandbox and no storage backend "
                 "is configured — cannot reconnect without stored configuration."
             )
 
-        record = await self._storage.get_workspace(workspace_id)
-        if record is None:
-            raise ValueError(
-                f"Workspace {workspace_id} not found in storage — cannot reconnect."
-            )
-
-        config_dict = json.loads(record.get("config_json", "{}"))
-
-        # Resolve provider API key from environment (secrets are never stored in DB)
-        api_key = self._resolve_provider_api_key(record["provider"])
-
-        sandbox = Sandbox(
-            client=record["provider"],
-            api_key=api_key,
-            harness=record["harness"],
-            model=config_dict.get("model"),
-            timeout=config_dict.get("timeout", 300),
-            skip_permissions=config_dict.get("skip_permissions", False),
-            template=config_dict.get("template"),
-            session_timeout=config_dict.get("session_timeout", 1800),
-            storage=self._storage,
-            session_id=workspace_id,
-        )
-
         if workspace_id not in self._locks:
             self._locks[workspace_id] = asyncio.Lock()
 
-        provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
-        snapshot_id = info.snapshot_id or record.get("snapshot_id")
-
         async with self._locks[workspace_id]:
+            info = self.get_workspace(workspace_id)
+
+            # Re-check under lock — another concurrent prompt may have connected already
+            if info.sandbox is not None:
+                return
+
+            record = await self._storage.get_workspace(workspace_id)
+            if record is None:
+                raise ValueError(
+                    f"Workspace {workspace_id} not found in storage — cannot reconnect."
+                )
+
+            try:
+                config_dict = json.loads(record.get("config_json", "{}"))
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Workspace {workspace_id} has malformed config_json in storage."
+                ) from e
+
+            api_key = self._resolve_provider_api_key(record["provider"])
+
+            sandbox = Sandbox(
+                client=record["provider"],
+                api_key=api_key,
+                harness=record["harness"],
+                model=config_dict.get("model"),
+                timeout=config_dict.get("timeout", 300),
+                skip_permissions=config_dict.get("skip_permissions", False),
+                template=config_dict.get("template"),
+                session_timeout=config_dict.get("session_timeout", 1800),
+                storage=self._storage,
+                session_id=workspace_id,
+            )
+
+            provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
+            snapshot_id = info.snapshot_id or record.get("snapshot_id")
+
             if provider_sandbox_id:
                 try:
                     await sandbox.resume(provider_sandbox_id)
@@ -810,44 +815,32 @@ class WorkspaceManager:
                     if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
                         if not snapshot_id:
                             raise ValueError(
-                                f"Workspace {workspace_id} sandbox expired and has no snapshot. "
-                                "Session is unrecoverable."
+                                f"Workspace {workspace_id} sandbox expired and has no "
+                                "snapshot. Session is unrecoverable."
                             ) from e
                         logger.warning(
                             "Sandbox %s expired, recovering from snapshot %s",
                             provider_sandbox_id,
                             snapshot_id,
                         )
-                        env_vars = config_dict.get("env_vars", {})
-                        timeout = config_dict.get("timeout", 300)
-                        await cast(Any, sandbox._provider).create(
-                            env_vars=env_vars,
-                            timeout=timeout,
-                            snapshot_id=snapshot_id,
-                        )
+                        await self._create_from_snapshot(sandbox, config_dict, snapshot_id)
                     else:
                         raise
             elif snapshot_id:
-                env_vars = config_dict.get("env_vars", {})
-                timeout = config_dict.get("timeout", 300)
-                await cast(Any, sandbox._provider).create(
-                    env_vars=env_vars,
-                    timeout=timeout,
-                    snapshot_id=snapshot_id,
-                )
+                await self._create_from_snapshot(sandbox, config_dict, snapshot_id)
             else:
                 raise ValueError(
                     f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
                     "Cannot reconnect without a way to reach the sandbox."
                 )
 
-        agent_mgr = AgentManager(sandbox)
+            agent_mgr = AgentManager(sandbox)
 
-        info.sandbox = sandbox
-        info.agent_manager = agent_mgr
-        info.status = WorkspaceState.ACTIVE.value
-        info.last_active = datetime.now(timezone.utc).isoformat()
-        info.provider_sandbox_id = sandbox._provider.sandbox_id
+            info.sandbox = sandbox
+            info.agent_manager = agent_mgr
+            info.status = WorkspaceState.ACTIVE.value
+            info.last_active = datetime.now(timezone.utc).isoformat()
+            info.provider_sandbox_id = sandbox.sandbox_id
 
         if self._storage:
             await self._storage.update_workspace(
@@ -861,6 +854,22 @@ class WorkspaceManager:
             self._start_idle_timer(workspace_id)
 
         logger.info(f"Reconnected workspace {workspace_id}")
+
+    @staticmethod
+    async def _create_from_snapshot(
+        sandbox: Sandbox, config_dict: dict[str, Any], snapshot_id: str
+    ) -> None:
+        """Create a sandbox from a snapshot and transition to ACTIVE state."""
+        env_vars = config_dict.get("env_vars", {})
+        timeout = config_dict.get("timeout", 300)
+        await cast(Any, sandbox._provider).create(
+            env_vars=env_vars,
+            timeout=timeout,
+            snapshot_id=snapshot_id,
+        )
+        # provider.create() leaves Sandbox in STARTING state — transition to ACTIVE
+        # since we're bypassing the normal setup() pipeline.
+        sandbox._state = WorkspaceState.ACTIVE
 
     def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace to a new state with validation.

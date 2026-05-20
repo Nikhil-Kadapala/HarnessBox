@@ -506,9 +506,7 @@ class TestConnectSandbox:
             patch("harnessbox.workspace_manager.AgentManager"),
         ):
             mock_sandbox = MockSandbox.return_value
-            mock_sandbox.resume = AsyncMock(
-                side_effect=SandboxDeadError("Sandbox was not found")
-            )
+            mock_sandbox.resume = AsyncMock(side_effect=SandboxDeadError("Sandbox was not found"))
             mock_provider = MockProvider()
             mock_provider.create = AsyncMock()
             mock_provider._sandbox_id = "new-sandbox-99"
@@ -603,8 +601,10 @@ class TestConnectSandbox:
 
     @pytest.mark.asyncio
     async def test_prompt_connects_sandbox_lazily(self):
-        """prompt() should connect sandbox on demand for storage-loaded workspaces."""
+        """prompt() should connect sandbox and forward message end-to-end."""
         from harnessbox._storage.memory import MemoryBackend
+        from harnessbox.streaming import EventType as StreamEventType
+        from harnessbox.streaming import UniversalEvent
         from harnessbox.workspace_manager import WorkspaceInstance
 
         storage = MemoryBackend()
@@ -624,7 +624,7 @@ class TestConnectSandbox:
                 "status": WorkspaceState.PAUSED.value,
                 "created_at": now,
                 "last_active": now,
-                "config_json": '{"timeout": 300}',
+                "config_json": '{"timeout": 300, "skip_permissions": true}',
             }
         )
 
@@ -644,25 +644,41 @@ class TestConnectSandbox:
         )
         mgr._workspaces["w-prompt"] = info
 
+        # Mock agent event stream
+        turn_end_event = UniversalEvent(
+            event_id="ev-end",
+            sequence=1,
+            timestamp=now,
+            session_id="conv-1",
+            event_type=StreamEventType.TURN_ENDED,
+            duration_ms=100,
+        )
+
+        async def mock_send_message(conv_id, prompt_text):
+            yield turn_end_event
+
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
-            mock_sandbox._provider = MockProvider()
-            mock_sandbox._provider._sandbox_id = "prompt-sandbox"
+            mock_sandbox.sandbox_id = "prompt-sandbox"
             mock_sandbox._event_buffer = None
             mock_sandbox._cwd = "/workspace"
 
             mock_agent = MockAgentMgr.return_value
-            mock_agent.send_message = AsyncMock(return_value=AsyncMock())
+            mock_agent.send_message = mock_send_message
 
-            # After revive, prompt() should proceed without error.
-            # We just need to verify that revive was called (sandbox gets assigned).
-            # The actual prompt streaming is tested elsewhere.
-            await mgr._connect_sandbox("w-prompt")
+            # Call prompt() end-to-end — should connect sandbox then stream events
+            events = []
+            async for event in mgr.prompt("w-prompt", "Hello"):
+                events.append(event)
 
         assert info.sandbox is not None
         assert info.agent_manager is not None
         assert info.status == WorkspaceState.ACTIVE.value
+        # First event is USER_PROMPT, last is from agent
+        assert events[0].event_type == StreamEventType.USER_PROMPT
+        assert events[-1].event_type == StreamEventType.TURN_ENDED
+        mock_sandbox.resume.assert_called_once_with("prompt-sandbox")
