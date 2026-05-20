@@ -160,6 +160,63 @@ class TestEventBufferStream:
         assert len(collected) == 1
 
 
+class TestEventBufferFlush:
+    @pytest.mark.asyncio
+    async def test_flush_with_content_parts(self) -> None:
+        """Flush should serialize events with ContentPart tuples without error."""
+        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox.streaming import ContentPart
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        # Save a dummy workspace so append_events has a target
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-flush",
+                "remote": "",
+                "branch": "",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": "active",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_active": "2026-01-01T00:00:00Z",
+                "config_json": "{}",
+            }
+        )
+
+        buf = EventBuffer(storage=storage, session_id="w-flush")
+
+        event = UniversalEvent(
+            event_id="ev-1",
+            sequence=0,
+            timestamp="2026-01-01T00:00:00Z",
+            session_id="w-flush",
+            event_type=EventType.ITEM_DELTA,
+            content=(ContentPart(type="text", text="hello world"),),
+            delta="hello world",
+        )
+        await buf.push(event)
+
+        # Force flush — should not raise "asdict() should be called on dataclass instances"
+        await buf._flush_events()
+
+        # Verify event was persisted
+        persisted = []
+        async for e in storage.get_events("w-flush"):
+            persisted.append(e)
+        assert len(persisted) == 1
+
+        # Cleanup
+        if buf._flush_task:
+            buf._flush_task.cancel()
+            try:
+                await buf._flush_task
+            except asyncio.CancelledError:
+                pass
+
+
 class TestEventBufferInSandbox:
     @pytest.mark.asyncio
     async def test_sandbox_pushes_to_buffer(self) -> None:
