@@ -329,7 +329,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        # Initialize storage and load sessions
+        # Initialize storage and load workspaces
         if mgr._storage:
             await mgr._storage.initialize()
             await mgr.load_workspaces()

@@ -87,11 +87,30 @@ class Session:
         return self._collect_response(input)
 
     async def _collect_response(self, input: str) -> AgentResponse:
+        events: list[UniversalEvent] = []
         text_parts: list[str] = []
+        cost_usd: float | None = None
+        duration_ms: int | None = None
+        session_id = ""
+
         async for event in self._manager.prompt(self._session_id, input):
-            if event.delta:
+            events.append(event)
+            if event.delta and event.item_kind == "message":
                 text_parts.append(event.delta)
-        return AgentResponse(text="".join(text_parts))
+            if event.session_id:
+                session_id = event.session_id
+            if event.cost_usd is not None:
+                cost_usd = event.cost_usd
+            if event.duration_ms is not None:
+                duration_ms = event.duration_ms
+
+        return AgentResponse(
+            text="".join(text_parts),
+            cost_usd=cost_usd,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            events=events,
+        )
 
     async def run_command(
         self,
@@ -272,6 +291,7 @@ class HarnessBox:
 
         if not self._initialized and self._storage is not None:
             await self._storage.initialize()
+            await self._manager.load_workspaces()
             self._initialized = True
 
         config = self._build_workspace_config(branch)
@@ -456,7 +476,6 @@ class HarnessBox:
         """
         if self._manager is not None:
             await self._manager.shutdown_all()
-            return
         if self._sandbox is not None:
             try:
                 await self._sandbox.kill()

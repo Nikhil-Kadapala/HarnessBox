@@ -136,11 +136,7 @@ class WorkspaceInstance:
         """
         config_json = "{}"
         if config is not None:
-            provider_name = (
-                config.provider
-                if isinstance(config.provider, str)
-                else type(config.provider).__name__
-            )
+            provider_name = config.provider if isinstance(config.provider, str) else "custom"
             config_json = json.dumps(
                 {
                     "provider": provider_name,
@@ -299,9 +295,7 @@ class WorkspaceManager:
         # Create agent manager
         agent_mgr = AgentManager(sandbox)
 
-        provider_name = (
-            config.provider if isinstance(config.provider, str) else type(config.provider).__name__
-        )
+        provider_name = config.provider if isinstance(config.provider, str) else "custom"
 
         info = WorkspaceInstance(
             workspace_id=wid,
