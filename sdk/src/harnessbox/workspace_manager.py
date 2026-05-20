@@ -792,6 +792,12 @@ class WorkspaceManager:
 
             api_key = self._resolve_provider_api_key(record["provider"])
 
+            if api_key is None and record["provider"] == "e2b":
+                raise ValueError(
+                    f"Cannot reconnect workspace {workspace_id}: E2B API key not found. "
+                    "Set E2B_API_KEY env var or configure ~/.e2b/config.json."
+                )
+
             sandbox = Sandbox(
                 client=record["provider"],
                 api_key=api_key,
@@ -801,6 +807,7 @@ class WorkspaceManager:
                 skip_permissions=config_dict.get("skip_permissions", False),
                 template=config_dict.get("template"),
                 session_timeout=config_dict.get("session_timeout", 1800),
+                session_lock=self._locks[workspace_id],
                 storage=self._storage,
                 session_id=workspace_id,
             )
@@ -836,6 +843,17 @@ class WorkspaceManager:
 
             agent_mgr = AgentManager(sandbox)
 
+            self._workspace_configs[workspace_id] = WorkspaceConfig(
+                provider=record["provider"],
+                harness=record["harness"],
+                model=config_dict.get("model"),
+                timeout=config_dict.get("timeout", 300),
+                skip_permissions=config_dict.get("skip_permissions", False),
+                template=config_dict.get("template"),
+                session_timeout=config_dict.get("session_timeout", 1800),
+                env_vars=config_dict.get("env_vars", {}),
+            )
+
             info.sandbox = sandbox
             info.agent_manager = agent_mgr
             info.status = WorkspaceState.ACTIVE.value
@@ -869,7 +887,7 @@ class WorkspaceManager:
         )
         # provider.create() leaves Sandbox in STARTING state — transition to ACTIVE
         # since we're bypassing the normal setup() pipeline.
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._transition(WorkspaceState.ACTIVE)
 
     def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace to a new state with validation.

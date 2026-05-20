@@ -600,6 +600,117 @@ class TestConnectSandbox:
             await mgr._connect_sandbox("w-orphan")
 
     @pytest.mark.asyncio
+    async def test_connect_raises_when_api_key_missing(self):
+        """Should raise ValueError with actionable message when E2B API key is missing."""
+        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox.workspace_manager import WorkspaceInstance
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=False)
+
+        now = datetime.now(timezone.utc).isoformat()
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-nokey",
+                "remote": "",
+                "branch": "",
+                "provider": "e2b",
+                "provider_sandbox_id": "sb-1",
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.PAUSED.value,
+                "created_at": now,
+                "last_active": now,
+                "config_json": '{"timeout": 300}',
+            }
+        )
+
+        info = WorkspaceInstance(
+            workspace_id="w-nokey",
+            remote="",
+            branch="",
+            provider="e2b",
+            provider_sandbox_id="sb-1",
+            snapshot_id=None,
+            status=WorkspaceState.PAUSED.value,
+            created_at=now,
+            last_active=now,
+            harness="claude-code",
+            sandbox=None,
+            agent_manager=None,
+        )
+        mgr._workspaces["w-nokey"] = info
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("pathlib.Path.is_file", return_value=False),
+            patch("harnessbox.workspace_manager.Sandbox"),
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
+            with pytest.raises(ValueError, match="E2B API key not found"):
+                await mgr._connect_sandbox("w-nokey")
+
+    @pytest.mark.asyncio
+    async def test_connect_populates_workspace_configs(self):
+        """_connect_sandbox should store WorkspaceConfig for subsequent snapshot recovery."""
+        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox.workspace_manager import WorkspaceInstance
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=False)
+
+        now = datetime.now(timezone.utc).isoformat()
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-cfg",
+                "remote": "",
+                "branch": "",
+                "provider": "e2b",
+                "provider_sandbox_id": "sb-cfg",
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "status": WorkspaceState.PAUSED.value,
+                "created_at": now,
+                "last_active": now,
+                "config_json": '{"timeout": 600, "session_timeout": 3600, "env_vars": {"MY_KEY": "val"}}',
+            }
+        )
+
+        info = WorkspaceInstance(
+            workspace_id="w-cfg",
+            remote="",
+            branch="",
+            provider="e2b",
+            provider_sandbox_id="sb-cfg",
+            snapshot_id=None,
+            status=WorkspaceState.PAUSED.value,
+            created_at=now,
+            last_active=now,
+            harness="claude-code",
+            sandbox=None,
+            agent_manager=None,
+        )
+        mgr._workspaces["w-cfg"] = info
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
+            mock_sandbox = MockSandbox.return_value
+            mock_sandbox.resume = AsyncMock()
+            mock_sandbox.sandbox_id = "sb-cfg"
+
+            await mgr._connect_sandbox("w-cfg")
+
+        config = mgr._workspace_configs.get("w-cfg")
+        assert config is not None
+        assert config.timeout == 600
+        assert config.session_timeout == 3600
+        assert config.env_vars == {"MY_KEY": "val"}
+
+    @pytest.mark.asyncio
     async def test_prompt_connects_sandbox_lazily(self):
         """prompt() should connect sandbox and forward message end-to-end."""
         from harnessbox._storage.memory import MemoryBackend
