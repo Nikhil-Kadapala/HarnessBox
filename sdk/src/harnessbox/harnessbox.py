@@ -346,6 +346,8 @@ class HarnessBox:
             timeout=self._timeout,
             template=self._template,
             skip_permissions=True,
+            branch_label=branch,
+            remote_label=self._remote or "",
         )
 
     @property
@@ -480,7 +482,8 @@ class HarnessBox:
         """Destroy sandbox(es) and release resources.
 
         In multi-session mode, shuts down all sessions. In single-session
-        mode, destroys the single sandbox. Closes storage if owned.
+        mode, destroys the single sandbox. The caller is responsible for
+        closing the storage backend if one was provided.
         """
         if self._manager is not None:
             await self._manager.shutdown_all()
@@ -489,8 +492,6 @@ class HarnessBox:
                 await self._sandbox.kill()
             finally:
                 self._sandbox = None
-        if self._storage is not None:
-            await self._storage.close()
 
     async def __aenter__(self) -> HarnessBox:
         await self.create()

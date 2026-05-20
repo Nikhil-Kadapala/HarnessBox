@@ -92,6 +92,8 @@ class WorkspaceConfig:
     skip_permissions: bool = False
     template: str | None = None
     session_timeout: int = 1800  # 30min default (auto-pause timeout)
+    branch_label: str = ""
+    remote_label: str = ""
 
 
 @dataclass
@@ -291,6 +293,11 @@ class WorkspaceManager:
                 base_branch = config.workspace.base_branch
             if hasattr(config.workspace, "remote"):
                 remote = config.workspace.remote
+
+        if not branch:
+            branch = config.branch_label
+        if not remote:
+            remote = config.remote_label
 
         # Create agent manager
         agent_mgr = AgentManager(sandbox)
