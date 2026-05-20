@@ -1,13 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import Plus from "lucide-react/dist/esm/icons/plus";
-import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import Trash2 from "lucide-react/dist/esm/icons/trash-2";
-import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard";
-import Settings from "lucide-react/dist/esm/icons/settings";
-import GitBranch from "lucide-react/dist/esm/icons/git-branch";
-import { useState, useMemo, useCallback } from "react";
+import {
+  Plus,
+  ChevronRight,
+  Trash2,
+  LayoutDashboard,
+  Settings,
+  GitBranch,
+  HelpCircle,
+  BookOpen,
+} from "lucide-react";
+import { useState, useMemo, useCallback, createElement } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -33,7 +37,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { footerNavLinks } from "@/components/app-shared";
+import { AddRepoDialog } from "@/components/layout/add-repo-dialog";
 import { appStorage } from "@/lib/storage-schema";
 import type { SessionEntry } from "@/types";
 
@@ -41,12 +45,41 @@ interface HarnessSidebarProps {
   sessions: Map<string, SessionEntry>;
   activeSessionId: string | null;
   onSelectSession: (id: string) => void;
-  onNewSession: () => void;
+  onNewSession: (repoUrl?: string) => void;
   onDestroySession: (id: string) => void;
   currentView: "board" | "session" | "settings";
   onNavigateToBoard: () => void;
   onNavigateToSettings: () => void;
 }
+
+const statusColors: Record<string, string> = {
+  backlog: "bg-muted-foreground/30",
+  creating: "bg-amber-500",
+  starting: "bg-amber-500",
+  active: "bg-green-500",
+  streaming: "bg-blue-500 animate-pulse",
+  paused: "bg-muted-foreground/50",
+  in_review: "bg-amber-500",
+  ending: "bg-muted-foreground/50",
+  merged: "bg-green-500",
+  failed: "bg-destructive",
+  archived: "bg-muted-foreground",
+  ended: "bg-muted-foreground",
+  error: "bg-destructive",
+};
+
+const footerNavLinks = [
+  {
+    title: "Help",
+    path: "https://github.com/Nikhil-Kadapala/HarnessBox",
+    icon: createElement(HelpCircle),
+  },
+  {
+    title: "Documentation",
+    path: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/README.md",
+    icon: createElement(BookOpen),
+  },
+];
 
 interface RepoGroup {
   name: string;
@@ -103,6 +136,7 @@ export function HarnessSidebar({
   const [openRepos, setOpenRepos] = useState<Set<string>>(
     () => new Set(repoGroups.map((g) => g.name)),
   );
+  const [addRepoOpen, setAddRepoOpen] = useState(false);
 
   const toggleRepo = useCallback((repoName: string) => {
     setOpenRepos((prev) => {
@@ -114,15 +148,16 @@ export function HarnessSidebar({
   }, []);
 
   return (
-    <Sidebar
-      className={cn(
-        "*:data-[slot=sidebar-inner]:bg-background",
-        "*:data-[slot=sidebar-inner]:dark:bg-[radial-gradient(60%_18%_at_10%_0%,--theme(--color-foreground/.08),transparent)]",
-        "**:data-[slot=sidebar-menu-button]:[&>span]:text-foreground/75",
-      )}
-      collapsible="icon"
-      variant="sidebar"
-    >
+    <>
+      <Sidebar
+        className={cn(
+          "*:data-[slot=sidebar-inner]:bg-background",
+          "*:data-[slot=sidebar-inner]:dark:bg-[radial-gradient(60%_18%_at_10%_0%,--theme(--color-foreground/.08),transparent)]",
+          "**:data-[slot=sidebar-menu-button]:[&>span]:text-foreground/75",
+        )}
+        collapsible="icon"
+        variant="sidebar"
+      >
       <SidebarHeader className="h-14 justify-center border-b px-2">
         <SidebarMenuButton size="lg" className="w-full">
           <img
@@ -158,7 +193,8 @@ export function HarnessSidebar({
           <div className="flex items-center justify-between px-2 py-1">
             <SidebarGroupLabel>Workspaces</SidebarGroupLabel>
             <button
-              className="p-1 rounded-sm transition-colors cursor-pointer opacity-30"
+              onClick={() => setAddRepoOpen(true)}
+              className="p-1 rounded-sm transition-colors cursor-pointer opacity-30 hover:opacity-100"
               title="Add Workspace"
             >
               <Plus className="h-4 w-4 hover:text-foreground" />
@@ -204,7 +240,7 @@ export function HarnessSidebar({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            onNewSession();
+                            onNewSession(group.remote);
                           }}
                           className="absolute right-2 opacity-0 group-hover/repo:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity cursor-pointer z-10"
                           title="New Session"
@@ -242,13 +278,16 @@ export function HarnessSidebar({
                                 <DropdownMenuItem
                                   key={session.id}
                                   onClick={() => onSelectSession(session.id)}
-                                  className="cursor-pointer"
+                                  className="cursor-pointer flex items-center justify-between"
                                 >
-                                  <GitBranch className="h-3.5 w-3.5 mr-2" />
-                                  <span className="truncate">
-                                    {session.workspaceName ||
-                                      session.id.slice(0, 8)}
-                                  </span>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <GitBranch className="h-3.5 w-3.5 mr-2 shrink-0 text-muted-foreground" />
+                                    <span className="truncate">
+                                      {session.workspaceName ||
+                                        session.id.slice(0, 8)}
+                                    </span>
+                                  </div>
+                                  <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColors[session.status] ?? "bg-muted"}`} />
                                 </DropdownMenuItem>
                               ))
                             ) : (
@@ -260,7 +299,7 @@ export function HarnessSidebar({
                             )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              onClick={onNewSession}
+                              onClick={() => onNewSession(group.remote)}
                               className="cursor-pointer"
                             >
                               <Plus className="h-3.5 w-3.5 mr-2" />
@@ -281,12 +320,15 @@ export function HarnessSidebar({
                                 onClick={() => onSelectSession(session.id)}
                                 className="w-full pr-8 cursor-pointer"
                               >
-                                <span className="flex items-center gap-2 flex-1 min-w-0">
-                                  <GitBranch className="h-3 w-3 shrink-0" />
-                                  <span className="truncate text-xs">
-                                    {session.workspaceName ||
-                                      session.id.slice(0, 8)}
+                                <span className="flex items-center gap-2 flex-1 min-w-0 justify-between">
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                    <span className="truncate text-xs">
+                                      {session.workspaceName ||
+                                        session.id.slice(0, 8)}
+                                    </span>
                                   </span>
+                                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColors[session.status] ?? "bg-muted"}`} />
                                 </span>
                               </SidebarMenuButton>
                               <button
@@ -329,7 +371,6 @@ export function HarnessSidebar({
             <SidebarMenuItem key={item.title}>
               <SidebarMenuButton
                 className="text-muted-foreground cursor-pointer"
-                isActive={item.isActive}
                 size="sm"
                 render={
                   <a
@@ -352,5 +393,11 @@ export function HarnessSidebar({
         </div>
       </SidebarFooter>
     </Sidebar>
+      <AddRepoDialog
+        open={addRepoOpen}
+        onOpenChange={setAddRepoOpen}
+        onSubmit={(repoUrl) => onNewSession(repoUrl)}
+      />
+    </>
   );
 }

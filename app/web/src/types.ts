@@ -136,6 +136,28 @@ export interface SessionResponse {
   branch?: string;
   base_branch?: string;
   remote?: string;
+  pr_url?: string;
+  pr_number?: number;
+  ci_status?: string;
+  total_cost_usd?: number;
+}
+
+export interface SessionCard {
+  id: string;
+  title: string;
+  status: string;
+  harness: string;
+  repository?: string;
+  branch?: string;
+  baseBranch?: string;
+  createdAt: string;
+  updatedAt: string;
+  workspaceName?: string;
+  prUrl?: string;
+  prNumber?: number;
+  ciStatus?: string;
+  totalCostUsd?: number;
+  latestMessage?: string;
 }
 
 // --- Multi-session state ---
