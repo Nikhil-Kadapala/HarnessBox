@@ -309,7 +309,7 @@ class WorkspaceManager:
             remote=remote,
             branch=branch,
             provider=provider_name,
-            provider_sandbox_id=None,  # Set after first pause
+            provider_sandbox_id=sandbox._provider.sandbox_id,
             snapshot_id=None,
             status=WorkspaceState.ACTIVE.value,
             created_at=datetime.now(timezone.utc).isoformat(),
