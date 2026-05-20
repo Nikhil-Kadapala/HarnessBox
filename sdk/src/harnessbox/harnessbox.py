@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, Coroutine, Literal, overload
+from typing import TYPE_CHECKING, Any, Coroutine, Literal, overload
 
 from harnessbox.providers import CommandResult, SandboxProvider
 from harnessbox.sandbox import InteractiveSession, Sandbox
@@ -15,7 +16,103 @@ from harnessbox.streaming import UniversalEvent
 from harnessbox.types import AgentResponse
 from harnessbox.workspace import Workspace
 
+if TYPE_CHECKING:
+    from harnessbox.storage import StorageBackend
+    from harnessbox.workspace_manager import WorkspaceManager
+
 _log = logging.getLogger("harnessbox.api")
+
+
+class WorkspaceMode(str, Enum):
+    """How sessions map to sandboxes."""
+
+    NEW = "new"
+    SHARED = "shared"
+
+
+class Session:
+    """Handle to a running agent session.
+
+    Returned by ``HarnessBox.create_session()``. Each Session corresponds to one
+    workspace in the internal WorkspaceManager.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        branch: str,
+        manager: WorkspaceManager,
+    ) -> None:
+        self._session_id = session_id
+        self._branch = branch
+        self._manager = manager
+
+    @property
+    def id(self) -> str:
+        """Unique session identifier."""
+        return self._session_id
+
+    @property
+    def branch(self) -> str:
+        """Git branch this session operates on."""
+        return self._branch
+
+    @property
+    def status(self) -> str:
+        """Current session state (synchronous dict lookup)."""
+        from harnessbox.workspace_manager import WorkspaceNotFoundError
+
+        try:
+            info = self._manager.get_workspace(self._session_id)
+        except WorkspaceNotFoundError:
+            return "ended"
+        return info.status
+
+    @overload
+    def send_message(
+        self, input: str, *, stream: Literal[True] = True
+    ) -> AsyncGenerator[UniversalEvent, None]: ...
+
+    @overload
+    def send_message(
+        self, input: str, *, stream: Literal[False]
+    ) -> Coroutine[Any, Any, AgentResponse]: ...
+
+    def send_message(
+        self, input: str, *, stream: bool = True
+    ) -> AsyncGenerator[UniversalEvent, None] | Coroutine[Any, Any, AgentResponse]:
+        """Send a message to the agent in this session."""
+        if stream:
+            return self._manager.prompt(self._session_id, input)
+        return self._collect_response(input)
+
+    async def _collect_response(self, input: str) -> AgentResponse:
+        text_parts: list[str] = []
+        async for event in self._manager.prompt(self._session_id, input):
+            if event.delta:
+                text_parts.append(event.delta)
+        return AgentResponse(text="".join(text_parts))
+
+    async def run_command(
+        self,
+        command: str,
+        cwd: str | None = None,
+        timeout: int | None = None,
+    ) -> CommandResult:
+        """Run a shell command in this session's sandbox."""
+        info = self._manager.get_workspace(self._session_id)
+        if info.sandbox is None:
+            raise RuntimeError(f"Session {self._session_id} has no live sandbox")
+        return await info.sandbox.run_command(command, cwd=cwd, timeout=timeout)
+
+    async def kill(self) -> None:
+        """Destroy this session's sandbox and release resources."""
+        from harnessbox.workspace_manager import WorkspaceNotFoundError
+
+        try:
+            await self._manager.destroy_workspace(self._session_id)
+        except WorkspaceNotFoundError:
+            pass
 
 
 @dataclass(frozen=True)
@@ -76,6 +173,9 @@ class HarnessBox:
         timeout: int = 300,
         template: str | None = None,
         cwd: str | None = None,
+        remote: str | None = None,
+        workspace_mode: WorkspaceMode | None = None,
+        storage: StorageBackend | None = None,
     ) -> None:
         """Create a HarnessBox instance.
 
@@ -94,12 +194,15 @@ class HarnessBox:
             plugins: Plugin directories to inject.
             env_vars: Additional environment variables for the sandbox.
             files: Files to inject into the sandbox.
-            workspace: Git workspace to clone.
+            workspace: Git workspace to clone (single-session mode).
             setup_script: Shell command to run after setup.
             security_policy: Security deny rules and credential guards.
             timeout: Sandbox creation timeout in seconds.
             template: Override the provider sandbox template.
             cwd: Working directory for agent commands.
+            remote: Git remote URL for multi-session mode.
+            workspace_mode: Enable multi-session mode (``WorkspaceMode.NEW``).
+            storage: Persistence backend for multi-session workspaces.
         """
         self._provider = provider
         self._harness = harness
@@ -116,11 +219,22 @@ class HarnessBox:
         self._timeout = timeout
         self._template = template
         self._cwd = cwd
+        self._remote = remote
+        self._workspace_mode = workspace_mode
+        self._storage = storage
 
         # Resolve secrets
         self._secrets = self._resolve_secrets(secrets)
 
-        # Internal sandbox — created lazily in create()
+        # Multi-session mode: create WorkspaceManager lazily
+        self._manager: WorkspaceManager | None = None
+        self._initialized = False
+        if workspace_mode is not None:
+            from harnessbox.workspace_manager import WorkspaceManager as WM
+
+            self._manager = WM(storage=storage)
+
+        # Internal sandbox — created lazily in create() (single-session mode)
         self._sandbox: Sandbox | None = None
 
     @staticmethod
@@ -134,6 +248,76 @@ class HarnessBox:
         return HarnessBoxSecrets(
             provider_api_key=secrets.get("provider_api_key"),
             harness_secrets=secrets.get("harness_secrets"),
+        )
+
+    async def create_session(self, branch: str = "main") -> Session:
+        """Create a new session (multi-session mode only).
+
+        Each call provisions a new sandbox on the given branch.
+
+        Args:
+            branch: Git branch for this session's workspace.
+
+        Returns:
+            A Session handle for interacting with the agent.
+
+        Raises:
+            RuntimeError: If workspace_mode was not set at init.
+        """
+        if self._manager is None:
+            raise RuntimeError(
+                "create_session() requires workspace_mode. "
+                "Pass workspace_mode=WorkspaceMode.NEW to HarnessBox()."
+            )
+
+        if not self._initialized and self._storage is not None:
+            await self._storage.initialize()
+            self._initialized = True
+
+        config = self._build_workspace_config(branch)
+        info = await self._manager.create_workspace(config)
+        return Session(
+            session_id=info.workspace_id,
+            branch=branch,
+            manager=self._manager,
+        )
+
+    def _build_workspace_config(self, branch: str) -> Any:
+        """Convert HarnessBox init params into internal WorkspaceConfig."""
+        from harnessbox.workspace import GitWorkspace
+        from harnessbox.workspace_manager import WorkspaceConfig
+
+        merged_env = dict(self._env_vars)
+        if self._secrets.harness_secrets:
+            merged_env.update(self._secrets.harness_secrets)
+
+        workspace = None
+        if self._remote:
+            git_token = merged_env.get("GITHUB_TOKEN") or merged_env.get("GIT_TOKEN")
+            workspace = GitWorkspace(
+                remote=self._remote,
+                branch=branch,
+                base_branch="main",
+                auth_token=git_token,
+            )
+
+        return WorkspaceConfig(
+            provider=self._provider,
+            api_key=self._secrets.provider_api_key,
+            harness=self._harness,
+            model=self._model,
+            system_prompt=self._system_prompt,
+            skills=self._skills or [],
+            plugins=self._plugins or [],
+            security_policy=self._security_policy,
+            workspace=workspace,
+            env_vars=merged_env,
+            files=self._files,
+            setup_script=self._setup_script,
+            cwd=self._cwd,
+            timeout=self._timeout,
+            template=self._template,
+            skip_permissions=True,
         )
 
     @property
@@ -265,7 +449,14 @@ class HarnessBox:
         return await sb.start_interactive_session()
 
     async def kill(self) -> None:
-        """Destroy the sandbox and release resources."""
+        """Destroy sandbox(es) and release resources.
+
+        In multi-session mode, shuts down all sessions. In single-session
+        mode, destroys the single sandbox.
+        """
+        if self._manager is not None:
+            await self._manager.shutdown_all()
+            return
         if self._sandbox is not None:
             try:
                 await self._sandbox.kill()

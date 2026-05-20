@@ -60,6 +60,44 @@ async for event in hb.send_message("Fix the tests"):
 await hb.kill()
 ```
 
+## Multi-Session Mode
+
+Run multiple agents on different branches simultaneously:
+
+```python
+import os
+from harnessbox import HarnessBox, WorkspaceMode
+
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    remote="https://github.com/user/repo.git",
+    workspace_mode=WorkspaceMode.NEW,
+    secrets={
+        "provider_api_key": os.getenv("E2B_API_KEY"),
+        "harness_secrets": {"ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")},
+    },
+)
+
+# Each session gets its own sandbox
+auth_session = await hb.create_session(branch="feat/auth")
+ui_session = await hb.create_session(branch="feat/ui")
+
+# Interact with sessions directly
+async for event in auth_session.send_message("Fix the auth bug"):
+    print(event.delta or "", end="")
+
+# Non-streaming
+result = await ui_session.send_message("Add dark mode", stream=False)
+print(result.text)
+
+# Clean up
+await auth_session.kill()
+await ui_session.kill()
+```
+
+See [`examples/multi_session.py`](sdk/examples/multi_session.py) for a complete runnable example.
+
 ## How It Works
 
 HarnessBox is a Python library. You import it, provision a sandbox, and stream agent output. That's the whole product.
@@ -129,7 +167,7 @@ harnessbox serve --port 8080
 docker run -p 8080:8080 harnessbox/server
 ```
 
-Point the SDK at your server (planned for v0.4.0):
+Point the SDK at your server (planned):
 
 ```python
 # SDK becomes a thin client — all orchestration happens server-side
