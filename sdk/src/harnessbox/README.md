@@ -1,5 +1,212 @@
 # HarnessBox SDK — Internal Architecture
 
+## System Architecture
+
+### Layer Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        User Code                                     │
+│   hb = HarnessBox(provider="e2b", harness="claude-code", ...)       │
+│   session = await hb.create_session(branch="feat/auth")             │
+│   async for event in session.send_message("Fix the bug"):           │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────┐
+│                     HarnessBox  (harnessbox.py)                      │
+│                                                                      │
+│  Public API facade. Separates credentials, validates input,          │
+│  delegates to WorkspaceManager for multi-session orchestration.      │
+│  Returns Session handles to users.                                   │
+│                                                                      │
+│  Single-session: owns one Sandbox directly (backwards-compat)        │
+│  Multi-session: owns a WorkspaceManager that manages N Sandboxes     │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────┐
+│                     Sandbox  (sandbox.py)                             │
+│                                                                      │
+│  Orchestrator. One Sandbox = one running agent environment.          │
+│  Responsibilities:                                                   │
+│    • Setup pipeline: inject CLAUDE.md, skills, security settings,    │
+│      clone git workspace, run setup script                           │
+│    • Agent process lifecycle: spawn harness CLI, manage PTY          │
+│    • Streaming: parse NDJSON output into typed UniversalEvents       │
+│    • State machine: STARTING → ACTIVE → PAUSED → ENDED/FAILED       │
+│    • Cost tracking across turns                                      │
+│                                                                      │
+│  Does NOT know about VM provisioning — delegates to Provider.        │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────┐
+│                  SandboxProvider  (providers.py)                      │
+│                                                                      │
+│  Protocol (structural typing). Defines ~10 raw VM operations:        │
+│    create, kill, pause, resume, write_file, read_file,               │
+│    make_dir, run_command, stream_command, start_session               │
+│                                                                      │
+│  Providers know NOTHING about agents, streaming, or setup.           │
+│  They only know how to operate a remote Linux VM.                    │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              ▼                  ▼                  ▼
+    ┌─────────────────┐ ┌───────────────┐ ┌───────────────────┐
+    │  E2BProvider    │ │ MockProvider  │ │ (future)          │
+    │  (_providers/   │ │ (tests/       │ │ DaytonaProvider   │
+    │   e2b.py)       │ │  conftest.py) │ │ FlyProvider       │
+    │                 │ │               │ │ FirecrackerProv.  │
+    │ Wraps e2b SDK   │ │ In-memory     │ │                   │
+    │ + native git    │ │ dict-based    │ │                   │
+    └─────────────────┘ └───────────────┘ └───────────────────┘
+```
+
+### Why Composition over Inheritance
+
+The alternative design would be `E2BSandbox(BaseSandbox)` where each provider subclasses a base sandbox. We chose Protocol + Composition instead:
+
+| | Protocol + Composition (current) | Inheritance (E2BSandbox extends Sandbox) |
+|---|---|---|
+| **Adding a provider** | One file, ~10 methods | Override 40+ methods, manage `super()` chains |
+| **Testing** | Pass `MockProvider()` — tests run in 0.02s | Mock the full Sandbox or hit real infra |
+| **Provider contract** | Minimal, stable (raw VM ops only) | Leaks orchestration concerns into providers |
+| **Agent logic changes** | Touch Sandbox once, all providers get it | Touch every subclass |
+| **Separation of concerns** | Provider = VM ops. Sandbox = agent logic. Clean seam. | Provider must understand agent lifecycle to override correctly |
+
+The key insight: **providers don't know about agents.** E2BProvider has no idea what claude-code is. It just creates VMs and runs shell commands. All agent orchestration lives in Sandbox — one place, tested once, works with any provider.
+
+### Happy Path: Single-Session
+
+```mermaid
+sequenceDiagram
+    participant U as User Code
+    participant HB as HarnessBox
+    participant S as Sandbox
+    participant P as E2BProvider
+
+    U->>HB: HarnessBox(provider="e2b", harness="claude-code", secrets={...})
+    Note over HB: Stores config, resolves secrets
+
+    U->>HB: await hb.create()
+    HB->>S: Sandbox(client="e2b", harness="claude-code", ...)
+    S->>P: E2BProvider(api_key=..., template=...)
+    S->>P: await provider.create(env_vars={...})
+    Note over P: Provisions E2B sandbox VM
+    P-->>S: sandbox_id = "sbx_abc123"
+    S->>S: build_manifest() → files, dirs, env_vars
+    S->>P: write_file(CLAUDE.md), write_file(settings.json), ...
+    S->>P: run_command(setup_script)
+    S-->>HB: sandbox ready
+    HB-->>U: return "sbx_abc123"
+
+    U->>HB: async for event in hb.send_message("Fix the test")
+    HB->>S: send_message("Fix the test", stream=True)
+    S->>P: start_session("claude --output-format stream-json ...")
+    loop NDJSON lines from agent
+        P-->>S: raw JSON line
+        S->>S: StreamParser.parse_line() → UniversalEvent
+        S-->>HB: yield UniversalEvent
+        HB-->>U: yield UniversalEvent
+    end
+
+    U->>HB: await hb.kill()
+    HB->>S: await sandbox.kill()
+    S->>P: await provider.kill()
+    Note over P: Destroys VM
+```
+
+### Happy Path: Multi-Session
+
+```mermaid
+sequenceDiagram
+    participant U as User Code
+    participant HB as HarnessBox
+    participant WM as WorkspaceManager
+    participant S1 as Sandbox (auth)
+    participant S2 as Sandbox (ui)
+    participant P as E2BProvider
+
+    U->>HB: HarnessBox(provider="e2b", workspace_mode=NEW, remote="...")
+    Note over HB: Creates WorkspaceManager internally
+
+    U->>HB: await hb.create_session(branch="feat/auth")
+    HB->>HB: _build_workspace_config("feat/auth")
+    HB->>WM: create_workspace(config)
+    WM->>S1: Sandbox(client="e2b", workspace=GitWorkspace(branch="feat/auth"))
+    S1->>P: provider.create() → VM 1
+    S1->>P: clone repo, checkout feat/auth
+    WM-->>HB: WorkspaceInstance(workspace_id="wk_001")
+    HB-->>U: Session(id="wk_001", branch="feat/auth")
+
+    U->>HB: await hb.create_session(branch="feat/ui")
+    HB->>WM: create_workspace(config)
+    WM->>S2: Sandbox(client="e2b", workspace=GitWorkspace(branch="feat/ui"))
+    S2->>P: provider.create() → VM 2
+    WM-->>HB: WorkspaceInstance(workspace_id="wk_002")
+    HB-->>U: Session(id="wk_002", branch="feat/ui")
+
+    U->>U: session1.send_message("Fix auth bug")
+    Note over S1: Agent runs in VM 1
+
+    U->>U: session2.send_message("Add dark mode")
+    Note over S2: Agent runs in VM 2 (parallel)
+
+    U->>HB: await hb.kill()
+    HB->>WM: shutdown_all()
+    WM->>S1: kill()
+    WM->>S2: kill()
+    Note over P: Both VMs destroyed
+```
+
+### Auto-Pause and Resume
+
+```mermaid
+sequenceDiagram
+    participant U as User Code
+    participant WM as WorkspaceManager
+    participant S as Sandbox
+    participant P as E2BProvider
+
+    Note over WM: Workspace idle for 30 min...
+    WM->>WM: _idle_countdown() fires
+    WM->>S: create_snapshot()
+    S->>P: provider.create_snapshot() → "snap_xyz"
+    WM->>S: pause()
+    S->>P: provider.pause() → "sbx_abc123"
+    Note over P: VM hibernated, no billing
+
+    Note over WM: User sends new message...
+    U->>WM: prompt(workspace_id, "Continue the work")
+    WM->>WM: status == PAUSED → auto-resume
+    WM->>S: resume("sbx_abc123")
+    S->>P: provider.resume("sbx_abc123")
+    Note over P: VM wakes up, filesystem intact
+    WM->>S: send_message("Continue the work")
+    S-->>U: streaming events...
+```
+
+### Module Map
+
+| Module | Layer | Role |
+|--------|-------|------|
+| `harnessbox.py` | Public API | `HarnessBox` facade, `Session` handle, `WorkspaceMode` |
+| `workspace_manager.py` | Orchestration | Multi-workspace registry, pooling, pause/resume, storage |
+| `sandbox.py` | Orchestration | Single-sandbox lifecycle, setup pipeline, agent execution |
+| `providers.py` | Contract | `SandboxProvider` Protocol definition |
+| `_providers/e2b.py` | Implementation | E2B SDK wrapper (VM ops + native git) |
+| `streaming.py` | Data | `UniversalEvent`, `StreamParser` (NDJSON → typed events) |
+| `config/harness.py` | Config | Harness type registry (how to invoke each agent CLI) |
+| `config/manifest.py` | Config | `build_manifest()` — pure function computing all files to inject |
+| `security/policy.py` | Security | Deny rules, generates `settings.json` for agent |
+| `security/guards.py` | Security | Credential guard definitions (bash + read + hook patterns) |
+| `workspace.py` | Workspace | `GitWorkspace` — clone, commit, push via provider |
+| `lifecycle.py` | State | `WorkspaceState` enum + valid transition map |
+| `storage.py` | Persistence | `StorageBackend` Protocol (SQLite, memory) |
+| `events.py` | Streaming | `EventBuffer` — ring buffer for SSE replay |
+| `process.py` | Agent | `AgentProcess` — owns the running agent CLI process |
+
+---
+
 ## Git Authentication Pipeline
 
 Git auth is the critical path for sandbox sessions. An agent can't push code without working credentials. This documents the full pipeline from host credential detection to authenticated push inside the sandbox.

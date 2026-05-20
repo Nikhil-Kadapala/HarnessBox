@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from harnessbox.agent_manager import AgentManager
 from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
-from harnessbox.providers import SandboxDeadError
+from harnessbox.providers import SandboxDeadError, SandboxProvider
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import Attachment, ContentPart, UniversalEvent
@@ -73,7 +73,7 @@ class WorkspaceConfig:
     can be stored, serialized, and reused across workspaces.
     """
 
-    provider: str = "e2b"
+    provider: str | SandboxProvider = "e2b"
     api_key: str | None = None
     harness: str = "claude-code"
     model: str | None = None
@@ -92,6 +92,8 @@ class WorkspaceConfig:
     skip_permissions: bool = False
     template: str | None = None
     session_timeout: int = 1800  # 30min default (auto-pause timeout)
+    branch_label: str = ""
+    remote_label: str = ""
 
 
 @dataclass
@@ -136,10 +138,10 @@ class WorkspaceInstance:
         """
         config_json = "{}"
         if config is not None:
-            # Minimal subset: primitives only, no complex types
+            provider_name = config.provider if isinstance(config.provider, str) else "custom"
             config_json = json.dumps(
                 {
-                    "provider": config.provider,
+                    "provider": provider_name,
                     "harness": config.harness,
                     "timeout": config.timeout,
                     "skip_permissions": config.skip_permissions,
@@ -292,14 +294,21 @@ class WorkspaceManager:
             if hasattr(config.workspace, "remote"):
                 remote = config.workspace.remote
 
+        if not branch:
+            branch = config.branch_label
+        if not remote:
+            remote = config.remote_label
+
         # Create agent manager
         agent_mgr = AgentManager(sandbox)
+
+        provider_name = config.provider if isinstance(config.provider, str) else "custom"
 
         info = WorkspaceInstance(
             workspace_id=wid,
             remote=remote,
             branch=branch,
-            provider=config.provider,
+            provider=provider_name,
             provider_sandbox_id=None,  # Set after first pause
             snapshot_id=None,
             status=WorkspaceState.ACTIVE.value,
@@ -316,8 +325,9 @@ class WorkspaceManager:
         self._locks[wid] = lock
         self._workspace_configs[wid] = config
 
-        # Persist to storage
-        if self._storage:
+        # Persist to storage (skip when provider is a custom instance —
+        # hydration cannot recreate it from a stored record).
+        if self._storage and isinstance(config.provider, str):
             try:
                 await self._storage.save_workspace(info.to_record(config))
             except Exception as e:

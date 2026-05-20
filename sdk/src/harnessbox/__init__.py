@@ -23,7 +23,7 @@ from harnessbox.credentials import (
     detect_credentials,
 )
 from harnessbox.events import EventBuffer
-from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets
+from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets, Session, WorkspaceMode
 from harnessbox.lifecycle import (
     VALID_TRANSITIONS,
     InvalidTransitionError,
@@ -111,6 +111,8 @@ __all__ = [
     # HarnessBox (public API)
     "HarnessBox",
     "HarnessBoxSecrets",
+    "Session",
+    "WorkspaceMode",
     # Sandbox (internal orchestration)
     "AgentResponse",
     "CommandResult",

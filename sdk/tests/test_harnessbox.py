@@ -2,7 +2,7 @@
 
 import pytest
 
-from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets
+from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets, Session, WorkspaceMode
 
 
 class TestHarnessBoxInit:
@@ -130,6 +130,157 @@ class TestHarnessBoxLifecycle:
                 pass
 
     async def test_context_manager(self, mock_provider):
+        async with HarnessBox(provider=mock_provider) as hb:
+            assert hb.sandbox_id == "mock-sandbox-123"
+        assert hb._sandbox is None
+
+
+class TestMultiSession:
+    """Tests for multi-session mode (WorkspaceMode.NEW)."""
+
+    def test_workspace_mode_enum_values(self):
+        assert WorkspaceMode.NEW == "new"
+        assert WorkspaceMode.SHARED == "shared"
+
+    def test_multi_session_init_creates_manager(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        assert hb._manager is not None
+        assert hb._sandbox is None
+
+    def test_single_session_init_no_manager(self, mock_provider):
+        hb = HarnessBox(provider=mock_provider)
+        assert hb._manager is None
+
+    async def test_create_session_returns_session(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+            secrets={"provider_api_key": None, "harness_secrets": {}},
+        )
+        session = await hb.create_session(branch="feat/auth")
+        assert isinstance(session, Session)
+        assert session.branch == "feat/auth"
+        assert session.id is not None
+
+    async def test_create_session_requires_workspace_mode(self, mock_provider):
+        hb = HarnessBox(provider=mock_provider)
+        with pytest.raises(RuntimeError, match="requires workspace_mode"):
+            await hb.create_session()
+
+    async def test_create_multiple_sessions(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        s1 = await hb.create_session(branch="feat/auth")
+        s2 = await hb.create_session(branch="feat/ui")
+        assert s1.id != s2.id
+        assert s1.branch == "feat/auth"
+        assert s2.branch == "feat/ui"
+
+    async def test_session_status_active(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        session = await hb.create_session(branch="main")
+        assert session.status == "active"
+
+    async def test_session_status_ended_after_kill(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        session = await hb.create_session(branch="main")
+        await session.kill()
+        assert session.status == "ended"
+
+    async def test_session_kill_idempotent(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        session = await hb.create_session(branch="main")
+        await session.kill()
+        await session.kill()
+        assert session.status == "ended"
+
+    async def test_session_run_command(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        session = await hb.create_session(branch="main")
+        result = await session.run_command("echo hello")
+        assert result.exit_code == 0
+        assert "echo hello" in mock_provider._commands
+
+    async def test_session_run_command_after_kill_raises(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        session = await hb.create_session(branch="main")
+        await session.kill()
+        from harnessbox.workspace_manager import WorkspaceNotFoundError
+
+        with pytest.raises((WorkspaceNotFoundError, RuntimeError)):
+            await session.run_command("echo test")
+
+    async def test_hb_kill_shuts_down_all_sessions(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        s1 = await hb.create_session(branch="feat/a")
+        s2 = await hb.create_session(branch="feat/b")
+        await hb.kill()
+        assert s1.status == "ended"
+        assert s2.status == "ended"
+
+    async def test_build_workspace_config_maps_params(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            harness="codex",
+            workspace_mode=WorkspaceMode.NEW,
+            model="gpt-4",
+            setup_script="npm install",
+            timeout=600,
+            remote="https://github.com/user/repo.git",
+            secrets={
+                "provider_api_key": "e2b_key",
+                "harness_secrets": {"ANTHROPIC_API_KEY": "sk-ant"},
+            },
+        )
+        config = hb._build_workspace_config("feat/test")
+        assert config.harness == "codex"
+        assert config.model == "gpt-4"
+        assert config.setup_script == "npm install"
+        assert config.timeout == 600
+        assert config.skip_permissions is True
+        assert config.env_vars.get("ANTHROPIC_API_KEY") == "sk-ant"
+        assert config.workspace is not None
+        assert config.workspace.branch == "feat/test"
+
+    async def test_build_workspace_config_no_remote(self, mock_provider):
+        hb = HarnessBox(
+            provider=mock_provider,
+            workspace_mode=WorkspaceMode.NEW,
+        )
+        config = hb._build_workspace_config("main")
+        assert config.workspace is None
+
+    async def test_legacy_single_session_unchanged(self, mock_provider):
+        hb = HarnessBox(provider=mock_provider)
+        sandbox_id = await hb.create()
+        assert sandbox_id == "mock-sandbox-123"
+        await hb.kill()
+        assert hb._sandbox is None
+
+    async def test_context_manager_single_session_unchanged(self, mock_provider):
         async with HarnessBox(provider=mock_provider) as hb:
             assert hb.sandbox_id == "mock-sandbox-123"
         assert hb._sandbox is None
