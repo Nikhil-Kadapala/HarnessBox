@@ -45,7 +45,6 @@ class SQLiteBackend:
 
         self._conn: sqlite3.Connection | None = None
         self._write_lock = asyncio.Lock()
-        self._closed = False
 
     async def initialize(self) -> None:
         """Create database file and run migrations. Idempotent."""
@@ -382,7 +381,6 @@ class SQLiteBackend:
     # -- Lifecycle --
 
     async def close(self) -> None:
-        self._closed = True
         if self._conn:
             await asyncio.to_thread(self._conn.close)
             self._conn = None

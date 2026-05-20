@@ -833,9 +833,10 @@ class WorkspaceManager:
             provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
             snapshot_id = info.snapshot_id or record.get("snapshot_id")
 
-            resolved_env_vars = self._resolve_env_vars(
-                config_dict.get("env_var_keys", [])
+            env_var_keys = config_dict.get("env_var_keys") or list(
+                config_dict.get("env_vars", {}).keys()
             )
+            resolved_env_vars = self._resolve_env_vars(env_var_keys)
 
             if provider_sandbox_id:
                 try:
