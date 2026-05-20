@@ -318,8 +318,9 @@ class WorkspaceManager:
         self._locks[wid] = lock
         self._workspace_configs[wid] = config
 
-        # Persist to storage
-        if self._storage:
+        # Persist to storage (skip when provider is a custom instance —
+        # hydration cannot recreate it from a stored record).
+        if self._storage and isinstance(config.provider, str):
             try:
                 await self._storage.save_workspace(info.to_record(config))
             except Exception as e:

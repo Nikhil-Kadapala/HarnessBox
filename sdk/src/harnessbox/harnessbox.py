@@ -272,21 +272,29 @@ class HarnessBox:
     async def create_session(self, branch: str = "main") -> Session:
         """Create a new session (multi-session mode only).
 
-        Each call provisions a new sandbox on the given branch.
+        Each call provisions a new sandbox. When ``remote`` is configured,
+        the sandbox clones the repo and checks out the given branch. Without
+        ``remote``, the branch is used only as a metadata label.
 
         Args:
-            branch: Git branch for this session's workspace.
+            branch: Git branch for this session's workspace. Only triggers
+                a clone/checkout if ``remote`` was set at init.
 
         Returns:
             A Session handle for interacting with the agent.
 
         Raises:
             RuntimeError: If workspace_mode was not set at init.
+            NotImplementedError: If workspace_mode is SHARED.
         """
         if self._manager is None:
             raise RuntimeError(
                 "create_session() requires workspace_mode. "
                 "Pass workspace_mode=WorkspaceMode.NEW to HarnessBox()."
+            )
+        if self._workspace_mode == WorkspaceMode.SHARED:
+            raise NotImplementedError(
+                "WorkspaceMode.SHARED is not yet implemented. Use WorkspaceMode.NEW."
             )
 
         if not self._initialized and self._storage is not None:
@@ -472,7 +480,7 @@ class HarnessBox:
         """Destroy sandbox(es) and release resources.
 
         In multi-session mode, shuts down all sessions. In single-session
-        mode, destroys the single sandbox.
+        mode, destroys the single sandbox. Closes storage if owned.
         """
         if self._manager is not None:
             await self._manager.shutdown_all()
@@ -481,6 +489,8 @@ class HarnessBox:
                 await self._sandbox.kill()
             finally:
                 self._sandbox = None
+        if self._storage is not None:
+            await self._storage.close()
 
     async def __aenter__(self) -> HarnessBox:
         await self.create()
