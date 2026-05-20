@@ -3,9 +3,9 @@
 Uses asyncio.to_thread() to wrap synchronous sqlite3 operations. No external
 dependencies — sqlite3 is in Python's stdlib.
 
-Events are batched and flushed periodically (50 events or 5 seconds) to
-reduce write amplification. A single asyncio.Lock serializes all writes
-(including the flush task) to prevent corruption.
+EventBuffer is the sole batching authority — it delivers pre-formed batches to
+append_events() which writes them directly. A single asyncio.Lock serializes
+all writes to prevent corruption.
 """
 
 from __future__ import annotations
@@ -25,42 +25,33 @@ DEFAULT_MAX_EVENTS_PER_WORKSPACE = 10_000
 
 
 class SQLiteBackend:
-    """SQLite storage backend with batched event persistence.
+    """SQLite storage backend with direct event persistence.
 
     Args:
         path: Database file path. Defaults to ~/.harnessbox/sessions.db.
               Parent directories are created automatically.
-        batch_size: Maximum events to buffer before flushing (default: 50).
-        batch_interval: Maximum seconds between flushes (default: 5.0).
         max_events_per_workspace: Event retention cap per workspace (default: 10000).
     """
 
     def __init__(
         self,
         path: str | Path | None = None,
-        batch_size: int = 50,
-        batch_interval: float = 5.0,
         max_events_per_workspace: int = DEFAULT_MAX_EVENTS_PER_WORKSPACE,
     ) -> None:
         if path is None:
             path = Path.home() / ".harnessbox" / "sessions.db"
         self.path = Path(path).expanduser().resolve()
-        self.batch_size = batch_size
-        self.batch_interval = batch_interval
         self.max_events = max_events_per_workspace
 
         self._conn: sqlite3.Connection | None = None
-        self._pending_events: list[tuple[str, dict[str, Any]]] = []
-        self._flush_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
         self._closed = False
 
     async def initialize(self) -> None:
-        """Create database file, run migrations, start flush task. Idempotent."""
+        """Create database file and run migrations. Idempotent."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = await asyncio.to_thread(self._open_connection)
         await asyncio.to_thread(self._run_migrations, self._conn)
-        self._flush_task = asyncio.create_task(self._run_flush_task())
         logger.info(f"SQLite storage initialized at {self.path}")
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -262,26 +253,9 @@ class SQLiteBackend:
 
     async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
         async with self._write_lock:
-            for event in events:
-                self._pending_events.append((workspace_id, event))
-            if len(self._pending_events) >= self.batch_size:
-                await self._flush_events()
+            await asyncio.to_thread(self._write_events_sync, workspace_id, events)
 
-    async def _flush_events(self) -> None:
-        """Flush pending events to database. Caller must hold _write_lock."""
-        if not self._pending_events:
-            return
-        batch = self._pending_events[:]
-        self._pending_events.clear()
-        try:
-            await asyncio.to_thread(self._flush_events_sync, batch)
-        except sqlite3.OperationalError as e:
-            if "disk" in str(e).lower() or "full" in str(e).lower():
-                logger.error(f"Disk full or I/O error during event flush: {e}")
-            else:
-                raise
-
-    def _flush_events_sync(self, batch: list[tuple[str, dict[str, Any]]]) -> None:
+    def _write_events_sync(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
         if self._conn is None:
             return
         rows = [
@@ -293,7 +267,7 @@ class SQLiteBackend:
                 event["event_type"],
                 event["event_json"],
             )
-            for workspace_id, event in batch
+            for event in events
         ]
         try:
             self._conn.executemany(
@@ -318,43 +292,30 @@ class SQLiteBackend:
                     pass
             self._conn.commit()
 
-        self._prune_events_sync(batch)
+        self._prune_events_sync(workspace_id)
 
-    def _prune_events_sync(self, batch: list[tuple[str, dict[str, Any]]]) -> None:
-        """Delete oldest events beyond max_events_per_workspace for affected workspaces."""
+    def _prune_events_sync(self, workspace_id: str) -> None:
+        """Delete oldest events beyond max_events_per_workspace."""
         if self._conn is None:
             return
-        workspace_ids = {ws_id for ws_id, _ in batch}
-        for ws_id in workspace_ids:
-            cursor = self._conn.execute(
-                "SELECT COUNT(*) FROM events WHERE workspace_id = ?", (ws_id,)
-            )
-            count = cursor.fetchone()[0]
-            if count > self.max_events:
-                excess = count - self.max_events
-                self._conn.execute(
-                    """
-                    DELETE FROM events WHERE event_id IN (
-                        SELECT event_id FROM events
-                        WHERE workspace_id = ?
-                        ORDER BY sequence ASC
-                        LIMIT ?
-                    )
-                    """,
-                    (ws_id, excess),
+        cursor = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE workspace_id = ?", (workspace_id,)
+        )
+        count = cursor.fetchone()[0]
+        if count > self.max_events:
+            excess = count - self.max_events
+            self._conn.execute(
+                """
+                DELETE FROM events WHERE event_id IN (
+                    SELECT event_id FROM events
+                    WHERE workspace_id = ?
+                    ORDER BY sequence ASC
+                    LIMIT ?
                 )
-        self._conn.commit()
-
-    async def _run_flush_task(self) -> None:
-        try:
-            while not self._closed:
-                await asyncio.sleep(self.batch_interval)
-                async with self._write_lock:
-                    await self._flush_events()
-        except asyncio.CancelledError:
-            async with self._write_lock:
-                await self._flush_events()
-            raise
+                """,
+                (workspace_id, excess),
+            )
+            self._conn.commit()
 
     async def get_events(
         self,
@@ -410,7 +371,7 @@ class SQLiteBackend:
         cursor = self._conn.execute(
             """
             SELECT event_json FROM events
-            WHERE workspace_id = ? AND event_type = 'cost_update'
+            WHERE workspace_id = ? AND event_type = 'cost.update'
             ORDER BY sequence DESC
             LIMIT ?
             """,
@@ -422,14 +383,6 @@ class SQLiteBackend:
 
     async def close(self) -> None:
         self._closed = True
-        if self._flush_task:
-            self._flush_task.cancel()
-            try:
-                await self._flush_task
-            except asyncio.CancelledError:
-                pass
-        async with self._write_lock:
-            await self._flush_events()
         if self._conn:
             await asyncio.to_thread(self._conn.close)
             self._conn = None
