@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from harnessbox.config.harness import get_harness_type
@@ -60,13 +61,17 @@ class AgentManager:
             process = self._agents[conversation_id]
             await process.send_prompt(prompt)
 
+            agent_session_id = ""
             async for event in process.stream_turn():
+                if event.session_id:
+                    agent_session_id = event.session_id
                 if not event.session_id:
-                    event.session_id = conversation_id
+                    event = replace(event, session_id=agent_session_id or conversation_id)
                 await self._sandbox.event_buffer.push(event)
                 yield event
 
-            for status_event in await process.poll_status(session_id=conversation_id, timeout=10):
+            sid = agent_session_id or conversation_id
+            for status_event in await process.poll_status(session_id=sid, timeout=10):
                 await self._sandbox.event_buffer.push(status_event)
                 yield status_event
 

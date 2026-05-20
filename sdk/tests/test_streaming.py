@@ -338,14 +338,16 @@ class TestMixedBlocks:
 
 
 class TestResults:
-    def test_message_stop_is_turn_ended(self) -> None:
+    def test_message_stop_suppressed(self) -> None:
         p = StreamParser()
+        p.parse(_stream_event("content_block_start", content_block={"type": "text"}, index=0))
         e = p.parse(_stream_event("message_stop"))
-        assert e is not None
-        assert e.event_type == EventType.TURN_ENDED
+        assert e is None
+        assert p.state.turn_active is False
+        assert p.state.active_blocks == {}
 
-    def test_assistant_message(self) -> None:
-        p = StreamParser()
+    def test_assistant_message_suppressed(self) -> None:
+        p = StreamParser(session_id="init-id")
         e = p.parse(
             _line(
                 type="assistant",
@@ -353,9 +355,29 @@ class TestResults:
                 message={"content": [{"type": "text", "text": "Done."}]},
             )
         )
-        assert e is not None
-        assert e.event_type == EventType.TURN_ENDED
-        assert p.session_id == "sess-abc"
+        assert e is None
+        assert p.session_id == "init-id"
+
+    def test_assistant_updates_tool_map(self) -> None:
+        p = StreamParser()
+        p.parse(
+            _line(
+                type="assistant",
+                session_id="sess-abc",
+                message={
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call-1",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        }
+                    ]
+                },
+            )
+        )
+        assert "call-1" in p._tool_map
+        assert p._tool_map["call-1"].name == "Bash"
 
     def test_result_event(self) -> None:
         p = StreamParser()
@@ -830,3 +852,141 @@ class TestParserState:
         p.parse(_line(type="system", subtype="init", session_id="s-2", tools=[]))
         assert p.state.session_id == "s-2"
         assert p.state.turn_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Session ID stability and single TURN_ENDED invariants
+# ---------------------------------------------------------------------------
+
+
+class TestSessionIdStability:
+    def test_session_id_precedence_in_result(self) -> None:
+        """state.session_id is preserved over result's session_id."""
+        state = ParserState(session_id="init-id", sequence=5)
+        new_state, events = parse_line(
+            state,
+            _line(type="result", session_id="api-uuid", duration_ms=100, total_cost_usd=0.01),
+        )
+        assert len(events) == 1
+        assert events[0].session_id == "init-id"
+        assert new_state.session_id == "init-id"
+
+    def test_session_id_fallback_when_state_empty(self) -> None:
+        """When state has no session_id, result's session_id is used."""
+        state = ParserState(session_id="", sequence=0)
+        new_state, events = parse_line(
+            state,
+            _line(type="result", session_id="from-result", duration_ms=50, total_cost_usd=0.02),
+        )
+        assert len(events) == 1
+        assert events[0].session_id == "from-result"
+        assert new_state.session_id == "from-result"
+
+    def test_session_id_stable_across_full_turn(self) -> None:
+        """session_id from init is not overwritten by assistant or result."""
+        p = StreamParser(persistent=True)
+        p.parse(_line(type="system", subtype="init", session_id="init-id", tools=[]))
+        assert p.session_id == "init-id"
+
+        p.parse(
+            _line(
+                type="assistant",
+                session_id="api-uuid",
+                message={"content": [{"type": "text", "text": "hi"}]},
+            )
+        )
+        assert p.session_id == "init-id"
+
+        events = p.parse_line(
+            _line(
+                type="result",
+                session_id="api-uuid",
+                duration_ms=1000,
+                total_cost_usd=0.05,
+            )
+        )
+        assert p.session_id == "init-id"
+        assert events[0].session_id == "init-id"
+
+
+class TestSingleTurnEnded:
+    def test_full_turn_produces_one_turn_ended(self) -> None:
+        """A full persistent-mode turn emits exactly 1 TURN_ENDED (from result)."""
+        p = StreamParser(persistent=True)
+        all_events: list[UniversalEvent] = []
+
+        all_events.extend(
+            p.parse_line(_line(type="system", subtype="init", session_id="s-1", tools=[]))
+        )
+        all_events.extend(
+            p.parse_line(
+                _stream_event("content_block_start", content_block={"type": "text"}, index=0)
+            )
+        )
+        all_events.extend(
+            p.parse_line(
+                _stream_event(
+                    "content_block_delta", delta={"type": "text_delta", "text": "hello"}, index=0
+                )
+            )
+        )
+        all_events.extend(
+            p.parse_line(
+                _line(
+                    type="assistant",
+                    session_id="api-uuid",
+                    message={"content": [{"type": "text", "text": "hello"}]},
+                )
+            )
+        )
+        all_events.extend(p.parse_line(_stream_event("content_block_stop", index=0)))
+        all_events.extend(p.parse_line(_stream_event("message_stop")))
+        all_events.extend(
+            p.parse_line(
+                _line(
+                    type="result",
+                    session_id="api-uuid",
+                    duration_ms=2000,
+                    total_cost_usd=0.10,
+                )
+            )
+        )
+
+        turn_ended = [e for e in all_events if e.event_type == EventType.TURN_ENDED]
+        assert len(turn_ended) == 1
+        assert turn_ended[0].cost_usd == 0.10
+        assert turn_ended[0].duration_ms == 2000
+        assert turn_ended[0].session_id == "s-1"
+
+
+# ---------------------------------------------------------------------------
+# NDJSON regression fixture — recorded from a real Claude Code session
+# ---------------------------------------------------------------------------
+
+
+class TestNDJSONFixture:
+    def test_recorded_turn_single_turn_ended(self) -> None:
+        """Replay a real recorded NDJSON session and verify event invariants."""
+        from pathlib import Path
+
+        fixture_path = Path(__file__).parent / "fixtures" / "recorded_turn.ndjson"
+        lines = fixture_path.read_text().strip().splitlines()
+
+        p = StreamParser(persistent=True)
+        all_events: list[UniversalEvent] = []
+        for line in lines:
+            all_events.extend(p.parse_line(line))
+
+        turn_ended = [e for e in all_events if e.event_type == EventType.TURN_ENDED]
+        assert len(turn_ended) == 1, f"Expected 1 TURN_ENDED, got {len(turn_ended)}"
+        assert turn_ended[0].cost_usd is not None
+        assert turn_ended[0].duration_ms is not None
+
+        session_ids = {e.session_id for e in all_events if e.session_id}
+        assert len(session_ids) == 1, f"Expected 1 session_id, got {session_ids}"
+
+        event_types = [e.event_type for e in all_events]
+        assert EventType.SESSION_STARTED in event_types or EventType.TURN_STARTED in event_types
+        assert EventType.ITEM_STARTED in event_types
+        assert EventType.ITEM_DELTA in event_types
+        assert EventType.ITEM_COMPLETED in event_types

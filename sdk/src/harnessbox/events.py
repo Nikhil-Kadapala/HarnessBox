@@ -51,11 +51,12 @@ class EventBuffer:
         self,
         storage: StorageBackend | None = None,
         session_id: str = "",
+        initial_sequence: int = 0,
     ) -> None:
         self._ring: deque[UniversalEvent] = deque(maxlen=self.RING_SIZE)
         self._subscribers: dict[str, asyncio.Queue[UniversalEvent | None]] = {}
         self._closed = False
-        self._sequence = 0
+        self._sequence = initial_sequence
 
         # Persistence
         self._storage = storage
@@ -172,14 +173,11 @@ class EventBuffer:
             return
 
         batch = self._pending[:]
-        self._pending.clear()
 
         try:
-            # Serialize events to storage format
             event_records = []
             for event in batch:
                 event_dict = asdict(event)
-                # Convert tuple to list for JSON serialization
                 if "content" in event_dict and event_dict["content"]:
                     event_dict["content"] = [asdict(c) for c in event_dict["content"]]
 
@@ -195,6 +193,7 @@ class EventBuffer:
                 )
 
             await self._storage.append_events(self._session_id, event_records)
+            self._pending.clear()
         except Exception as e:
             logger.error(f"Failed to flush events for session {self._session_id}: {e}")
 
