@@ -444,11 +444,11 @@ class TestConnectSandbox:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
-            mock_sandbox._provider = MockProvider()
-            mock_sandbox._provider._sandbox_id = "live-sandbox-42"
+            mock_sandbox.sandbox_id = "live-sandbox-42"
 
             await mgr._connect_sandbox("w-revive")
 
@@ -504,6 +504,7 @@ class TestConnectSandbox:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock(side_effect=SandboxDeadError("Sandbox was not found"))
@@ -511,6 +512,7 @@ class TestConnectSandbox:
             mock_provider.create = AsyncMock()
             mock_provider._sandbox_id = "new-sandbox-99"
             mock_sandbox._provider = mock_provider
+            mock_sandbox.sandbox_id = "new-sandbox-99"
 
             await mgr._connect_sandbox("w-expired")
 
@@ -569,6 +571,9 @@ class TestConnectSandbox:
             with (
                 patch("harnessbox.workspace_manager.Sandbox"),
                 patch("harnessbox.workspace_manager.AgentManager"),
+                patch.object(
+                    WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"
+                ),
             ):
                 await mgr._connect_sandbox("w-dead")
 
@@ -697,6 +702,7 @@ class TestConnectSandbox:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
@@ -771,6 +777,7 @@ class TestConnectSandbox:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
