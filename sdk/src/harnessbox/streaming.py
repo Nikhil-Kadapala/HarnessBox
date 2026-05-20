@@ -509,9 +509,7 @@ def _parse_stream_event(
     if se_type == "content_block_stop":
         return _on_block_stop(state, event, data)
     if se_type == "message_stop":
-        intermediate = replace(state, active_blocks={}, turn_active=False)
-        new_state, ev = _make_event(intermediate, EventType.TURN_ENDED, raw=data)
-        return new_state, ev
+        return replace(state, active_blocks={}, turn_active=False), None
 
     return state, None
 
@@ -520,7 +518,6 @@ def _parse_assistant(
     state: ParserState, data: dict[str, Any]
 ) -> tuple[ParserState, UniversalEvent | None]:
     message = data.get("message", {})
-    sid = data.get("session_id") or message.get("session_id") or state.session_id
 
     new_tool_map = dict(state.tool_map)
     for block in message.get("content", []):
@@ -532,17 +529,7 @@ def _parse_assistant(
                 input_buffer=json.dumps(block.get("input", {})),
             )
 
-    text_parts = [
-        block.get("text", "") for block in message.get("content", []) if block.get("type") == "text"
-    ]
-    intermediate = replace(state, session_id=sid, tool_map=new_tool_map)
-    new_state, ev = _make_event(
-        intermediate,
-        EventType.TURN_ENDED,
-        metadata={"text": "\n".join(text_parts)} if text_parts else {},
-        raw=data,
-    )
-    return new_state, ev
+    return replace(state, tool_map=new_tool_map), None
 
 
 def _parse_user(
@@ -648,7 +635,7 @@ def _parse_result(
 
     logger = logging.getLogger("harnessbox.streaming")
 
-    sid = data.get("session_id") or state.session_id
+    sid = state.session_id or data.get("session_id", "")
     is_error = data.get("is_error", False)
     if is_error:
         logger.error("Claude agent error - result data: %s", data)
