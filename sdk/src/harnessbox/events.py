@@ -62,6 +62,7 @@ class EventBuffer:
         self._storage = storage
         self._session_id = session_id
         self._pending: list[UniversalEvent] = []
+        self._flush_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
 
         # Start flush task if storage enabled
@@ -75,7 +76,11 @@ class EventBuffer:
 
     @property
     def latest_sequence(self) -> int:
-        """Return the sequence number of the most recent event, or 0 if empty."""
+        """Return the sequence number of the most recent event.
+
+        When constructed with ``initial_sequence``, this reflects the continuation
+        point even before new events arrive (enables gapless timeline on reconnect).
+        """
         return self._sequence
 
     async def push(self, event: UniversalEvent) -> None:
@@ -168,34 +173,45 @@ class EventBuffer:
             self.unsubscribe(sub_id)
 
     async def _flush_events(self) -> None:
-        """Flush pending events to storage."""
+        """Flush pending events to storage.
+
+        Uses a lock to prevent concurrent flushes and swaps _pending atomically
+        so events arriving during the await are not lost.
+        """
         if not self._storage or not self._pending:
             return
 
-        batch = self._pending[:]
+        async with self._flush_lock:
+            if not self._pending:
+                return
 
-        try:
-            event_records = []
-            for event in batch:
-                event_dict = asdict(event)
-                if "content" in event_dict and event_dict["content"]:
-                    event_dict["content"] = [asdict(c) for c in event_dict["content"]]
+            # Swap atomically: new events during await go into fresh list
+            batch = self._pending
+            self._pending = []
 
-                event_records.append(
-                    {
-                        "event_id": event.event_id,
-                        "session_id": self._session_id,
-                        "sequence": event.sequence,
-                        "timestamp": event.timestamp,
-                        "event_type": event.event_type.value,
-                        "event_json": json.dumps(event_dict),
-                    }
-                )
+            try:
+                event_records = []
+                for event in batch:
+                    event_dict = asdict(event)
+                    if "content" in event_dict and event_dict["content"]:
+                        event_dict["content"] = [asdict(c) for c in event_dict["content"]]
 
-            await self._storage.append_events(self._session_id, event_records)
-            self._pending.clear()
-        except Exception as e:
-            logger.error(f"Failed to flush events for session {self._session_id}: {e}")
+                    event_records.append(
+                        {
+                            "event_id": event.event_id,
+                            "session_id": self._session_id,
+                            "sequence": event.sequence,
+                            "timestamp": event.timestamp,
+                            "event_type": event.event_type.value,
+                            "event_json": json.dumps(event_dict),
+                        }
+                    )
+
+                await self._storage.append_events(self._session_id, event_records)
+            except Exception as e:
+                # Re-queue failed batch at the front so they retry next flush
+                self._pending = batch + self._pending
+                logger.error(f"Failed to flush events for session {self._session_id}: {e}")
 
     async def _run_flush_task(self) -> None:
         """Background task: flush every BATCH_INTERVAL seconds."""
