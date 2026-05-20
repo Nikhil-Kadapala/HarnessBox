@@ -83,13 +83,18 @@ class EventBuffer:
         """
         return self._sequence
 
-    async def push(self, event: UniversalEvent) -> None:
+    async def push(self, event: UniversalEvent) -> UniversalEvent:
         """Push an event to the ring and broadcast to subscribers.
 
         Assigns a monotonically increasing sequence number, making EventBuffer
         the sole authority on event ordering regardless of source.
 
         If storage is enabled, the event is also queued for batched persistence.
+
+        Returns:
+            The event with its authoritative sequence number assigned.
+            Callers must yield/use this returned event (not the original)
+            to ensure SSE streams carry correct sequence IDs.
         """
         self._sequence += 1
         event = UniversalEvent(
@@ -125,6 +130,8 @@ class EventBuffer:
             # Immediate flush if batch size reached
             if len(self._pending) >= self.BATCH_SIZE:
                 await self._flush_events()
+
+        return event
 
     def replay(self, after_sequence: int | None = None) -> list[UniversalEvent]:
         """Return events from the ring buffer after the given sequence number."""

@@ -680,28 +680,16 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        if info.status not in ("active", "streaming"):
+        try:
+            await mgr.pause_workspace(session_id)
+        except InvalidTransitionError as exc:
             raise HTTPException(
                 status_code=409, detail=f"Cannot pause session in state: {info.status}"
-            )
-
-        try:
-            # Only call sandbox.pause() if not already paused at sandbox level
-            if info.sandbox._state == WorkspaceState.ACTIVE:
-                # Stop agent process before pausing sandbox
-                if info.sandbox._agent_process:
-                    try:
-                        await info.sandbox._agent_process.stop()
-                    except Exception:
-                        pass
-                    info.sandbox._agent_process = None
-                # Pause sandbox and store ID for resume
-                info.sandbox._paused_sandbox_id = await info.sandbox.pause()
-            info.status = WorkspaceState.PAUSED.value
+            ) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        return _session_response(info)
+        return _session_response(mgr.get_workspace(session_id))
 
     @app.post("/v1/workspaces/{session_id}/resume", response_model=SessionResponse)
     async def resume_session(session_id: str) -> SessionResponse:
@@ -710,15 +698,16 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        if info.status != "paused":
+        try:
+            await mgr.resume_workspace(session_id)
+        except InvalidTransitionError as exc:
             raise HTTPException(
                 status_code=409, detail=f"Cannot resume session in state: {info.status}"
-            )
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        # Set status to active. The actual sandbox resume + agent restart
-        # happens lazily in _ensure_agent_ready() on the next prompt.
-        info.status = WorkspaceState.ACTIVE.value
-        return _session_response(info)
+        return _session_response(mgr.get_workspace(session_id))
 
     @app.post("/v1/workspaces/{session_id}/stop", status_code=204)
     async def stop_session(session_id: str) -> Response:

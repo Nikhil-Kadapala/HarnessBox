@@ -67,12 +67,12 @@ class AgentManager:
                     agent_session_id = event.session_id
                 if not event.session_id:
                     event = replace(event, session_id=agent_session_id or conversation_id)
-                await self._sandbox.event_buffer.push(event)
+                event = await self._sandbox.event_buffer.push(event)
                 yield event
 
             sid = agent_session_id or conversation_id
             for status_event in await process.poll_status(session_id=sid, timeout=10):
-                await self._sandbox.event_buffer.push(status_event)
+                status_event = await self._sandbox.event_buffer.push(status_event)
                 yield status_event
 
     async def _spawn_agent(self, conversation_id: str, harness: str) -> None:

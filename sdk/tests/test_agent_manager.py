@@ -23,7 +23,7 @@ def mock_sandbox():
     sandbox._skip_permissions = False
     sandbox._cwd = "/workspace"
     sandbox.event_buffer = MagicMock()
-    sandbox.event_buffer.push = AsyncMock()
+    sandbox.event_buffer.push = AsyncMock(side_effect=lambda e: e)
     return sandbox
 
 
