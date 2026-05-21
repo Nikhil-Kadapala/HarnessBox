@@ -992,9 +992,12 @@ class WorkspaceManager:
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox, restart idle timer."""
         info = self.get_workspace(workspace_id)
-        if info.runtime_state != RuntimeState.PAUSED.value:
-            raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
-        await self._resume_workspace(workspace_id)
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+        async with self._locks[workspace_id]:
+            if info.runtime_state != RuntimeState.PAUSED.value:
+                raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
+            await self._resume_workspace_locked(workspace_id, info)
 
     async def destroy_workspace(self, workspace_id: str) -> None:
         """Destroy a workspace and kill its sandbox.
@@ -1143,43 +1146,46 @@ class WorkspaceManager:
                     await asyncio.sleep(2**attempt)  # Exponential backoff
 
     async def _resume_workspace(self, workspace_id: str) -> None:
-        """Resume paused workspace with transparent snapshot recovery."""
+        """Resume paused workspace (acquires lock internally)."""
         info = self.get_workspace(workspace_id)
-        if info.runtime_state != RuntimeState.PAUSED.value:
-            return
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+        async with self._locks[workspace_id]:
+            if info.runtime_state != RuntimeState.PAUSED.value:
+                return
+            await self._resume_workspace_locked(workspace_id, info)
 
+    async def _resume_workspace_locked(
+        self, workspace_id: str, info: "WorkspaceInstance"
+    ) -> None:
+        """Resume workspace internals. Caller must hold self._locks[workspace_id]."""
         if not info.sandbox:
             await self._connect_sandbox(workspace_id)
             return
 
-        async with self._locks[workspace_id]:
-            try:
-                # Try to resume with retries
-                await self._try_resume_sandbox(info)
-            except (TimeoutException, ConnectException, SandboxDeadError) as e:
-                # Check if sandbox expired or was killed
-                if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
-                    await self._recover_from_snapshot(workspace_id, info, cause=e)
-                else:
-                    raise
+        try:
+            await self._try_resume_sandbox(info)
+        except (TimeoutException, ConnectException, SandboxDeadError) as e:
+            if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
+                await self._recover_from_snapshot(workspace_id, info, cause=e)
+            else:
+                raise
 
-            info.runtime_state = RuntimeState.ACTIVE.value
-            info.last_active = datetime.now(timezone.utc).isoformat()
+        info.runtime_state = RuntimeState.ACTIVE.value
+        info.last_active = datetime.now(timezone.utc).isoformat()
 
-            # Persist
-            if self._storage:
-                await self._storage.update_workspace(
-                    workspace_id,
-                    runtime_state=RuntimeState.ACTIVE.value,
-                    last_active=info.last_active,
-                    provider_sandbox_id=info.provider_sandbox_id,
-                )
+        if self._storage:
+            await self._storage.update_workspace(
+                workspace_id,
+                runtime_state=RuntimeState.ACTIVE.value,
+                last_active=info.last_active,
+                provider_sandbox_id=info.provider_sandbox_id,
+            )
 
-            # Restart idle countdown now that workspace is active again
-            if self._auto_pause:
-                self._start_idle_timer(workspace_id)
+        if self._auto_pause:
+            self._start_idle_timer(workspace_id)
 
-            logger.info(f"Resumed workspace {workspace_id}")
+        logger.info(f"Resumed workspace {workspace_id}")
 
     async def _recover_from_snapshot(
         self,

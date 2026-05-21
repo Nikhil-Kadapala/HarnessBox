@@ -395,6 +395,79 @@ class TestWorkspacePooling:
         instance.resume.assert_called_once_with("storage-sandbox")
 
 
+class TestResumeWorkspaceRaceCondition:
+    """Verify resume_workspace checks state inside the lock (no TOCTOU race)."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_resume_one_wins(self) -> None:
+        """Two concurrent resume_workspace calls: one succeeds, the other raises."""
+        import asyncio
+
+        from harnessbox.workspace import GitWorkspace
+
+        mgr = WorkspaceManager()
+        workspace = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="main",
+        )
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentManager,
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.pause = AsyncMock(return_value="paused-id")
+            instance.resume = AsyncMock()
+            instance.create_snapshot = AsyncMock(return_value="snap-1")
+            instance._skip_permissions = False
+            instance._cwd = "/workspace"
+            instance._workspace = workspace
+
+            agent_mgr_instance = MockAgentManager.return_value
+            agent_mgr_instance.shutdown_all = AsyncMock()
+
+            config = WorkspaceConfig(workspace=workspace)
+            await mgr.create_workspace(config, workspace_id="w-race")
+            await mgr._pause_workspace("w-race")
+
+            assert mgr.get_workspace("w-race").runtime_state == RuntimeState.PAUSED.value
+
+            results = await asyncio.gather(
+                mgr.resume_workspace("w-race"),
+                mgr.resume_workspace("w-race"),
+                return_exceptions=True,
+            )
+
+        successes = [r for r in results if r is None]
+        errors = [r for r in results if isinstance(r, InvalidTransitionError)]
+        assert len(successes) == 1
+        assert len(errors) == 1
+
+    @pytest.mark.asyncio
+    async def test_internal_resume_skips_when_already_active(self) -> None:
+        """_resume_workspace (internal) silently returns if not paused."""
+        mgr = WorkspaceManager()
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.resume = AsyncMock()
+            instance._skip_permissions = False
+            instance._cwd = "/workspace"
+            instance._workspace = None
+
+            config = WorkspaceConfig()
+            await mgr.create_workspace(config, workspace_id="w-active")
+
+        assert mgr.get_workspace("w-active").runtime_state == RuntimeState.ACTIVE.value
+        await mgr._resume_workspace("w-active")
+        assert mgr.get_workspace("w-active").runtime_state == RuntimeState.ACTIVE.value
+
+
 class TestConnectSandbox:
     """Test lazy sandbox reconnection for storage-loaded workspaces."""
 
