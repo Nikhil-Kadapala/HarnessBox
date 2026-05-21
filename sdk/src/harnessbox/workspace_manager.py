@@ -221,6 +221,12 @@ class WorkspaceManager:
         # never auto-pause a workspace that still has an active agent turn running.
         self._active_turns: dict[str, int] = {}
 
+    def _ensure_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Return the per-workspace lock, creating it if absent."""
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+        return self._locks[workspace_id]
+
     @classmethod
     async def create(
         cls,
@@ -800,10 +806,7 @@ class WorkspaceManager:
                 "is configured — cannot reconnect without stored configuration."
             )
 
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             info = self.get_workspace(workspace_id)
 
             # Re-check under lock — another concurrent prompt may have connected already
@@ -982,9 +985,7 @@ class WorkspaceManager:
     async def pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace: shutdown agents, snapshot, suspend sandbox, persist."""
         info = self.get_workspace(workspace_id)
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             if info.runtime_state != RuntimeState.ACTIVE.value:
                 raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.PAUSED)
             await self._pause_workspace_locked(workspace_id, info)
@@ -992,9 +993,10 @@ class WorkspaceManager:
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox, restart idle timer."""
         info = self.get_workspace(workspace_id)
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-        async with self._locks[workspace_id]:
+        if not info.sandbox:
+            await self._connect_sandbox(workspace_id)
+            return
+        async with self._ensure_lock(workspace_id):
             if info.runtime_state != RuntimeState.PAUSED.value:
                 raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
             await self._resume_workspace_locked(workspace_id, info)
@@ -1006,8 +1008,7 @@ class WorkspaceManager:
         """
         self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
-        async with self._locks[workspace_id]:
-            # Shutdown all agents
+        async with self._ensure_lock(workspace_id):
             if info.agent_manager:
                 await info.agent_manager.shutdown_all()
 
@@ -1064,7 +1065,7 @@ class WorkspaceManager:
         if not info.sandbox:
             return
 
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             await self._pause_workspace_locked(workspace_id, info)
 
     async def _pause_workspace_locked(self, workspace_id: str, info: WorkspaceInstance) -> None:
@@ -1148,19 +1149,16 @@ class WorkspaceManager:
     async def _resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace (acquires lock internally)."""
         info = self.get_workspace(workspace_id)
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-        async with self._locks[workspace_id]:
+        if not info.sandbox:
+            await self._connect_sandbox(workspace_id)
+            return
+        async with self._ensure_lock(workspace_id):
             if info.runtime_state != RuntimeState.PAUSED.value:
                 return
             await self._resume_workspace_locked(workspace_id, info)
 
     async def _resume_workspace_locked(self, workspace_id: str, info: "WorkspaceInstance") -> None:
         """Resume workspace internals. Caller must hold self._locks[workspace_id]."""
-        if not info.sandbox:
-            await self._connect_sandbox(workspace_id)
-            return
-
         try:
             await self._try_resume_sandbox(info)
         except (TimeoutException, ConnectException, SandboxDeadError) as e:
