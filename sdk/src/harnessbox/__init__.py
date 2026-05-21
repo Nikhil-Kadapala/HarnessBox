@@ -25,10 +25,16 @@ from harnessbox.credentials import (
 from harnessbox.events import EventBuffer
 from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets, Session, WorkspaceMode
 from harnessbox.lifecycle import (
+    VALID_RUNTIME_TRANSITIONS,
     VALID_TRANSITIONS,
+    VALID_WORKFLOW_TRANSITIONS,
     InvalidTransitionError,
+    RuntimeState,
+    WorkflowState,
     WorkspaceState,
+    validate_runtime_transition,
     validate_transition,
+    validate_workflow_transition,
 )
 from harnessbox.process import AgentProcess
 from harnessbox.providers import CommandResult, SandboxDeadError, SandboxProvider
@@ -79,10 +85,16 @@ __all__ = [
     "GUARD_CATALOG",
     "InvalidTransitionError",
     "SecurityPolicy",
+    "RuntimeState",
+    "WorkflowState",
     "WorkspaceState",
+    "VALID_RUNTIME_TRANSITIONS",
+    "VALID_WORKFLOW_TRANSITIONS",
     "VALID_TRANSITIONS",
     "build_settings",
     "merge_guard_sets",
+    "validate_runtime_transition",
+    "validate_workflow_transition",
     "validate_transition",
     # Streaming
     "AgentStreamEvent",

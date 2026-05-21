@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState
+from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
 from .conftest import MockProvider
@@ -60,7 +60,7 @@ class TestWorkspaceManager:
 
         assert info.workspace_id == "test-1"
         assert info.harness == "claude-code"
-        assert info.status == "active"
+        assert info.runtime_state == "active"
 
     @pytest.mark.asyncio
     async def test_get_workspace(self, mock_provider: MockProvider) -> None:
@@ -182,8 +182,8 @@ class TestTransitionWorkspace:
             instance._cwd = "/workspace"
             await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
 
-        info = mgr.transition_workspace("w-1", "in_review")
-        assert info.status == "in_review"
+        info = mgr.transition_workflow("w-1", "in_review")
+        assert info.workflow_state == "in_review"
 
     @pytest.mark.asyncio
     async def test_invalid_transition_raises(self) -> None:
@@ -202,12 +202,12 @@ class TestTransitionWorkspace:
             await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
 
         with pytest.raises(InvalidTransitionError):
-            mgr.transition_workspace("w-1", "merged")
+            mgr.transition_workflow("w-1", "merged")
 
     def test_transition_unknown_workspace_raises(self) -> None:
         mgr = WorkspaceManager()
         with pytest.raises(WorkspaceNotFoundError):
-            mgr.transition_workspace("nope", "in_review")
+            mgr.transition_workflow("nope", "in_review")
 
 
 class TestFindByRepoBranch:
@@ -290,7 +290,7 @@ class TestWorkspacePooling:
 
         assert result.remote == "https://github.com/user/repo.git"
         assert result.branch == "main"
-        assert result.status == WorkspaceState.ACTIVE.value
+        assert result.runtime_state == RuntimeState.ACTIVE.value
 
     @pytest.mark.asyncio
     async def test_get_or_create_resumes_paused_in_memory(self):
@@ -325,7 +325,7 @@ class TestWorkspacePooling:
 
             # Pause it
             await mgr._pause_workspace("w-1")
-            assert info.status == WorkspaceState.PAUSED.value
+            assert info.runtime_state == RuntimeState.PAUSED.value
 
             # Pool hit: get_or_create should resume
             result = await mgr.get_or_create_workspace(
@@ -335,7 +335,7 @@ class TestWorkspacePooling:
             )
 
         assert result.workspace_id == "w-1"
-        assert result.status == WorkspaceState.ACTIVE.value
+        assert result.runtime_state == RuntimeState.ACTIVE.value
         instance.resume.assert_called_once()
 
     @pytest.mark.asyncio
@@ -369,7 +369,8 @@ class TestWorkspacePooling:
                 "provider_sandbox_id": "storage-sandbox",
                 "snapshot_id": "storage-snapshot",
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": '{"timeout": 300, "skip_permissions": false}',
@@ -390,7 +391,7 @@ class TestWorkspacePooling:
             )
 
         assert result.workspace_id == "w-storage"
-        assert result.status == WorkspaceState.ACTIVE.value
+        assert result.runtime_state == RuntimeState.ACTIVE.value
         instance.resume.assert_called_once_with("storage-sandbox")
 
 
@@ -417,7 +418,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": "live-sandbox-42",
                 "snapshot_id": "snap-1",
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300, "skip_permissions": true}',
@@ -432,7 +434,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="live-sandbox-42",
             snapshot_id="snap-1",
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -454,7 +457,7 @@ class TestConnectSandbox:
 
         assert info.sandbox is not None
         assert info.agent_manager is not None
-        assert info.status == WorkspaceState.ACTIVE.value
+        assert info.runtime_state == RuntimeState.ACTIVE.value
         mock_sandbox.resume.assert_called_once_with("live-sandbox-42")
 
     @pytest.mark.asyncio
@@ -478,7 +481,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": "dead-sandbox",
                 "snapshot_id": "snap-recover",
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 600, "skip_permissions": false}',
@@ -492,7 +496,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="dead-sandbox",
             snapshot_id="snap-recover",
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -516,7 +521,7 @@ class TestConnectSandbox:
 
             await mgr._connect_sandbox("w-expired")
 
-        assert info.status == WorkspaceState.ACTIVE.value
+        assert info.runtime_state == RuntimeState.ACTIVE.value
         assert info.sandbox is not None
         mock_provider.create.assert_called_once_with(
             env_vars={},
@@ -544,7 +549,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": "{}",
@@ -558,7 +564,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id=None,
             snapshot_id=None,
-            status=WorkspaceState.ACTIVE.value,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -592,7 +599,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="sb-1",
             snapshot_id=None,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -624,7 +632,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": "sb-1",
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300}',
@@ -638,7 +647,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="sb-1",
             snapshot_id=None,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -676,7 +686,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": "sb-cfg",
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 600, "session_timeout": 3600, "env_var_keys": ["MY_KEY"]}',
@@ -690,7 +701,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="sb-cfg",
             snapshot_id=None,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -739,7 +751,8 @@ class TestConnectSandbox:
                 "provider_sandbox_id": "prompt-sandbox",
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
+                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300, "skip_permissions": true}',
@@ -753,7 +766,8 @@ class TestConnectSandbox:
             provider="e2b",
             provider_sandbox_id="prompt-sandbox",
             snapshot_id=None,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -796,7 +810,7 @@ class TestConnectSandbox:
 
         assert info.sandbox is not None
         assert info.agent_manager is not None
-        assert info.status == WorkspaceState.ACTIVE.value
+        assert info.runtime_state == RuntimeState.ACTIVE.value
         # First event is USER_PROMPT, last is from agent
         assert events[0].event_type == StreamEventType.USER_PROMPT
         assert events[-1].event_type == StreamEventType.TURN_ENDED

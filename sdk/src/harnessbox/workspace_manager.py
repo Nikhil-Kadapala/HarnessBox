@@ -26,7 +26,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from harnessbox.agent_manager import AgentManager
-from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState, validate_transition
+from harnessbox.lifecycle import (
+    InvalidTransitionError,
+    RuntimeState,
+    WorkflowState,
+    validate_runtime_transition,
+    validate_workflow_transition,
+)
 from harnessbox.providers import SandboxDeadError, SandboxProvider
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
@@ -103,6 +109,10 @@ class WorkspaceInstance:
     The sandbox and agent_manager fields may be None when the workspace is
     loaded from storage (disconnected). They are connected lazily on first
     prompt via WorkspaceManager._ensure_sandbox().
+
+    State is split into two independent dimensions:
+    - runtime_state: sandbox infrastructure (STARTING/ACTIVE/PAUSED/ENDING/ENDED/FAILED)
+    - workflow_state: project lifecycle (BACKLOG/IN_PROGRESS/IN_REVIEW/MERGED/ARCHIVED)
     """
 
     workspace_id: str
@@ -111,7 +121,8 @@ class WorkspaceInstance:
     provider: str
     provider_sandbox_id: str | None
     snapshot_id: str | None
-    status: str
+    runtime_state: str
+    workflow_state: str
     created_at: str
     last_active: str
     harness: str = "claude-code"
@@ -159,7 +170,8 @@ class WorkspaceInstance:
             "provider_sandbox_id": self.provider_sandbox_id,
             "snapshot_id": self.snapshot_id,
             "harness": self.harness,
-            "status": self.status,
+            "runtime_state": self.runtime_state,
+            "workflow_state": self.workflow_state,
             "created_at": self.created_at,
             "last_active": self.last_active,
             "config_json": config_json,
@@ -312,7 +324,8 @@ class WorkspaceManager:
             provider=provider_name,
             provider_sandbox_id=sandbox.sandbox_id,
             snapshot_id=None,
-            status=WorkspaceState.ACTIVE.value,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state=WorkflowState.IN_PROGRESS.value,
             created_at=datetime.now(timezone.utc).isoformat(),
             last_active=datetime.now(timezone.utc).isoformat(),
             harness=config.harness,
@@ -384,7 +397,8 @@ class WorkspaceManager:
                     provider=record["provider"],
                     provider_sandbox_id=record.get("provider_sandbox_id"),
                     snapshot_id=record.get("snapshot_id"),
-                    status=record["status"],
+                    runtime_state=record["runtime_state"],
+                    workflow_state=record.get("workflow_state", WorkflowState.BACKLOG.value),
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
                     harness=record["harness"],
@@ -531,7 +545,7 @@ class WorkspaceManager:
                         event.event_type == "error"
                         and event.metadata.get("error_code") == "SANDBOX_DEAD"
                     ):
-                        info.status = WorkspaceState.FAILED.value
+                        info.runtime_state = RuntimeState.FAILED.value
 
                     if event.cost_usd is not None:
                         info.total_cost_usd = event.cost_usd
@@ -583,7 +597,7 @@ class WorkspaceManager:
                 self._active_turns[workspace_id] = active
                 if active == 0 and self._auto_pause:
                     ws = self._workspaces.get(workspace_id)
-                    if ws and ws.status == WorkspaceState.ACTIVE.value:
+                    if ws and ws.runtime_state == RuntimeState.ACTIVE.value:
                         self._start_idle_timer(workspace_id)
 
     def find_by_repo_branch(self, remote: str, branch: str) -> WorkspaceInstance | None:
@@ -621,7 +635,7 @@ class WorkspaceManager:
         # Check in-memory pool first
         for info in self._workspaces.values():
             if (
-                info.status == WorkspaceState.PAUSED.value
+                info.runtime_state == RuntimeState.PAUSED.value
                 and info.remote == remote
                 and info.branch == branch
             ):
@@ -634,7 +648,7 @@ class WorkspaceManager:
         # Check storage (historical paused workspaces)
         if self._storage:
             candidates = await self._storage.list_workspaces(
-                status=WorkspaceState.PAUSED.value,
+                runtime_state=RuntimeState.PAUSED.value,
                 remote=remote,
                 branch=branch,
                 limit=1,
@@ -693,7 +707,8 @@ class WorkspaceManager:
             provider=record["provider"],
             provider_sandbox_id=record.get("provider_sandbox_id"),
             snapshot_id=record.get("snapshot_id"),
-            status=record["status"],
+            runtime_state=record["runtime_state"],
+            workflow_state=record.get("workflow_state", WorkflowState.BACKLOG.value),
             created_at=record["created_at"],
             last_active=record.get("last_active", record["created_at"]),
             harness=record["harness"],
@@ -761,7 +776,7 @@ class WorkspaceManager:
 
         Handles all cold-start cases without pre-flight status checks:
         - sandbox=None (loaded from storage) → reconnect from stored config
-        - status=paused (sandbox object exists but is paused) → resume
+        - runtime_state=paused (sandbox object exists but is paused) → resume
 
         If the workspace is already active with a live sandbox, this is a no-op.
         """
@@ -769,7 +784,7 @@ class WorkspaceManager:
 
         if info.sandbox is None:
             await self._connect_sandbox(workspace_id)
-        elif info.status == WorkspaceState.PAUSED.value:
+        elif info.runtime_state == RuntimeState.PAUSED.value:
             await self._resume_workspace(workspace_id)
 
     async def _connect_sandbox(self, workspace_id: str) -> None:
@@ -883,14 +898,14 @@ class WorkspaceManager:
 
             info.sandbox = sandbox
             info.agent_manager = agent_mgr
-            info.status = WorkspaceState.ACTIVE.value
+            info.runtime_state = RuntimeState.ACTIVE.value
             info.last_active = datetime.now(timezone.utc).isoformat()
             info.provider_sandbox_id = sandbox.sandbox_id
 
         if self._storage:
             await self._storage.update_workspace(
                 workspace_id,
-                status=WorkspaceState.ACTIVE.value,
+                runtime_state=RuntimeState.ACTIVE.value,
                 last_active=info.last_active,
                 provider_sandbox_id=info.provider_sandbox_id,
             )
@@ -918,26 +933,47 @@ class WorkspaceManager:
         )
         # provider.create() leaves Sandbox in STARTING state — transition to ACTIVE
         # since we're bypassing the normal setup() pipeline.
-        sandbox._transition(WorkspaceState.ACTIVE)
+        sandbox._transition(RuntimeState.ACTIVE)
 
-    def transition_workspace(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
-        """Transition workspace to a new state with validation.
+    def transition_runtime(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
+        """Transition workspace runtime state with validation.
 
         If storage is enabled, the state change is persisted.
         """
         info = self.get_workspace(workspace_id)
-        current = WorkspaceState(info.status)
-        target = WorkspaceState(target_state)
-        if not validate_transition(current, target):
+        current = RuntimeState(info.runtime_state)
+        target = RuntimeState(target_state)
+        if not validate_runtime_transition(current, target):
             raise InvalidTransitionError(current, target)
-        info.status = target.value
+        info.runtime_state = target.value
 
-        # Persist state change
         if self._storage:
             asyncio.create_task(
                 self._storage.update_workspace(
                     workspace_id,
-                    status=target.value,
+                    runtime_state=target.value,
+                )
+            )
+
+        return info
+
+    def transition_workflow(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
+        """Transition workspace workflow state with validation.
+
+        If storage is enabled, the state change is persisted.
+        """
+        info = self.get_workspace(workspace_id)
+        current = WorkflowState(info.workflow_state)
+        target = WorkflowState(target_state)
+        if not validate_workflow_transition(current, target):
+            raise InvalidTransitionError(current, target)
+        info.workflow_state = target.value
+
+        if self._storage:
+            asyncio.create_task(
+                self._storage.update_workspace(
+                    workspace_id,
+                    workflow_state=target.value,
                 )
             )
 
@@ -949,15 +985,15 @@ class WorkspaceManager:
         if workspace_id not in self._locks:
             self._locks[workspace_id] = asyncio.Lock()
         async with self._locks[workspace_id]:
-            if info.status != WorkspaceState.ACTIVE.value:
-                raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.PAUSED)
+            if info.runtime_state != RuntimeState.ACTIVE.value:
+                raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.PAUSED)
             await self._pause_workspace_locked(workspace_id, info)
 
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox, restart idle timer."""
         info = self.get_workspace(workspace_id)
-        if info.status != WorkspaceState.PAUSED.value:
-            raise InvalidTransitionError(WorkspaceState(info.status), WorkspaceState.ACTIVE)
+        if info.runtime_state != RuntimeState.PAUSED.value:
+            raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
         await self._resume_workspace(workspace_id)
 
     async def destroy_workspace(self, workspace_id: str) -> None:
@@ -976,14 +1012,14 @@ class WorkspaceManager:
             if info.sandbox:
                 await info.sandbox.kill()
 
-            info.status = WorkspaceState.FAILED.value
+            info.runtime_state = RuntimeState.FAILED.value
 
         # Persist final state
         if self._storage:
             try:
                 await self._storage.update_workspace(
                     workspace_id,
-                    status=WorkspaceState.FAILED.value,
+                    runtime_state=RuntimeState.FAILED.value,
                 )
             except Exception as e:
                 logger.error(f"Failed to persist destroyed workspace {workspace_id}: {e}")
@@ -1012,7 +1048,7 @@ class WorkspaceManager:
         except asyncio.CancelledError:
             return
         info = self._workspaces.get(workspace_id)
-        if info and info.status == WorkspaceState.ACTIVE.value:
+        if info and info.runtime_state == RuntimeState.ACTIVE.value:
             try:
                 await self._pause_workspace(workspace_id)
             except Exception as e:
@@ -1049,7 +1085,7 @@ class WorkspaceManager:
 
         info.provider_sandbox_id = provider_sandbox_id
         info.snapshot_id = snapshot_id
-        info.status = WorkspaceState.PAUSED.value
+        info.runtime_state = RuntimeState.PAUSED.value
 
         # Persist
         if self._storage:
@@ -1057,7 +1093,7 @@ class WorkspaceManager:
                 workspace_id,
                 provider_sandbox_id=provider_sandbox_id,
                 snapshot_id=snapshot_id,
-                status=WorkspaceState.PAUSED.value,
+                runtime_state=RuntimeState.PAUSED.value,
             )
 
         logger.info(f"Paused workspace {workspace_id}")
@@ -1109,7 +1145,7 @@ class WorkspaceManager:
     async def _resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace with transparent snapshot recovery."""
         info = self.get_workspace(workspace_id)
-        if info.status != WorkspaceState.PAUSED.value:
+        if info.runtime_state != RuntimeState.PAUSED.value:
             return
 
         if not info.sandbox:
@@ -1127,14 +1163,14 @@ class WorkspaceManager:
                 else:
                     raise
 
-            info.status = WorkspaceState.ACTIVE.value
+            info.runtime_state = RuntimeState.ACTIVE.value
             info.last_active = datetime.now(timezone.utc).isoformat()
 
             # Persist
             if self._storage:
                 await self._storage.update_workspace(
                     workspace_id,
-                    status=WorkspaceState.ACTIVE.value,
+                    runtime_state=RuntimeState.ACTIVE.value,
                     last_active=info.last_active,
                     provider_sandbox_id=info.provider_sandbox_id,
                 )

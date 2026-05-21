@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from harnessbox._storage.memory import MemoryBackend
-from harnessbox.lifecycle import WorkspaceState
+from harnessbox.lifecycle import RuntimeState
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ class TestWorkspaceCRUD:
             "provider_sandbox_id": None,
             "snapshot_id": None,
             "harness": "claude-code",
-            "status": WorkspaceState.ACTIVE.value,
+            "runtime_state": RuntimeState.ACTIVE.value,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "last_active": datetime.now(timezone.utc).isoformat(),
             "config_json": "{}",
@@ -63,7 +63,7 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -78,7 +78,7 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -102,7 +102,7 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -117,14 +117,14 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
             }
         )
 
-        result = await memory_backend.list_workspaces(status=WorkspaceState.PAUSED.value)
+        result = await memory_backend.list_workspaces(runtime_state=RuntimeState.PAUSED.value)
 
         assert len(result) == 1
         assert result[0]["workspace_id"] == "w-2"
@@ -141,17 +141,17 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
             }
         )
 
-        await memory_backend.update_workspace("w-1", status=WorkspaceState.PAUSED.value)
+        await memory_backend.update_workspace("w-1", runtime_state=RuntimeState.PAUSED.value)
 
         result = await memory_backend.get_workspace("w-1")
-        assert result["status"] == WorkspaceState.PAUSED.value
+        assert result["runtime_state"] == RuntimeState.PAUSED.value
 
     @pytest.mark.asyncio
     async def test_delete_workspace(self, memory_backend):
@@ -165,7 +165,7 @@ class TestWorkspaceCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -193,7 +193,7 @@ class TestUniqueConstraint:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -210,7 +210,7 @@ class TestUniqueConstraint:
                     "provider_sandbox_id": None,
                     "snapshot_id": None,
                     "harness": "claude-code",
-                    "status": WorkspaceState.ACTIVE.value,
+                    "runtime_state": RuntimeState.ACTIVE.value,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "last_active": datetime.now(timezone.utc).isoformat(),
                     "config_json": "{}",
@@ -234,7 +234,7 @@ class TestConversationCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",
@@ -274,7 +274,7 @@ class TestConversationCRUD:
                 "provider_sandbox_id": None,
                 "snapshot_id": None,
                 "harness": "claude-code",
-                "status": WorkspaceState.ACTIVE.value,
+                "runtime_state": RuntimeState.ACTIVE.value,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": "{}",

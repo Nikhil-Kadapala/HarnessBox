@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState
+from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
 
@@ -13,7 +13,7 @@ class TestConstruction:
     def test_with_provider_instance(self, mock_provider):
         sb = Sandbox(client=mock_provider, harness="claude-code")
         assert sb.provider is mock_provider
-        assert sb.state == WorkspaceState.STARTING
+        assert sb.state == RuntimeState.STARTING
 
     def test_default_agent_type_is_claude_code(self, mock_provider):
         sb = Sandbox(client=mock_provider)
@@ -41,7 +41,7 @@ class TestSetup:
     async def test_transitions_to_active(self, mock_provider):
         sb = Sandbox(client=mock_provider)
         await sb.setup()
-        assert sb.state == WorkspaceState.ACTIVE
+        assert sb.state == RuntimeState.ACTIVE
         assert sb.sandbox_id == "mock-sandbox-123"
 
     @pytest.mark.asyncio
@@ -150,7 +150,7 @@ class TestKill:
         sb = Sandbox(client=mock_provider)
         await sb.setup()
         await sb.kill()
-        assert sb.state == WorkspaceState.FAILED
+        assert sb.state == RuntimeState.FAILED
 
     @pytest.mark.asyncio
     async def test_idempotent_from_failed(self, mock_provider):
@@ -158,7 +158,7 @@ class TestKill:
         await sb.setup()
         await sb.kill()
         await sb.kill()
-        assert sb.state == WorkspaceState.FAILED
+        assert sb.state == RuntimeState.FAILED
 
     @pytest.mark.asyncio
     async def test_idempotent_from_merged(self, mock_provider):
@@ -166,7 +166,7 @@ class TestKill:
         await sb.setup()
         await sb.end()
         await sb.kill()
-        assert sb.state == WorkspaceState.MERGED
+        assert sb.state == RuntimeState.ENDED
 
 
 class TestPauseResume:
@@ -175,7 +175,7 @@ class TestPauseResume:
         sb = Sandbox(client=mock_provider)
         await sb.setup()
         sid = await sb.pause()
-        assert sb.state == WorkspaceState.PAUSED
+        assert sb.state == RuntimeState.PAUSED
         assert sid == "mock-sandbox-123"
 
     @pytest.mark.asyncio
@@ -184,7 +184,7 @@ class TestPauseResume:
         await sb.setup()
         await sb.pause()
         await sb.resume("mock-sandbox-123")
-        assert sb.state == WorkspaceState.ACTIVE
+        assert sb.state == RuntimeState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_pause_from_starting_raises(self, mock_provider):
@@ -199,7 +199,7 @@ class TestEnd:
         sb = Sandbox(client=mock_provider)
         await sb.setup()
         await sb.end()
-        assert sb.state == WorkspaceState.MERGED
+        assert sb.state == RuntimeState.ENDED
 
     @pytest.mark.asyncio
     async def test_end_from_starting_raises(self, mock_provider):
@@ -300,8 +300,8 @@ class TestContextManager:
     async def test_context_manager_kills_on_exit(self, mock_provider):
         async with Sandbox(client=mock_provider) as sb:
             await sb.setup()
-            assert sb.state == WorkspaceState.ACTIVE
-        assert sb.state.value == WorkspaceState.FAILED.value
+            assert sb.state == RuntimeState.ACTIVE
+        assert sb.state.value == RuntimeState.FAILED.value
 
     @pytest.mark.asyncio
     async def test_context_manager_kills_on_exception(self, mock_provider):
@@ -309,4 +309,4 @@ class TestContextManager:
             async with Sandbox(client=mock_provider) as sb:
                 await sb.setup()
                 raise ValueError("test error")
-        assert sb.state.value == WorkspaceState.FAILED.value
+        assert sb.state.value == RuntimeState.FAILED.value

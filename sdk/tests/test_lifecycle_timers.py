@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from harnessbox.lifecycle import WorkspaceState
+from harnessbox.lifecycle import RuntimeState
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceInstance, WorkspaceManager
 
 from .conftest import MockProvider
@@ -78,7 +78,8 @@ class TestPerWorkspaceIdleTimer:
             provider="mock",
             provider_sandbox_id="sb-1",
             snapshot_id=None,
-            status=WorkspaceState.ACTIVE.value,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state="in_progress",
             created_at="",
             last_active="",
         )
@@ -104,7 +105,8 @@ class TestPerWorkspaceIdleTimer:
             provider="mock",
             provider_sandbox_id=None,
             snapshot_id=None,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at="",
             last_active="",
         )
@@ -186,7 +188,8 @@ class TestPerWorkspaceIdleTimer:
             provider="mock",
             provider_sandbox_id=None,
             snapshot_id=None,
-            status=WorkspaceState.ACTIVE.value,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state="in_progress",
             created_at="",
             last_active="",
         )
@@ -418,7 +421,8 @@ class TestSnapshotRecovery:
             provider="mock",
             provider_sandbox_id=provider_sandbox_id,
             snapshot_id=snapshot_id,
-            status=WorkspaceState.PAUSED.value,
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
             created_at="",
             last_active="",
             sandbox=mock_sandbox,
@@ -458,7 +462,7 @@ class TestSnapshotRecovery:
 
         assert len(created_calls) == 1
         assert created_calls[0]["snapshot_id"] == "snap-1"
-        assert info.status == WorkspaceState.ACTIVE.value
+        assert info.runtime_state == RuntimeState.ACTIVE.value
         assert info.provider_sandbox_id == "sb-new"
 
     @pytest.mark.asyncio
@@ -506,7 +510,7 @@ class TestSnapshotRecovery:
         with patch.object(mgr, "_try_resume_sandbox", ok):
             await mgr._resume_workspace("w-1")
 
-        assert info.status == WorkspaceState.ACTIVE.value
+        assert info.runtime_state == RuntimeState.ACTIVE.value
 
     @pytest.mark.asyncio
     async def test_recovery_updates_storage(self) -> None:
@@ -530,7 +534,7 @@ class TestSnapshotRecovery:
                 "provider_sandbox_id": "sb-old",
                 "snapshot_id": "snap-1",
                 "harness": "claude-code",
-                "status": WorkspaceState.PAUSED.value,
+                "runtime_state": RuntimeState.PAUSED.value,
                 "created_at": "",
                 "last_active": "",
                 "config_json": "{}",

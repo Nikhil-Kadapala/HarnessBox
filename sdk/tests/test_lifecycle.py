@@ -1,110 +1,155 @@
-"""Tests for harnessbox.lifecycle — session state machine."""
+"""Tests for harnessbox.lifecycle — runtime and workflow state machines."""
 
 import pytest
 
 from harnessbox.lifecycle import (
-    VALID_TRANSITIONS,
+    VALID_RUNTIME_TRANSITIONS,
+    VALID_WORKFLOW_TRANSITIONS,
     InvalidTransitionError,
-    WorkspaceState,
-    validate_transition,
+    RuntimeState,
+    WorkflowState,
+    validate_runtime_transition,
+    validate_workflow_transition,
 )
 
 
-class TestWorkspaceState:
+class TestRuntimeState:
     def test_enum_values_match_strings(self) -> None:
-        assert WorkspaceState.BACKLOG.value == "backlog"
-        assert WorkspaceState.STARTING.value == "starting"
-        assert WorkspaceState.ACTIVE.value == "active"
-        assert WorkspaceState.PAUSED.value == "paused"
-        assert WorkspaceState.IN_REVIEW.value == "in_review"
-        assert WorkspaceState.ENDING.value == "ending"
-        assert WorkspaceState.MERGED.value == "merged"
-        assert WorkspaceState.FAILED.value == "failed"
-        assert WorkspaceState.ARCHIVED.value == "archived"
+        assert RuntimeState.STARTING.value == "starting"
+        assert RuntimeState.ACTIVE.value == "active"
+        assert RuntimeState.PAUSED.value == "paused"
+        assert RuntimeState.ENDING.value == "ending"
+        assert RuntimeState.ENDED.value == "ended"
+        assert RuntimeState.FAILED.value == "failed"
 
     def test_enum_from_string(self) -> None:
-        assert WorkspaceState("starting") is WorkspaceState.STARTING
-        assert WorkspaceState("merged") is WorkspaceState.MERGED
-        assert WorkspaceState("backlog") is WorkspaceState.BACKLOG
-        assert WorkspaceState("in_review") is WorkspaceState.IN_REVIEW
-        assert WorkspaceState("archived") is WorkspaceState.ARCHIVED
+        assert RuntimeState("starting") is RuntimeState.STARTING
+        assert RuntimeState("active") is RuntimeState.ACTIVE
+        assert RuntimeState("ended") is RuntimeState.ENDED
 
     def test_all_states_in_transitions_map(self) -> None:
-        for state in WorkspaceState:
-            assert state in VALID_TRANSITIONS
+        for state in RuntimeState:
+            assert state in VALID_RUNTIME_TRANSITIONS
 
 
-class TestValidTransitions:
+class TestWorkflowState:
+    def test_enum_values_match_strings(self) -> None:
+        assert WorkflowState.BACKLOG.value == "backlog"
+        assert WorkflowState.IN_PROGRESS.value == "in_progress"
+        assert WorkflowState.IN_REVIEW.value == "in_review"
+        assert WorkflowState.MERGED.value == "merged"
+        assert WorkflowState.ARCHIVED.value == "archived"
+
+    def test_enum_from_string(self) -> None:
+        assert WorkflowState("backlog") is WorkflowState.BACKLOG
+        assert WorkflowState("in_review") is WorkflowState.IN_REVIEW
+        assert WorkflowState("archived") is WorkflowState.ARCHIVED
+
+    def test_all_states_in_transitions_map(self) -> None:
+        for state in WorkflowState:
+            assert state in VALID_WORKFLOW_TRANSITIONS
+
+
+class TestRuntimeTransitions:
     @pytest.mark.parametrize(
         "current,target",
         [
-            (WorkspaceState.BACKLOG, WorkspaceState.STARTING),
-            (WorkspaceState.BACKLOG, WorkspaceState.ARCHIVED),
-            (WorkspaceState.STARTING, WorkspaceState.ACTIVE),
-            (WorkspaceState.STARTING, WorkspaceState.FAILED),
-            (WorkspaceState.ACTIVE, WorkspaceState.PAUSED),
-            (WorkspaceState.ACTIVE, WorkspaceState.ENDING),
-            (WorkspaceState.ACTIVE, WorkspaceState.IN_REVIEW),
-            (WorkspaceState.ACTIVE, WorkspaceState.FAILED),
-            (WorkspaceState.PAUSED, WorkspaceState.ACTIVE),
-            (WorkspaceState.PAUSED, WorkspaceState.ENDING),
-            (WorkspaceState.PAUSED, WorkspaceState.FAILED),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.ACTIVE),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.ENDING),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.MERGED),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.ARCHIVED),
-            (WorkspaceState.ENDING, WorkspaceState.MERGED),
-            (WorkspaceState.ENDING, WorkspaceState.FAILED),
-            (WorkspaceState.MERGED, WorkspaceState.ARCHIVED),
-            (WorkspaceState.FAILED, WorkspaceState.ARCHIVED),
+            (RuntimeState.STARTING, RuntimeState.ACTIVE),
+            (RuntimeState.STARTING, RuntimeState.FAILED),
+            (RuntimeState.ACTIVE, RuntimeState.PAUSED),
+            (RuntimeState.ACTIVE, RuntimeState.ENDING),
+            (RuntimeState.ACTIVE, RuntimeState.FAILED),
+            (RuntimeState.PAUSED, RuntimeState.ACTIVE),
+            (RuntimeState.PAUSED, RuntimeState.ENDING),
+            (RuntimeState.PAUSED, RuntimeState.FAILED),
+            (RuntimeState.ENDING, RuntimeState.ENDED),
+            (RuntimeState.ENDING, RuntimeState.FAILED),
         ],
     )
     def test_valid_transitions_return_true(
-        self, current: WorkspaceState, target: WorkspaceState
+        self, current: RuntimeState, target: RuntimeState
     ) -> None:
-        assert validate_transition(current, target) is True
+        assert validate_runtime_transition(current, target) is True
 
     @pytest.mark.parametrize(
         "current,target",
         [
-            (WorkspaceState.BACKLOG, WorkspaceState.ACTIVE),
-            (WorkspaceState.BACKLOG, WorkspaceState.MERGED),
-            (WorkspaceState.STARTING, WorkspaceState.MERGED),
-            (WorkspaceState.STARTING, WorkspaceState.ENDING),
-            (WorkspaceState.ACTIVE, WorkspaceState.STARTING),
-            (WorkspaceState.ACTIVE, WorkspaceState.MERGED),
-            (WorkspaceState.ACTIVE, WorkspaceState.ARCHIVED),
-            (WorkspaceState.PAUSED, WorkspaceState.MERGED),
-            (WorkspaceState.PAUSED, WorkspaceState.STARTING),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.STARTING),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.PAUSED),
-            (WorkspaceState.IN_REVIEW, WorkspaceState.FAILED),
-            (WorkspaceState.ENDING, WorkspaceState.ACTIVE),
-            (WorkspaceState.ENDING, WorkspaceState.STARTING),
-            (WorkspaceState.MERGED, WorkspaceState.ACTIVE),
-            (WorkspaceState.MERGED, WorkspaceState.STARTING),
-            (WorkspaceState.FAILED, WorkspaceState.ACTIVE),
-            (WorkspaceState.FAILED, WorkspaceState.STARTING),
-            (WorkspaceState.ARCHIVED, WorkspaceState.ACTIVE),
-            (WorkspaceState.ARCHIVED, WorkspaceState.MERGED),
+            (RuntimeState.STARTING, RuntimeState.ENDING),
+            (RuntimeState.STARTING, RuntimeState.PAUSED),
+            (RuntimeState.ACTIVE, RuntimeState.STARTING),
+            (RuntimeState.PAUSED, RuntimeState.STARTING),
+            (RuntimeState.ENDING, RuntimeState.ACTIVE),
+            (RuntimeState.ENDING, RuntimeState.STARTING),
+            (RuntimeState.ENDED, RuntimeState.ACTIVE),
+            (RuntimeState.ENDED, RuntimeState.STARTING),
+            (RuntimeState.FAILED, RuntimeState.ACTIVE),
+            (RuntimeState.FAILED, RuntimeState.STARTING),
         ],
     )
     def test_invalid_transitions_return_false(
-        self, current: WorkspaceState, target: WorkspaceState
+        self, current: RuntimeState, target: RuntimeState
     ) -> None:
-        assert validate_transition(current, target) is False
+        assert validate_runtime_transition(current, target) is False
 
     def test_terminal_states_have_no_outgoing(self) -> None:
-        assert VALID_TRANSITIONS[WorkspaceState.ARCHIVED] == frozenset()
+        assert VALID_RUNTIME_TRANSITIONS[RuntimeState.ENDED] == frozenset()
+        assert VALID_RUNTIME_TRANSITIONS[RuntimeState.FAILED] == frozenset()
+
+
+class TestWorkflowTransitions:
+    @pytest.mark.parametrize(
+        "current,target",
+        [
+            (WorkflowState.BACKLOG, WorkflowState.IN_PROGRESS),
+            (WorkflowState.BACKLOG, WorkflowState.ARCHIVED),
+            (WorkflowState.IN_PROGRESS, WorkflowState.IN_REVIEW),
+            (WorkflowState.IN_PROGRESS, WorkflowState.ARCHIVED),
+            (WorkflowState.IN_REVIEW, WorkflowState.IN_PROGRESS),
+            (WorkflowState.IN_REVIEW, WorkflowState.MERGED),
+            (WorkflowState.IN_REVIEW, WorkflowState.ARCHIVED),
+            (WorkflowState.MERGED, WorkflowState.ARCHIVED),
+        ],
+    )
+    def test_valid_transitions_return_true(
+        self, current: WorkflowState, target: WorkflowState
+    ) -> None:
+        assert validate_workflow_transition(current, target) is True
+
+    @pytest.mark.parametrize(
+        "current,target",
+        [
+            (WorkflowState.BACKLOG, WorkflowState.MERGED),
+            (WorkflowState.BACKLOG, WorkflowState.IN_REVIEW),
+            (WorkflowState.IN_PROGRESS, WorkflowState.MERGED),
+            (WorkflowState.IN_PROGRESS, WorkflowState.BACKLOG),
+            (WorkflowState.IN_REVIEW, WorkflowState.BACKLOG),
+            (WorkflowState.MERGED, WorkflowState.IN_PROGRESS),
+            (WorkflowState.MERGED, WorkflowState.IN_REVIEW),
+            (WorkflowState.ARCHIVED, WorkflowState.IN_PROGRESS),
+            (WorkflowState.ARCHIVED, WorkflowState.MERGED),
+        ],
+    )
+    def test_invalid_transitions_return_false(
+        self, current: WorkflowState, target: WorkflowState
+    ) -> None:
+        assert validate_workflow_transition(current, target) is False
+
+    def test_archived_is_terminal(self) -> None:
+        assert VALID_WORKFLOW_TRANSITIONS[WorkflowState.ARCHIVED] == frozenset()
 
 
 class TestInvalidTransitionError:
     def test_message_includes_states(self) -> None:
-        err = InvalidTransitionError(WorkspaceState.STARTING, WorkspaceState.MERGED)
+        err = InvalidTransitionError(RuntimeState.STARTING, RuntimeState.ENDING)
         assert "starting" in str(err)
-        assert "merged" in str(err)
+        assert "ending" in str(err)
 
     def test_attributes(self) -> None:
-        err = InvalidTransitionError(WorkspaceState.ACTIVE, WorkspaceState.STARTING)
-        assert err.current is WorkspaceState.ACTIVE
-        assert err.target is WorkspaceState.STARTING
+        err = InvalidTransitionError(RuntimeState.ACTIVE, RuntimeState.STARTING)
+        assert err.current is RuntimeState.ACTIVE
+        assert err.target is RuntimeState.STARTING
+
+    def test_workflow_error(self) -> None:
+        err = InvalidTransitionError(WorkflowState.BACKLOG, WorkflowState.MERGED)
+        assert "backlog" in str(err)
+        assert "merged" in str(err)

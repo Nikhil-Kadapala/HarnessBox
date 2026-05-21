@@ -38,7 +38,8 @@ class TestCreateSession:
         data = resp.json()
         assert data["session_id"] == "test-1"
         assert data["harness"] == "claude-code"
-        assert data["status"] == "active"
+        assert data["runtime_state"] == "active"
+        assert data["workflow_state"] == "in_progress"
 
 
 class TestListSessions:
@@ -254,7 +255,7 @@ class TestPauseSession:
 
         resp = client.post("/v1/workspaces/s-1/pause")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "paused"
+        assert resp.json()["runtime_state"] == "paused"
         instance.create_snapshot.assert_called_once()
         instance.pause.assert_called_once()
 
@@ -292,7 +293,7 @@ class TestResumeSession:
         client.post("/v1/workspaces/s-1/pause")
         resp = client.post("/v1/workspaces/s-1/resume")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "active"
+        assert resp.json()["runtime_state"] == "active"
 
     def test_resume_non_paused_returns_409(self, client: TestClient) -> None:
         with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
@@ -331,20 +332,20 @@ class TestTransitionSession:
             instance.setup = AsyncMock()
             client.post("/v1/workspaces", json={"session_id": session_id})
 
-    def test_valid_transition(self, client: TestClient) -> None:
+    def test_valid_workflow_transition(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "in_review"},
+            json={"dimension": "workflow", "target_state": "in_review"},
         )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "in_review"
+        assert resp.json()["workflow_state"] == "in_review"
 
     def test_invalid_transition_returns_409(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "merged"},
+            json={"dimension": "workflow", "target_state": "merged"},
         )
         assert resp.status_code == 409
 
@@ -352,35 +353,35 @@ class TestTransitionSession:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "imaginary"},
+            json={"dimension": "workflow", "target_state": "imaginary"},
         )
         assert resp.status_code == 400
 
     def test_unknown_session_returns_404(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/workspaces/nonexistent/transition",
-            json={"target_state": "in_review"},
+            json={"dimension": "workflow", "target_state": "in_review"},
         )
         assert resp.status_code == 404
 
-    def test_chained_transitions(self, client: TestClient) -> None:
+    def test_chained_workflow_transitions(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "in_review"},
+            json={"dimension": "workflow", "target_state": "in_review"},
         )
         assert resp.status_code == 200
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "merged"},
+            json={"dimension": "workflow", "target_state": "merged"},
         )
         assert resp.status_code == 200
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"target_state": "archived"},
+            json={"dimension": "workflow", "target_state": "archived"},
         )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "archived"
+        assert resp.json()["workflow_state"] == "archived"
 
 
 class TestRenameSession:
