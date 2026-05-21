@@ -99,3 +99,5 @@ class TestBuildGuardScript:
         script = build_guard_script(SecurityPolicy(credential_guards=False))
         ast.parse(script)
         assert "BLOCKED" in script
+        assert "AWS_SECRET_ACCESS_KEY" not in script
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in script

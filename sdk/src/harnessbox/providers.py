@@ -113,7 +113,13 @@ class SandboxProvider(Protocol):
 
 @runtime_checkable
 class NativeGitCapable(Protocol):
-    """Provider supports native git operations (faster than shell fallback)."""
+    """Provider supports first-class git workspace operations.
+
+    The workspace layer uses this capability when available instead of
+    shelling out to ``git``. Methods here intentionally match the concrete
+    operations needed by ``GitRepoConfig`` so callers don't need ``Any`` or
+    provider-specific probing.
+    """
 
     async def git_clone(
         self,
@@ -122,9 +128,36 @@ class NativeGitCapable(Protocol):
         *,
         branch: str | None = None,
         depth: int | None = None,
-        auth_token: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
     ) -> None:
         """Clone a git repository using the provider's native git API."""
+        ...
+
+    async def git_add(self, path: str, *, files: list[str] | None = None) -> None:
+        """Stage files in the repository at *path*."""
+        ...
+
+    async def git_commit(self, path: str, message: str) -> None:
+        """Create a commit in the repository at *path*."""
+        ...
+
+    async def git_push(
+        self,
+        path: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        """Push the repository at *path* to its configured remote."""
+        ...
+
+    async def git_status(self, path: str) -> Any:
+        """Return structured git status information for the repository at *path*."""
+        ...
+
+    async def git_configure_user(self, name: str, email: str, *, path: str | None = None) -> None:
+        """Configure git user identity for the repository at *path*."""
         ...
 
 

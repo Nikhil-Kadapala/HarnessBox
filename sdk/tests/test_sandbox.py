@@ -187,6 +187,24 @@ class TestPauseResume:
         assert sb.state == RuntimeState.ACTIVE
 
     @pytest.mark.asyncio
+    async def test_hibernate_and_wake_use_stored_sandbox_id(self, mock_provider):
+        sb = Sandbox(client=mock_provider)
+        await sb.setup()
+        sid = await sb.hibernate()
+        assert sid == "mock-sandbox-123"
+        assert sb.state == RuntimeState.PAUSED
+
+        await sb.wake()
+        assert sb.state == RuntimeState.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_wake_without_paused_id_raises(self, mock_provider):
+        sb = Sandbox(client=mock_provider)
+        await sb.setup()
+        with pytest.raises(RuntimeError, match="No paused sandbox id"):
+            await sb.wake()
+
+    @pytest.mark.asyncio
     async def test_pause_from_starting_raises(self, mock_provider):
         sb = Sandbox(client=mock_provider)
         with pytest.raises(InvalidTransitionError):
@@ -206,6 +224,15 @@ class TestEnd:
         sb = Sandbox(client=mock_provider)
         with pytest.raises(InvalidTransitionError):
             await sb.end()
+
+
+class TestSnapshotsAndCheckpoints:
+    @pytest.mark.asyncio
+    async def test_create_vm_snapshot_alias(self, mock_provider):
+        sb = Sandbox(client=mock_provider)
+        await sb.setup()
+        snapshot_id = await sb.create_vm_snapshot()
+        assert snapshot_id == "snapshot-mock-sandbox-123"
 
 
 class TestRunPrompt:

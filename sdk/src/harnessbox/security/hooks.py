@@ -15,12 +15,12 @@ def build_guard_script(policy: SecurityPolicy) -> str:
     hook_regexes, ensuring the hook and settings.json derive from the
     same source of truth.
     """
-    from harnessbox.security.guards import ALL_GUARD_NAMES, merge_guard_sets
+    from harnessbox.security.guards import merge_guard_sets
     from harnessbox.security.policy import resolve_credential_guards
 
     guard_names = resolve_credential_guards(policy)
     if guard_names is None:
-        guard_names = ALL_GUARD_NAMES
+        guard_names = frozenset()
 
     merged = merge_guard_sets(guard_names)
     blocked_list = "\n".join(merged.render_hook_lines())

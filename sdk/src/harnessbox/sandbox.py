@@ -3,64 +3,30 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Coroutine, Literal, cast, overload
 
+from harnessbox._internal.runtime import AgentRuntime
+from harnessbox._internal.runtime import InteractiveSession as InteractiveSession
+from harnessbox._internal.session import SandboxSession
+from harnessbox._internal.workspace_mount import WorkspaceMount
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.pipeline import SetupContext, SetupPipeline, build_setup_pipeline
 from harnessbox.cost import CostMetrics
 from harnessbox.events import EventBuffer
-from harnessbox.lifecycle import InvalidTransitionError, RuntimeState, validate_runtime_transition
+from harnessbox.lifecycle import RuntimeState
 from harnessbox.process import AgentProcess
-from harnessbox.providers import CommandResult, PTYCapable, SandboxDeadError, SandboxProvider
-from harnessbox.security.events import EventHandler, EventType, SandboxEvent
+from harnessbox.providers import CommandResult, SandboxProvider
+from harnessbox.security.events import EventHandler, EventType
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.streaming import EventType as StreamEventType
-from harnessbox.streaming import StreamParser, UniversalEvent
+from harnessbox.streaming import UniversalEvent
 from harnessbox.types import AgentResponse
 from harnessbox.workspace import Workspace
 
 _log = logging.getLogger("harnessbox.sandbox")
-
-
-class InteractiveSession:
-    """Bidirectional interactive agent session backed by a provider PTY.
-
-    Use ``send()`` to send messages and ``stream_output()`` to receive
-    raw terminal output (bytes, may include ANSI escape codes).
-    """
-
-    def __init__(self, pid: int, provider: Any, output_queue: asyncio.Queue[bytes | None]) -> None:
-        self._pid = pid
-        self._provider = provider
-        self._queue = output_queue
-
-    @property
-    def pid(self) -> int:
-        """Return the PTY process ID for this interactive session."""
-        return self._pid
-
-    async def send(self, message: str) -> None:
-        """Send a message (with trailing newline) to the agent's stdin."""
-        await self._provider.pty_send(self._pid, (message + "\n").encode())
-
-    async def stream_output(self) -> AsyncGenerator[bytes, None]:
-        """Yield raw terminal output bytes until the session closes."""
-        while True:
-            data = await self._queue.get()
-            if data is None:
-                break
-            yield data
-
-    async def close(self) -> None:
-        """Kill the PTY process and signal end-of-stream."""
-        await self._provider.pty_kill(self._pid)
-        self._queue.put_nowait(None)
 
 
 class Sandbox:
@@ -166,28 +132,59 @@ class Sandbox:
                 f"got {type(client).__name__}"
             )
         self._security_policy = security_policy
-        self._system_prompt_content = self._resolve_prompt(system_prompt)
-        self._skills = skills or []
-        self._plugins = plugins or []
-        self._plugin_dirs: list[str] = []
-        self._env_vars = dict(env_vars) if env_vars else {}
-        self._dirs = list(dirs) if dirs else []
-        self._files = self._resolve_files(files, self._harness_config.workspace_root)
         self._timeout = timeout
-        self._state = RuntimeState.STARTING
-        self._workspace = workspace
-        self._setup_script = setup_script
         self._event_handler = event_handler
         self._skip_permissions = skip_permissions
-        self._cwd = cwd or self._harness_config.workspace_root
-        self._agent_session_id: str | None = None
         self._event_buffer = EventBuffer(storage=storage, session_id=session_id)
-        self._agent_process: AgentProcess | None = None
         self._session_timeout = session_timeout
         self._session_lock = session_lock
-        self._idle_timer_task: asyncio.Task[None] | None = None
-        self._paused_sandbox_id: str | None = None
-        self._cost_metrics = CostMetrics()
+
+        # Workspace mount collaborator (resolvers + git facade)
+        self._mount = WorkspaceMount(
+            harness_config=self._harness_config,
+            workspace=workspace,
+            system_prompt=system_prompt,
+            skills=skills,
+            plugins=plugins,
+            files=files,
+            env_vars=env_vars,
+            dirs=dirs,
+            setup_script=setup_script,
+            cwd=cwd,
+        )
+
+        # Lifecycle collaborator
+        self._session = SandboxSession(
+            provider=self._provider,
+            event_handler=event_handler,
+            event_buffer=self._event_buffer,
+            session_timeout=session_timeout,
+            session_lock=session_lock,
+        )
+
+        # Agent execution collaborator
+        self._runtime = AgentRuntime(
+            provider=self._provider,
+            harness_config=self._harness_config,
+            event_buffer=self._event_buffer,
+            model=model,
+            one_shot=one_shot,
+            skip_permissions=skip_permissions,
+            timeout=timeout,
+        )
+        self._wire_runtime_callbacks()
+
+    def _wire_runtime_callbacks(self) -> None:
+        """Connect AgentRuntime to SandboxSession and WorkspaceMount via callbacks."""
+        self._runtime._on_sandbox_dead = self._session.mark_dead
+        self._runtime._start_idle_timer = self._session.start_idle_timer
+        self._runtime._cancel_idle_timer = self._session.cancel_idle_timer
+        self._runtime._get_state = lambda: self._session.state
+        self._runtime._get_cwd = lambda: self._mount.cwd
+        self._runtime._get_plugin_dirs = lambda: self._mount.plugin_dirs
+        self._runtime._get_paused_sandbox_id = lambda: self._session.paused_sandbox_id
+        self._runtime._resume_sandbox = self.resume
+        self._runtime._clear_paused_id = lambda: setattr(self._session, "paused_sandbox_id", None)
 
     @staticmethod
     def _resolve_string_provider(
@@ -208,111 +205,6 @@ class Sandbox:
         kwargs["timeout"] = timeout
         return cast(SandboxProvider, provider_cls(**kwargs))
 
-    @staticmethod
-    def _resolve_files(
-        files: dict[str, str | Path] | list[str | Path] | None,
-        workspace_root: str,
-    ) -> dict[str, str]:
-        """Normalize the files parameter into a dict of sandbox_path → content.
-
-        Accepts three forms:
-        - ``None`` → empty dict
-        - ``list[str | Path]`` → each path is read from disk and placed at
-          ``{workspace_root}/{filename}``
-        - ``dict[str, str | Path]`` → str values are raw content (injected as-is),
-          Path values are read from disk and injected at the dict key path
-        """
-        if files is None:
-            return {}
-
-        resolved: dict[str, str] = {}
-
-        if isinstance(files, list):
-            for entry in files:
-                p = Path(entry)
-                if not p.is_file():
-                    raise FileNotFoundError(
-                        f"Cannot inject {p}: file not found. "
-                        f"Pass a dict with raw content if the file doesn't exist on disk."
-                    )
-                sandbox_path = f"{workspace_root}/{p.name}"
-                resolved[sandbox_path] = p.read_text(encoding="utf-8")
-            return resolved
-
-        for sandbox_path, value in files.items():
-            if isinstance(value, Path):
-                if not value.is_file():
-                    raise FileNotFoundError(
-                        f"Cannot inject {value}: file not found. "
-                        f"Pass a str value for dynamically generated content."
-                    )
-                resolved[sandbox_path] = value.read_text(encoding="utf-8")
-            else:
-                resolved[sandbox_path] = value
-
-        return resolved
-
-    @staticmethod
-    def _resolve_prompt(prompt: str | Path | None) -> str | None:
-        if prompt is None:
-            return None
-        if isinstance(prompt, Path):
-            if not prompt.is_file():
-                raise FileNotFoundError(f"System prompt not found: {prompt}")
-            return prompt.read_text(encoding="utf-8")
-        return prompt
-
-    def _resolve_skills(self) -> dict[str, str] | None:
-        if not self._skills:
-            return None
-        if not self._harness_config.skills_dir:
-            return None
-        resolved: dict[str, str] = {}
-        skills_base = f"{self._harness_config.workspace_root}/{self._harness_config.skills_dir}"
-        for entry in self._skills:
-            p = Path(entry)
-            if p.is_dir():
-                for file in p.rglob("*"):
-                    if file.is_file():
-                        try:
-                            content = file.read_text(encoding="utf-8")
-                        except UnicodeDecodeError:
-                            continue
-                        rel = file.relative_to(p)
-                        resolved[f"{skills_base}/{p.name}/{rel}"] = content
-            elif p.is_file():
-                resolved[f"{skills_base}/{p.stem}/SKILL.md"] = p.read_text(encoding="utf-8")
-            else:
-                raise FileNotFoundError(f"Skill not found: {p}")
-        return resolved
-
-    def _resolve_plugins(self) -> tuple[dict[str, str] | None, list[str]]:
-        """Resolve plugin directories into sandbox file mappings.
-
-        Returns (resolved_files, plugin_dirs) without mutating self.
-        """
-        if not self._plugins:
-            return None, []
-        plugin_dirs: list[str] = []
-        resolved: dict[str, str] = {}
-        for plugin_path in self._plugins:
-            p = Path(plugin_path)
-            if not p.is_dir():
-                raise FileNotFoundError(f"Plugin directory not found: {p}")
-            plugin_sandbox_dir = (
-                f"{self._harness_config.workspace_root}/.harnessbox/plugins/{p.name}"
-            )
-            plugin_dirs.append(plugin_sandbox_dir)
-            for file in p.rglob("*"):
-                if file.is_file():
-                    try:
-                        content = file.read_text(encoding="utf-8")
-                    except UnicodeDecodeError:
-                        continue
-                    rel = file.relative_to(p)
-                    resolved[f"{plugin_sandbox_dir}/{rel}"] = content
-        return resolved, plugin_dirs
-
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -330,7 +222,7 @@ class Sandbox:
     @property
     def state(self) -> RuntimeState:
         """Return the current lifecycle state of the sandbox."""
-        return self._state
+        return self._session.state
 
     @property
     def harness_config(self) -> HarnessTypeConfig:
@@ -340,7 +232,7 @@ class Sandbox:
     @property
     def agent_session_id(self) -> str | None:
         """Return the agent session ID once a prompt has been run."""
-        return self._agent_session_id
+        return self._runtime.agent_session_id
 
     @property
     def event_buffer(self) -> EventBuffer:
@@ -365,18 +257,91 @@ class Sandbox:
             for model, cost in metrics.per_model.items():
                 print(f"  {model}: ${cost.cost_usd:.4f}")
         """
-        if self._agent_process:
-            return self._agent_process.cost_metrics
-        return self._cost_metrics
+        return self._runtime.cost_metrics
+
+    # Backward-compatible attribute access for tests that poke internals
+    @property
+    def _state(self) -> RuntimeState:
+        return self._session.state
+
+    @_state.setter
+    def _state(self, value: RuntimeState) -> None:
+        self._session.state = value
+
+    @property
+    def _agent_session_id(self) -> str | None:
+        return self._runtime.agent_session_id
+
+    @_agent_session_id.setter
+    def _agent_session_id(self, value: str | None) -> None:
+        self._runtime.agent_session_id = value
+
+    @property
+    def _agent_process(self) -> AgentProcess | None:
+        return self._runtime.agent_process
+
+    @_agent_process.setter
+    def _agent_process(self, value: AgentProcess | None) -> None:
+        self._runtime.agent_process = value
+
+    @_agent_process.deleter
+    def _agent_process(self) -> None:
+        self._runtime.agent_process = None
+
+    @property
+    def _idle_timer_task(self) -> asyncio.Task[None] | None:
+        return self._session._idle_timer_task
+
+    @_idle_timer_task.setter
+    def _idle_timer_task(self, value: asyncio.Task[None] | None) -> None:
+        self._session._idle_timer_task = value
+
+    @property
+    def _paused_sandbox_id(self) -> str | None:
+        return self._session.paused_sandbox_id
+
+    @_paused_sandbox_id.setter
+    def _paused_sandbox_id(self, value: str | None) -> None:
+        self._session.paused_sandbox_id = value
+
+    @property
+    def _cwd(self) -> str:
+        return self._mount.cwd
+
+    @_cwd.setter
+    def _cwd(self, value: str) -> None:
+        self._mount.cwd = value
+
+    @property
+    def _plugin_dirs(self) -> list[str]:
+        return self._mount.plugin_dirs
+
+    @_plugin_dirs.setter
+    def _plugin_dirs(self, value: list[str]) -> None:
+        self._mount.plugin_dirs = value
+
+    @property
+    def _workspace(self) -> Workspace | None:
+        return self._mount.workspace
+
+    @property
+    def _files(self) -> dict[str, str]:
+        return self._mount._files
+
+    @property
+    def _cost_metrics(self) -> CostMetrics:
+        return self._runtime._cost_metrics
+
+    @_cost_metrics.setter
+    def _cost_metrics(self, value: CostMetrics) -> None:
+        self._runtime._cost_metrics = value
 
     # ------------------------------------------------------------------
-    # State management
+    # State management (delegated to SandboxSession)
     # ------------------------------------------------------------------
 
     def _transition(self, target: RuntimeState) -> None:
-        if not validate_runtime_transition(self._state, target):
-            raise InvalidTransitionError(self._state, target)
-        self._state = target
+        self._session.transition(target)
 
     async def _emit_event(
         self,
@@ -387,32 +352,12 @@ class Sandbox:
         reason: str = "",
         **metadata: Any,
     ) -> None:
-        if self._event_handler is None:
-            return
-        event = SandboxEvent(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            sandbox_id=self.sandbox_id,
-            event_type=event_type,
-            action=action,
-            resource=resource,
-            reason=reason,
-            metadata=metadata,
+        await self._session.emit_event(
+            event_type, action=action, resource=resource, reason=reason, **metadata
         )
-        try:
-            await self._event_handler.handle(event)
-        except Exception:
-            pass
 
     async def _push_lifecycle_event(self, event_type: StreamEventType, **metadata: Any) -> None:
-        event = UniversalEvent(
-            event_id=str(uuid.uuid4()),
-            sequence=0,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._agent_session_id or self.sandbox_id or "",
-            event_type=event_type,
-            metadata=metadata,
-        )
-        await self._event_buffer.push(event)
+        await self._session.push_lifecycle_event(event_type, **metadata)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -423,24 +368,10 @@ class Sandbox:
 
         Pure: does not mutate Sandbox state, safe to call from dry_run().
         """
-        resolved_skills = self._resolve_skills()
-        resolved_plugins, plugin_dirs = self._resolve_plugins()
-
-        return SetupContext(
+        return self._mount.build_setup_context(
             provider=self._provider,
-            harness_config=self._harness_config,
             security_policy=self._security_policy,
-            workspace=self._workspace,
-            env_vars=self._env_vars,
             timeout=self._timeout,
-            dirs=self._dirs,
-            files=self._files,
-            system_prompt=self._system_prompt_content,
-            resolved_skills=resolved_skills,
-            resolved_plugins=resolved_plugins,
-            plugin_dirs=plugin_dirs,
-            setup_script=self._setup_script,
-            cwd=self._cwd,
         )
 
     def _build_pipeline(self) -> SetupPipeline:
@@ -465,15 +396,8 @@ class Sandbox:
 
         await pipeline.execute(ctx)
 
-        # Sync back state that setup may have changed
-        if ctx.cwd:
-            self._cwd = ctx.cwd
-        if ctx.plugin_dirs:
-            self._plugin_dirs = ctx.plugin_dirs
-
-        self._transition(RuntimeState.ACTIVE)
-        await self._emit_event(EventType.SETUP_COMPLETE, action="setup")
-        await self._push_lifecycle_event(StreamEventType.SESSION_STARTED)
+        self._mount.sync_from_setup_context(ctx)
+        await self._session.activate()
 
     def dry_run(self) -> list[str]:
         """Return the list of setup steps that would execute.
@@ -487,35 +411,35 @@ class Sandbox:
 
     def _snapshot_process_metrics(self) -> None:
         """Preserve cost metrics before discarding the agent process."""
-        if self._agent_process:
-            self._cost_metrics = self._agent_process.cost_metrics
+        self._runtime.snapshot_process_metrics()
+
+    async def _stop_agent_process(self) -> None:
+        """Stop the agent process and snapshot metrics. Used as callback for SandboxSession."""
+        await self._runtime.stop_agent_process()
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
-        if self._state in (RuntimeState.ENDED, RuntimeState.DEAD):
-            return
-        if self._agent_process:
-            self._snapshot_process_metrics()
-            try:
-                await self._agent_process.stop()
-            except Exception:
-                pass
-            self._agent_process = None
-        await self._emit_event(EventType.SESSION_END, action="kill")
-        try:
-            await self._provider.kill()
-        finally:
-            self._state = RuntimeState.DEAD
+        self._session.set_stop_agent(self._stop_agent_process)
+        await self._session.kill()
 
     async def pause(self) -> str:
         """Pause the sandbox, preserving state. Returns sandbox_id."""
-        self._transition(RuntimeState.PAUSED)
-        return await self._provider.pause()
+        return await self._session.pause()
 
     async def resume(self, sandbox_id: str) -> None:
         """Resume a paused sandbox."""
-        await self._provider.resume(sandbox_id)
-        self._transition(RuntimeState.ACTIVE)
+        await self._session.resume(sandbox_id)
+
+    async def hibernate(self) -> str:
+        """Pause the sandbox using VM-style lifecycle terminology."""
+        return await self._session.hibernate()
+
+    async def wake(self, sandbox_id: str | None = None) -> None:
+        """Resume a hibernated sandbox.
+
+        If *sandbox_id* is omitted, resumes the most recently paused sandbox.
+        """
+        await self._session.wake(sandbox_id)
 
     async def create_snapshot(self) -> str:
         """Create a snapshot of the sandbox's current filesystem state.
@@ -523,116 +447,35 @@ class Sandbox:
         Returns:
             snapshot_id for later restoration
         """
-        return await self._provider.create_snapshot()
+        return await self._session.create_snapshot()
+
+    async def create_vm_snapshot(self) -> str:
+        """Create a VM snapshot of the sandbox filesystem state."""
+        return await self._session.create_vm_snapshot()
 
     # -- Idle timer --
 
     def _start_idle_timer(self) -> None:
-        self._cancel_idle_timer()
-        if self._session_timeout > 0:
-            self._idle_timer_task = asyncio.create_task(self._on_idle_timeout())
+        self._session.start_idle_timer()
 
     def _cancel_idle_timer(self) -> None:
-        if self._idle_timer_task and not self._idle_timer_task.done():
-            self._idle_timer_task.cancel()
-        self._idle_timer_task = None
+        self._session.cancel_idle_timer()
 
     async def _on_idle_timeout(self) -> None:
-        await asyncio.sleep(self._session_timeout)
-        if self._session_lock:
-            async with self._session_lock:
-                await self._do_idle_pause()
-        else:
-            await self._do_idle_pause()
+        await self._session._on_idle_timeout()
 
     async def _do_idle_pause(self) -> None:
-        if self._state != RuntimeState.ACTIVE:
-            return
-        _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
-        if self._agent_process:
-            self._snapshot_process_metrics()
-            try:
-                await self._agent_process.stop()
-            except Exception:
-                pass
-            self._agent_process = None
-        self._paused_sandbox_id = await self.pause()
+        self._session.set_stop_agent(self._stop_agent_process)
+        await self._session._do_idle_pause()
 
     async def end(self) -> None:
         """Gracefully end the session."""
-        self._transition(RuntimeState.DYING)
-        if self._agent_process:
-            self._snapshot_process_metrics()
-            try:
-                await self._agent_process.stop()
-            except Exception:
-                pass
-            self._agent_process = None
-        await self._provider.kill()
-        self._state = RuntimeState.ENDED
-        await self._emit_event(EventType.SESSION_END, action="end")
-        await self._push_lifecycle_event(StreamEventType.SESSION_ENDED)
-        await self._event_buffer.close()
+        self._session.set_stop_agent(self._stop_agent_process)
+        await self._session.end()
 
     # ------------------------------------------------------------------
-    # Agent execution
+    # Agent execution (delegated to AgentRuntime)
     # ------------------------------------------------------------------
-
-    async def _stream_oneshot(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Spawn a one-shot agent process and yield raw NDJSON lines.
-
-        Used internally by ``send_message()`` in one-shot mode.
-        Automatically resumes the previous session if one exists.
-        """
-        if self._state != RuntimeState.ACTIVE:
-            hint = (
-                " Call 'await sandbox.setup()' first."
-                if self._state == RuntimeState.STARTING
-                else ""
-            )
-            raise RuntimeError(
-                f"Cannot run prompt: sandbox is in {self._state.value!r} state.{hint}"
-            )
-
-        escaped_prompt = json.dumps(prompt)
-        cmd = self._harness_config.build_oneshot_command(
-            escaped_prompt,
-            skip_permissions=self._skip_permissions,
-            model=self._model,
-            session_id=self._agent_session_id,
-            plugin_dirs=self._plugin_dirs or None,
-        )
-        _log.info("Running command: %s", cmd[:300])
-
-        async for line in self._provider.stream_command(
-            cmd,
-            cwd=self._cwd,
-            timeout=self._timeout,
-        ):
-            self._try_extract_session_id(line)
-            yield line
-
-    async def _ensure_agent_ready(self) -> None:
-        """Ensure the persistent agent process is running and ready for prompts.
-
-        Handles first start, restart after idle-pause, and restart after
-        sandbox timeout (agent process died, sandbox auto-resumed by E2B).
-        """
-        if self._state == RuntimeState.PAUSED and self._paused_sandbox_id:
-            _log.info("Resuming paused sandbox %s", self._paused_sandbox_id)
-            await self.resume(self._paused_sandbox_id)
-            self._paused_sandbox_id = None
-
-        if not self._agent_process or not self._agent_process.is_running:
-            cmd = self._harness_config.build_session_command(
-                skip_permissions=self._skip_permissions,
-                model=self._model,
-                plugin_dirs=self._plugin_dirs or None,
-                session_id=self._agent_session_id,
-            )
-            self._agent_process = AgentProcess(self._provider, StreamParser(persistent=True))
-            await self._agent_process.start(cmd, cwd=self._cwd)
-            _log.info("Persistent agent process started")
 
     @overload
     def send_message(
@@ -666,142 +509,17 @@ class Sandbox:
             print(response.text)
         """
         if not stream:
-            return self._collect_response(input)
-        return self._stream_events(input)
+            return self._runtime.send_message(input, stream=False)
+        return self._runtime.send_message(input, stream=True)
 
-    async def _collect_response(self, prompt: str) -> AgentResponse:
-        """Stream internally and return accumulated AgentResponse."""
-        events: list[UniversalEvent] = []
-        text_parts: list[str] = []
-        cost_usd: float | None = None
-        duration_ms: int | None = None
-        session_id = ""
+    async def _stream_oneshot(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Delegate to runtime."""
+        async for line in self._runtime._stream_oneshot(prompt):
+            yield line
 
-        async for event in self._stream_events(prompt):
-            events.append(event)
-            if event.delta and event.item_kind == "message":
-                text_parts.append(event.delta)
-            if event.session_id:
-                session_id = event.session_id
-            if event.cost_usd is not None:
-                cost_usd = event.cost_usd
-            if event.duration_ms is not None:
-                duration_ms = event.duration_ms
-
-        return AgentResponse(
-            text="".join(text_parts),
-            cost_usd=cost_usd,
-            duration_ms=duration_ms,
-            session_id=session_id,
-            events=events,
-        )
-
-    async def _stream_events(self, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
-        """Internal: stream typed events from the agent for a single turn.
-
-        Uses persistent mode when supported, falls back to one-shot with
-        ``--resume`` for conversation continuity.
-        """
-        try:
-            self._cancel_idle_timer()
-
-            use_persistent = self._harness_config.supports_persistent and not self._one_shot
-            if use_persistent:
-                await self._ensure_agent_ready()
-
-                if hasattr(self._provider, "notify_turn_start"):
-                    self._provider.notify_turn_start()  # type: ignore[union-attr]
-
-                try:
-                    await self._agent_process.send_prompt(prompt)
-                except RuntimeError:
-                    _log.warning("Agent process dead (sandbox timeout?), restarting with --resume")
-                    self._snapshot_process_metrics()
-                    self._agent_process = None
-                    await self._ensure_agent_ready()
-                    if self._agent_process:
-                        self._agent_process.restore_cost_metrics(self._cost_metrics)
-                    await self._agent_process.send_prompt(prompt)
-
-                last_turn_end: UniversalEvent | None = None
-                async for event in self._agent_process.stream_turn():
-                    if event.session_id:
-                        self._agent_session_id = event.session_id
-                    if event.event_type in (
-                        StreamEventType.TURN_ENDED,
-                        StreamEventType.SESSION_ENDED,
-                    ):
-                        last_turn_end = event
-                        if hasattr(self._provider, "notify_turn_end"):
-                            self._provider.notify_turn_end()  # type: ignore[union-attr]
-                    event = await self._event_buffer.push(event)
-                    yield event
-
-                    if hasattr(self._provider, "maybe_extend_timeout"):
-                        await self._provider.maybe_extend_timeout()  # type: ignore[union-attr]
-
-                result_model_usage = (
-                    (last_turn_end.metadata or {}).get("model_usage") if last_turn_end else None
-                )
-                skip_cost = bool(result_model_usage)
-
-                sid = self._agent_session_id or ""
-                if skip_cost and last_turn_end:
-                    cost_event = self._agent_process.cost_update_from_result(
-                        last_turn_end, session_id=sid
-                    )
-                    if cost_event:
-                        cost_event = await self._event_buffer.push(cost_event)
-                        yield cost_event
-
-                for status_event in await self._agent_process.poll_status(
-                    skip_cost=skip_cost, session_id=sid
-                ):
-                    status_event = await self._event_buffer.push(status_event)
-                    yield status_event
-
-                self._start_idle_timer()
-            else:
-                parser = StreamParser(session_id=self._agent_session_id or "")
-                async for line in self._stream_oneshot(prompt):
-                    for event in parser.parse_line(line):
-                        if event.session_id:
-                            self._agent_session_id = event.session_id
-                        event = await self._event_buffer.push(event)
-                        yield event
-
-        except SandboxDeadError as e:
-            if hasattr(self._provider, "notify_turn_end"):
-                self._provider.notify_turn_end()  # type: ignore[union-attr]
-            _log.error(
-                f"Sandbox {self._provider.sandbox_id} is dead: {e}",
-                extra={"sandbox_id": self._provider.sandbox_id},
-            )
-
-            error_event = UniversalEvent(
-                event_id=str(uuid.uuid4()),
-                sequence=0,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                session_id=self._agent_session_id or "",
-                event_type=StreamEventType.ERROR,
-                error_message="Sandbox has timed out or been destroyed. Create a new session.",
-                metadata={
-                    "error_code": "SANDBOX_DEAD",
-                    "error_details": str(e),
-                    "recoverable": False,
-                },
-            )
-            error_event = await self._event_buffer.push(error_event)
-            yield error_event
-
-            try:
-                self._transition(RuntimeState.DEAD)
-            except InvalidTransitionError as transition_err:
-                _log.debug(
-                    f"Could not transition to DEAD (already in {self._state.value}): {transition_err}"
-                )
-
-            return
+    async def _ensure_agent_ready(self) -> None:
+        """Delegate to runtime."""
+        await self._runtime._ensure_agent_ready()
 
     @staticmethod
     def _parse_context_output(text: str) -> dict[str, Any] | None:
@@ -817,51 +535,7 @@ class Sandbox:
         structured conversations, use repeated ``send_message()``
         calls instead (automatic ``--resume`` support).
         """
-        if self._state != RuntimeState.ACTIVE:
-            hint = (
-                " Call 'await sandbox.setup()' first."
-                if self._state == RuntimeState.STARTING
-                else ""
-            )
-            raise RuntimeError(
-                f"Cannot start interactive session: sandbox is in "
-                f"{self._state.value!r} state.{hint}"
-            )
-
-        if not isinstance(self._provider, PTYCapable):
-            raise RuntimeError(
-                f"Provider {type(self._provider).__name__} does not support "
-                f"interactive sessions (no PTY). Use send_message() with "
-                f"automatic --resume for multi-turn conversations."
-            )
-
-        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def on_data(data: bytes) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, data)
-
-        cmd = self._harness_config.build_interactive_command(
-            skip_permissions=self._skip_permissions,
-            plugin_dirs=self._plugin_dirs or None,
-        )
-        pid = await self._provider.pty_create(
-            on_data,
-            cwd=self._cwd,
-        )
-        await self._provider.pty_send(pid, f"exec {cmd}\n".encode())
-
-        return InteractiveSession(pid, self._provider, queue)
-
-    def _try_extract_session_id(self, line: str) -> None:
-        """Best-effort extraction of session_id from raw output lines."""
-        try:
-            data = json.loads(line)
-            sid = data.get("session_id")
-            if sid:
-                self._agent_session_id = sid
-        except (json.JSONDecodeError, ValueError, AttributeError):
-            pass
+        return await self._runtime.start_interactive_session()
 
     # ------------------------------------------------------------------
     # Command execution
@@ -925,56 +599,48 @@ class Sandbox:
         return files
 
     # ------------------------------------------------------------------
-    # Git operations facade
+    # Git operations facade (delegated to WorkspaceMount)
     # ------------------------------------------------------------------
-
-    def _git_workspace(self) -> Any:
-        """Return the GitRepoConfig workspace, or raise if not configured."""
-        from harnessbox.workspace import GitRepoConfig
-
-        if not self._workspace or not isinstance(self._workspace, GitRepoConfig):
-            raise RuntimeError("No git workspace configured for this sandbox")
-        return self._workspace
 
     async def rename_branch(self, new_name: str) -> None:
         """Rename the workspace branch in the sandbox."""
-        ws = self._git_workspace()
-        await ws.rename_branch(self._provider, self._harness_config.workspace_root, new_name)
+        await self._mount.rename_branch(self._provider, new_name)
 
     async def create_pr(self, title: str, body: str = "") -> dict[str, str]:
         """Commit, push, and create a GitHub PR. Returns {"url": "..."}."""
-        ws = self._git_workspace()
-        return await ws.create_pr(self._provider, self._harness_config.workspace_root, title, body)
+        return await self._mount.create_pr(self._provider, title, body)
 
     async def check_pr_status(self) -> dict[str, Any]:
         """Check PR status via gh CLI. Returns {state, merged, ci_status, url, number}."""
-        ws = self._git_workspace()
-        return await ws.check_pr_status(self._provider, self._harness_config.workspace_root)
+        return await self._mount.check_pr_status(self._provider)
 
     async def diff(self) -> str:
         """Return unified diff of changes since clone (or last snapshot restore)."""
-        ws = self._git_workspace()
-        return await ws.diff(self._provider, self._harness_config.workspace_root)
+        return await self._mount.diff(self._provider)
 
     async def diff_stat(self) -> dict[str, int]:
         """Return insertions/deletions since clone."""
-        ws = self._git_workspace()
-        return await ws.diff_stat(self._provider, self._harness_config.workspace_root)
+        return await self._mount.diff_stat(self._provider)
 
     async def commit_count(self) -> int:
         """Return number of commits since clone."""
-        ws = self._git_workspace()
-        return await ws.commit_count(self._provider, self._harness_config.workspace_root)
+        return await self._mount.commit_count(self._provider)
+
+    async def create_workspace_checkpoint(self, name: str) -> None:
+        """Create a named git-backed workspace checkpoint."""
+        await self._mount.create_checkpoint(self._provider, name)
+
+    async def restore_workspace_checkpoint(self, name: str) -> None:
+        """Restore the workspace to a named checkpoint."""
+        await self._mount.restore_checkpoint(self._provider, name)
 
     async def snapshot_workspace(self, name: str) -> None:
-        """Create a named snapshot (lightweight git tag) at the current state."""
-        ws = self._git_workspace()
-        await ws.snapshot(self._provider, self._harness_config.workspace_root, name)
+        """Deprecated alias for create_workspace_checkpoint()."""
+        await self.create_workspace_checkpoint(name)
 
     async def restore_workspace(self, name: str) -> None:
-        """Restore to a named workspace snapshot."""
-        ws = self._git_workspace()
-        await ws.restore(self._provider, self._harness_config.workspace_root, name)
+        """Deprecated alias for restore_workspace_checkpoint()."""
+        await self.restore_workspace_checkpoint(name)
 
     # ------------------------------------------------------------------
     # Context manager

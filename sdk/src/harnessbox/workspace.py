@@ -331,8 +331,10 @@ class GitRepoConfig:
     async def extract(self, provider: SandboxProvider, workspace_root: str) -> None:
         """No-op — system snapshots preserve .git state for user inspection."""
 
-    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Create a named snapshot (lightweight git tag) at the current state."""
+    async def create_checkpoint(
+        self, provider: SandboxProvider, workspace_root: str, name: str
+    ) -> None:
+        """Create a named workspace checkpoint as a lightweight git tag."""
         clone_target = (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
@@ -347,8 +349,10 @@ class GitRepoConfig:
             raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
         self._last_snapshot = name
 
-    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Restore to a named snapshot."""
+    async def restore_checkpoint(
+        self, provider: SandboxProvider, workspace_root: str, name: str
+    ) -> None:
+        """Restore the workspace to a named checkpoint."""
         clone_target = (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
@@ -358,6 +362,14 @@ class GitRepoConfig:
         if result.exit_code != 0:
             raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
         self._last_snapshot = name
+
+    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
+        """Deprecated alias for create_checkpoint()."""
+        await self.create_checkpoint(provider, workspace_root, name)
+
+    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
+        """Deprecated alias for restore_checkpoint()."""
+        await self.restore_checkpoint(provider, workspace_root, name)
 
     async def create_pr(
         self,

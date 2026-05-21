@@ -241,6 +241,26 @@ class TestGitWorkspaceExtract:
         assert len(git_provider._commands) == 0
 
 
+class TestGitWorkspaceCheckpoints:
+    @pytest.mark.asyncio
+    async def test_create_checkpoint_stages_commits_and_tags(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        await ws.create_checkpoint(git_provider, "/workspace", "ready")
+
+        cmds = git_provider._commands
+        assert any("git add -A" in c for c in cmds)
+        assert any('git commit --allow-empty -m "snapshot: ready"' in c for c in cmds)
+        assert any("git tag harnessbox-snap-ready" in c for c in cmds)
+
+    @pytest.mark.asyncio
+    async def test_restore_checkpoint_checks_out_tagged_files(self, git_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        await ws.restore_checkpoint(git_provider, "/workspace", "ready")
+
+        cmds = git_provider._commands
+        assert any("git checkout harnessbox-snap-ready -- ." in c for c in cmds)
+
+
 class TestGitWorkspaceEvents:
     @pytest.mark.asyncio
     async def test_clone_events_fire(self, git_provider):
