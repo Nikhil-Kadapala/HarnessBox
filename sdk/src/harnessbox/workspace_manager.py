@@ -1155,9 +1155,7 @@ class WorkspaceManager:
                 return
             await self._resume_workspace_locked(workspace_id, info)
 
-    async def _resume_workspace_locked(
-        self, workspace_id: str, info: "WorkspaceInstance"
-    ) -> None:
+    async def _resume_workspace_locked(self, workspace_id: str, info: "WorkspaceInstance") -> None:
         """Resume workspace internals. Caller must hold self._locks[workspace_id]."""
         if not info.sandbox:
             await self._connect_sandbox(workspace_id)
