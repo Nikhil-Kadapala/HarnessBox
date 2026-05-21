@@ -36,9 +36,7 @@ class WorkflowState(str, Enum):
 
 VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
     RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.FAILED}),
-    RuntimeState.ACTIVE: frozenset(
-        {RuntimeState.PAUSED, RuntimeState.ENDING, RuntimeState.FAILED}
-    ),
+    RuntimeState.ACTIVE: frozenset({RuntimeState.PAUSED, RuntimeState.ENDING, RuntimeState.FAILED}),
     RuntimeState.PAUSED: frozenset({RuntimeState.ACTIVE, RuntimeState.ENDING, RuntimeState.FAILED}),
     RuntimeState.ENDING: frozenset({RuntimeState.ENDED, RuntimeState.FAILED}),
     RuntimeState.ENDED: frozenset(),
@@ -47,9 +45,7 @@ VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
 
 VALID_WORKFLOW_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
     WorkflowState.BACKLOG: frozenset({WorkflowState.IN_PROGRESS, WorkflowState.ARCHIVED}),
-    WorkflowState.IN_PROGRESS: frozenset(
-        {WorkflowState.IN_REVIEW, WorkflowState.ARCHIVED}
-    ),
+    WorkflowState.IN_PROGRESS: frozenset({WorkflowState.IN_REVIEW, WorkflowState.ARCHIVED}),
     WorkflowState.IN_REVIEW: frozenset(
         {WorkflowState.IN_PROGRESS, WorkflowState.MERGED, WorkflowState.ARCHIVED}
     ),
@@ -61,7 +57,9 @@ VALID_WORKFLOW_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
 class InvalidTransitionError(Exception):
     """Raised when a state transition is not allowed."""
 
-    def __init__(self, current: RuntimeState | WorkflowState, target: RuntimeState | WorkflowState) -> None:
+    def __init__(
+        self, current: RuntimeState | WorkflowState, target: RuntimeState | WorkflowState
+    ) -> None:
         self.current = current
         self.target = target
         super().__init__(f"Invalid transition: {current.value!r} → {target.value!r}")

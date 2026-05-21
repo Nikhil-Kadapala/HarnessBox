@@ -7,9 +7,7 @@ import sqlite3
 
 def upgrade(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE workspaces ADD COLUMN runtime_state TEXT NOT NULL DEFAULT 'active'")
-    conn.execute(
-        "ALTER TABLE workspaces ADD COLUMN workflow_state TEXT NOT NULL DEFAULT 'backlog'"
-    )
+    conn.execute("ALTER TABLE workspaces ADD COLUMN workflow_state TEXT NOT NULL DEFAULT 'backlog'")
 
     conn.execute("""
         UPDATE workspaces SET runtime_state = CASE
