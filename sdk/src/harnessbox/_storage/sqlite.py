@@ -81,10 +81,10 @@ class SQLiteBackend:
                 """
                 INSERT INTO workspaces (
                     workspace_id, remote, branch, provider, provider_sandbox_id,
-                    snapshot_id, harness, status, created_at, last_active,
-                    config_json, workspace_name, base_branch,
+                    snapshot_id, harness, status, runtime_state, workflow_state,
+                    created_at, last_active, config_json, workspace_name, base_branch,
                     pr_url, pr_number, ci_status, total_cost_usd
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["workspace_id"],
@@ -94,7 +94,9 @@ class SQLiteBackend:
                     record.get("provider_sandbox_id"),
                     record.get("snapshot_id"),
                     record["harness"],
-                    record["status"],
+                    record["runtime_state"],  # legacy column kept for backward compat
+                    record["runtime_state"],
+                    record.get("workflow_state", "backlog"),
                     record["created_at"],
                     record.get("last_active", record["created_at"]),
                     record["config_json"],
@@ -127,26 +129,36 @@ class SQLiteBackend:
     async def list_workspaces(
         self,
         *,
-        status: str | None = None,
+        runtime_state: str | None = None,
+        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         return await asyncio.to_thread(
-            self._list_workspaces_sync, status, remote, branch, limit, offset
+            self._list_workspaces_sync, runtime_state, workflow_state, remote, branch, limit, offset
         )
 
     def _list_workspaces_sync(
-        self, status: str | None, remote: str | None, branch: str | None, limit: int, offset: int
+        self,
+        runtime_state: str | None,
+        workflow_state: str | None,
+        remote: str | None,
+        branch: str | None,
+        limit: int,
+        offset: int,
     ) -> list[dict[str, Any]]:
         if self._conn is None:
             raise RuntimeError("SQLiteBackend not initialized")
         conditions = []
         params: list[Any] = []
-        if status is not None:
-            conditions.append("status = ?")
-            params.append(status)
+        if runtime_state is not None:
+            conditions.append("runtime_state = ?")
+            params.append(runtime_state)
+        if workflow_state is not None:
+            conditions.append("workflow_state = ?")
+            params.append(workflow_state)
         if remote is not None:
             conditions.append("remote = ?")
             params.append(remote)

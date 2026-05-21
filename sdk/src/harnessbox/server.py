@@ -39,7 +39,7 @@ except ImportError as e:
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
-from harnessbox.lifecycle import InvalidTransitionError, WorkspaceState
+from harnessbox.lifecycle import InvalidTransitionError, RuntimeState, WorkflowState
 from harnessbox.storage import StorageBackend
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
@@ -202,11 +202,12 @@ class CreateSessionRequest(BaseModel):
 
 
 class SessionResponse(BaseModel):
-    """Response body containing session metadata and status."""
+    """Response body containing session metadata and state."""
 
     session_id: str
     harness: str
-    status: str
+    runtime_state: str
+    workflow_state: str
     created_at: str
     workspace_name: str | None = None
     branch: str | None = None
@@ -255,8 +256,12 @@ class PromptRequest(BaseModel):
 
 
 class TransitionRequest(BaseModel):
-    """Request body for transitioning workspace lifecycle state."""
+    """Request body for transitioning workspace state.
 
+    Specify dimension as 'runtime' or 'workflow' to indicate which state to transition.
+    """
+
+    dimension: str = "workflow"
     target_state: str
 
 
@@ -628,7 +633,8 @@ def create_app(
         return SessionResponse(
             session_id=info.workspace_id,
             harness=info.harness,
-            status=info.status,
+            runtime_state=info.runtime_state,
+            workflow_state=info.workflow_state,
             created_at=info.created_at,
             workspace_name=info.workspace_name,
             branch=info.branch,
@@ -684,7 +690,7 @@ def create_app(
             await mgr.pause_workspace(session_id)
         except InvalidTransitionError as exc:
             raise HTTPException(
-                status_code=409, detail=f"Cannot pause session in state: {info.status}"
+                status_code=409, detail=f"Cannot pause session in state: {info.runtime_state}"
             ) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -702,7 +708,7 @@ def create_app(
             await mgr.resume_workspace(session_id)
         except InvalidTransitionError as exc:
             raise HTTPException(
-                status_code=409, detail=f"Cannot resume session in state: {info.status}"
+                status_code=409, detail=f"Cannot resume session in state: {info.runtime_state}"
             ) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -717,7 +723,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         await info.sandbox.kill()
-        info.status = WorkspaceState.FAILED.value
+        info.runtime_state = RuntimeState.FAILED.value
         return Response(status_code=204)
 
     @app.post("/v1/workspaces/{session_id}/rename", response_model=SessionResponse)
@@ -765,9 +771,8 @@ def create_app(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         info.pr_url = result.get("url")
-        # Transition to in_review
         try:
-            mgr.transition_workspace(session_id, "in_review")
+            mgr.transition_workflow(session_id, "in_review")
         except Exception:
             pass
 
@@ -800,13 +805,13 @@ def create_app(
             info.pr_number = pr_data.get("number")
             if pr_data.get("merged"):
                 try:
-                    mgr.transition_workspace(session_id, "merged")
+                    mgr.transition_workflow(session_id, "merged")
                 except Exception:
                     pass
 
         return _session_response(info)
 
-    _NON_PROMPTABLE = frozenset({"merged", "failed", "archived", "ended", "backlog", "ending"})
+    _NON_PROMPTABLE_RUNTIME = frozenset({"failed", "ended", "ending"})
 
     @app.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
     async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:
@@ -816,14 +821,21 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         try:
-            WorkspaceState(req.target_state)
+            if req.dimension == "runtime":
+                RuntimeState(req.target_state)
+                info = mgr.transition_runtime(session_id, req.target_state)
+            elif req.dimension == "workflow":
+                WorkflowState(req.target_state)
+                info = mgr.transition_workflow(session_id, req.target_state)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown dimension: {req.dimension}. Use 'runtime' or 'workflow'.",
+                )
         except ValueError as exc:
             raise HTTPException(
                 status_code=400, detail=f"Unknown state: {req.target_state}"
             ) from exc
-
-        try:
-            info = mgr.transition_workspace(session_id, req.target_state)
         except InvalidTransitionError as exc:
             raise HTTPException(
                 status_code=409,
@@ -873,12 +885,12 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        if info.status in _NON_PROMPTABLE:
+        if info.runtime_state in _NON_PROMPTABLE_RUNTIME:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "error": "SESSION_NOT_ACTIVE",
-                    "status": info.status,
+                    "runtime_state": info.runtime_state,
                     "message": "This session cannot accept prompts in its current state.",
                 },
             )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harnessbox.lifecycle import WorkspaceState
+from harnessbox.lifecycle import RuntimeState
 from harnessbox.providers import CommandResult
 from harnessbox.sandbox import Sandbox
 from harnessbox.workspace import GitWorkspace
@@ -45,7 +45,7 @@ class TestSandboxWithWorkspace:
         cmds = ws_provider._commands
         assert any("git init" in c for c in cmds)
         assert any("git fetch" in c for c in cmds)
-        assert sb.state == WorkspaceState.ACTIVE
+        assert sb.state == RuntimeState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_workspace_none_skips_inject(self, ws_provider):
@@ -73,7 +73,7 @@ class TestSandboxWithWorkspace:
         cmds = ws_provider._commands
         assert any("git add -A" in c for c in cmds)
         assert any("push" in c for c in cmds)
-        assert sb.state.value == WorkspaceState.MERGED.value
+        assert sb.state.value == RuntimeState.ENDED.value
 
     @pytest.mark.asyncio
     async def test_workspace_extract_best_effort_on_kill(self, ws_provider):
@@ -90,7 +90,7 @@ class TestSandboxWithWorkspace:
         await sb.setup()
         await sb.kill()
 
-        assert sb.state == WorkspaceState.FAILED
+        assert sb.state == RuntimeState.FAILED
 
     @pytest.mark.asyncio
     async def test_manifest_files_go_into_cloned_directory(self, ws_provider):
@@ -202,5 +202,5 @@ class TestSandboxWithWorkspace:
         ws = GitWorkspace(remote="https://github.com/test/repo.git")
         async with Sandbox(client=ws_provider, workspace=ws) as sb:
             await sb.setup()
-            assert sb.state == WorkspaceState.ACTIVE
-        assert sb.state.value == WorkspaceState.FAILED.value
+            assert sb.state == RuntimeState.ACTIVE
+        assert sb.state.value == RuntimeState.FAILED.value

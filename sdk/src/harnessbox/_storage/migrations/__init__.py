@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 MIGRATIONS: list[str] = [
     "harnessbox._storage.migrations.v001_initial",
     "harnessbox._storage.migrations.v002_event_type_index",
+    "harnessbox._storage.migrations.v003_split_state",
 ]
 
 

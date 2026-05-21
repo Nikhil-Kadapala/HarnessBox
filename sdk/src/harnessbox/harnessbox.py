@@ -58,15 +58,31 @@ class Session:
         return self._branch
 
     @property
-    def status(self) -> str:
-        """Current session state (synchronous dict lookup)."""
+    def runtime_state(self) -> str:
+        """Current sandbox runtime state (synchronous dict lookup)."""
         from harnessbox.workspace_manager import WorkspaceNotFoundError
 
         try:
             info = self._manager.get_workspace(self._session_id)
         except WorkspaceNotFoundError:
             return "ended"
-        return info.status
+        return info.runtime_state
+
+    @property
+    def workflow_state(self) -> str:
+        """Current workflow state (synchronous dict lookup)."""
+        from harnessbox.workspace_manager import WorkspaceNotFoundError
+
+        try:
+            info = self._manager.get_workspace(self._session_id)
+        except WorkspaceNotFoundError:
+            return "archived"
+        return info.workflow_state
+
+    @property
+    def status(self) -> str:
+        """Deprecated: use runtime_state or workflow_state."""
+        return self.runtime_state
 
     @overload
     def send_message(

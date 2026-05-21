@@ -48,7 +48,8 @@ class StorageBackend(Protocol):
                 - provider_sandbox_id (str | None)
                 - snapshot_id (str | None)
                 - harness (str, required)
-                - status (str, required)
+                - runtime_state (str, required)
+                - workflow_state (str, required)
                 - created_at (str ISO 8601, required)
                 - last_active (str ISO 8601, required)
                 - config_json (str, required)
@@ -73,7 +74,8 @@ class StorageBackend(Protocol):
     async def list_workspaces(
         self,
         *,
-        status: str | None = None,
+        runtime_state: str | None = None,
+        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
@@ -82,7 +84,8 @@ class StorageBackend(Protocol):
         """List workspace records with optional filtering and pagination.
 
         Args:
-            status: Filter by status value ('active', 'paused', 'failed', etc.).
+            runtime_state: Filter by runtime state ('active', 'paused', 'failed', etc.).
+            workflow_state: Filter by workflow state ('in_progress', 'in_review', etc.).
             remote: Filter by git remote URL.
             branch: Filter by git branch name.
             limit: Maximum number of records to return.

@@ -52,7 +52,8 @@ class MemoryBackend:
     async def list_workspaces(
         self,
         *,
-        status: str | None = None,
+        runtime_state: str | None = None,
+        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
@@ -61,22 +62,20 @@ class MemoryBackend:
         """List workspaces with optional filtering and pagination."""
         workspaces = list(self._workspaces.values())
 
-        # Filter by status
-        if status is not None:
-            workspaces = [w for w in workspaces if w.get("status") == status]
+        if runtime_state is not None:
+            workspaces = [w for w in workspaces if w.get("runtime_state") == runtime_state]
 
-        # Filter by remote
+        if workflow_state is not None:
+            workspaces = [w for w in workspaces if w.get("workflow_state") == workflow_state]
+
         if remote is not None:
             workspaces = [w for w in workspaces if w.get("remote") == remote]
 
-        # Filter by branch
         if branch is not None:
             workspaces = [w for w in workspaces if w.get("branch") == branch]
 
-        # Sort by last_active DESC (most recent first)
         workspaces.sort(key=lambda w: w.get("last_active", ""), reverse=True)
 
-        # Paginate
         return workspaces[offset : offset + limit]
 
     async def update_workspace(self, workspace_id: str, **fields: Any) -> None:
