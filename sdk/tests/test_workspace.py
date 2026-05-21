@@ -21,7 +21,6 @@ class TestGitWorkspaceInit:
         ws = GitWorkspace(remote="https://github.com/test/repo.git")
         assert ws.remote == "https://github.com/test/repo.git"
         assert ws.branch == "main"
-        assert ws.commit_on_exit is False
 
     def test_empty_remote_raises(self):
         with pytest.raises(ValueError, match="remote URL must not be empty"):
@@ -31,14 +30,10 @@ class TestGitWorkspaceInit:
         ws = GitWorkspace(
             remote="https://github.com/test/repo.git",
             branch="dev",
-            commit_on_exit=True,
-            commit_message="custom msg",
             clone_depth=1,
             auth_token="ghp_test",
         )
         assert ws.branch == "dev"
-        assert ws.commit_on_exit is True
-        assert ws.commit_message == "custom msg"
         assert ws.clone_depth == 1
 
     def test_repr_redacts_token(self):
@@ -239,123 +234,11 @@ class TestGitWorkspaceInject:
 
 class TestGitWorkspaceExtract:
     @pytest.mark.asyncio
-    async def test_noop_when_commit_on_exit_false(self, git_provider):
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=False,
-        )
+    async def test_extract_is_noop(self, git_provider):
+        """Extract is a no-op — system snapshots preserve .git state."""
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
         await ws.extract(git_provider, "/workspace")
         assert len(git_provider._commands) == 0
-
-    @pytest.mark.asyncio
-    async def test_noop_when_clean_worktree(self, git_provider):
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout="", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        await ws.extract(git_provider, "/workspace")
-        assert not any("commit" in c for c in git_provider._commands)
-
-    @pytest.mark.asyncio
-    async def test_commit_and_push_on_dirty(self, git_provider):
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        cmds = git_provider._commands
-        assert any("add -A" in c for c in cmds)
-        assert any("commit" in c for c in cmds)
-        assert any("push origin main" in c for c in cmds)
-
-    @pytest.mark.asyncio
-    async def test_custom_commit_message(self, git_provider):
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-            commit_message="my custom message",
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        cmds = git_provider._commands
-        commit_cmds = [c for c in cmds if "commit" in c]
-        assert any("my custom message" in c for c in commit_cmds)
-
-    @pytest.mark.asyncio
-    async def test_default_commit_message_has_timestamp(self, git_provider):
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        cmds = git_provider._commands
-        commit_cmds = [c for c in cmds if "commit" in c]
-        assert any("harnessbox: auto-commit" in c for c in commit_cmds)
-
-    @pytest.mark.asyncio
-    async def test_push_failure_sets_error(self, git_provider):
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-        git_provider.set_git_response(
-            "push",
-            CommandResult(exit_code=1, stdout="", stderr="rejected: non-fast-forward"),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        await ws.extract(git_provider, "/workspace")
-        assert ws.push_error is not None
-        assert "rejected" in ws.push_error
-
-    @pytest.mark.asyncio
-    async def test_push_uses_persisted_credentials(self, git_provider):
-        """Push relies on .git-credentials written during inject — no token in git config."""
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-            auth_token="ghp_push_token",
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        cmds = git_provider._commands
-        # Token should NOT appear in any git config command during push
-        cred_cmds = [c for c in cmds if "credential.helper" in c]
-        for cmd in cred_cmds:
-            assert "ghp_push_token" not in cmd
-        # Push should still be attempted
-        push_cmds = [c for c in cmds if "push" in c]
-        assert len(push_cmds) == 1
 
 
 class TestGitWorkspaceEvents:
@@ -373,46 +256,6 @@ class TestGitWorkspaceEvents:
         assert events[0][0] == "start"
         assert events[1][0] == "complete"
         assert events[1][1]["success"] is True
-
-    @pytest.mark.asyncio
-    async def test_push_success_event(self, git_provider):
-        events = []
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-            on_push_success=lambda **kw: events.append(("push_ok", kw)),
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        assert len(events) == 1
-        assert events[0][0] == "push_ok"
-
-    @pytest.mark.asyncio
-    async def test_push_failure_event(self, git_provider):
-        events = []
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-        git_provider.set_git_response(
-            "push",
-            CommandResult(exit_code=1, stdout="", stderr="rejected"),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-            on_push_failure=lambda **kw: events.append(("push_fail", kw)),
-        )
-        await ws.extract(git_provider, "/workspace")
-
-        assert len(events) == 1
-        assert events[0][0] == "push_fail"
 
 
 class TestGitWorkspaceSnapshot:
@@ -609,12 +452,6 @@ class TestGitWorkspaceCreatePR:
             auth_token="ghp_test",
         )
 
-        # Mock: no changes to commit
-        git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout="", stderr=""),
-        )
-        # Mock: gh pr create success
         git_provider.set_git_response(
             "gh pr create",
             CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/42\n", stderr=""),
@@ -624,7 +461,7 @@ class TestGitWorkspaceCreatePR:
         assert result["url"] == "https://github.com/test/repo/pull/42"
 
     @pytest.mark.asyncio
-    async def test_create_pr_gh_fails(self, git_provider):
+    async def test_create_pr_push_fails(self, git_provider):
         ws = GitWorkspace(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
@@ -632,9 +469,21 @@ class TestGitWorkspaceCreatePR:
         )
 
         git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout="", stderr=""),
+            "push origin tokyo",
+            CommandResult(exit_code=1, stdout="", stderr="rejected: non-fast-forward"),
         )
+
+        with pytest.raises(RuntimeError, match="Push failed"):
+            await ws.create_pr(git_provider, "/workspace", title="test PR")
+
+    @pytest.mark.asyncio
+    async def test_create_pr_gh_fails(self, git_provider):
+        ws = GitWorkspace(
+            remote="https://github.com/test/repo.git",
+            branch="tokyo",
+            base_branch="main",
+        )
+
         git_provider.set_git_response(
             "gh pr create",
             CommandResult(exit_code=1, stdout="", stderr="already exists"),
@@ -652,15 +501,10 @@ class TestGitWorkspaceCreatePR:
         )
 
         git_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout="", stderr=""),
-        )
-        git_provider.set_git_response(
             "gh pr create",
             CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/1\n", stderr=""),
         )
 
-        # Title with quotes should not break
         result = await ws.create_pr(git_provider, "/workspace", title="fix the user's profile")
         assert "url" in result
 

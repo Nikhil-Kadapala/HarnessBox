@@ -188,7 +188,6 @@ class Sandbox:
         self._agent_session_id: str | None = None
         self._event_buffer = EventBuffer(storage=storage, session_id=session_id)
         self._agent_process: AgentProcess | None = None
-        self.unpushed_files: dict[str, str] | None = None
         self._session_timeout = session_timeout
         self._session_lock = session_lock
         self._idle_timer_task: asyncio.Task[None] | None = None
@@ -508,13 +507,6 @@ class Sandbox:
             except Exception:
                 pass
             self._agent_process = None
-        if self._workspace:
-            try:
-                await self._workspace.extract(self._provider, self._harness_config.workspace_root)
-                if hasattr(self._workspace, "push_error") and self._workspace.push_error:
-                    await self._recover_unpushed_files()
-            except Exception:
-                pass
         await self._emit_event(EventType.SESSION_END, action="kill")
         try:
             await self._provider.kill()
@@ -582,37 +574,11 @@ class Sandbox:
             except Exception:
                 pass
             self._agent_process = None
-        if self._workspace:
-            await self._workspace.extract(self._provider, self._harness_config.workspace_root)
-            if hasattr(self._workspace, "push_error") and self._workspace.push_error:
-                await self._recover_unpushed_files()
         await self._provider.kill()
         self._state = RuntimeState.ENDED
         await self._emit_event(EventType.SESSION_END, action="end")
         await self._push_lifecycle_event(StreamEventType.SESSION_ENDED)
         await self._event_buffer.close()
-
-    async def _recover_unpushed_files(self) -> None:
-        """Extract committed files when push fails."""
-        result = await self._provider.run_command(
-            "git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD",
-            cwd=self._harness_config.workspace_root,
-        )
-        if result.exit_code != 0 or not result.stdout.strip():
-            return
-        files: dict[str, str] = {}
-        for line in result.stdout.strip().split("\n"):
-            path = line.strip()
-            if path:
-                try:
-                    content = await self._provider.read_file(
-                        f"{self._harness_config.workspace_root}/{path}"
-                    )
-                    files[path] = content
-                except Exception:
-                    pass
-        if files:
-            self.unpushed_files = files
 
     # ------------------------------------------------------------------
     # Agent execution

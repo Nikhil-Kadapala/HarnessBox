@@ -180,7 +180,6 @@ class WorkspaceRequest(BaseModel):
     auth_token: str | None = None
     clone_depth: int = 1  # Shallow clone by default for faster setup
     clone_dir_name: str | None = None  # Subdirectory name for clone (e.g., city name)
-    commit_on_exit: bool = False
 
 
 class CreateSessionRequest(BaseModel):
@@ -593,7 +592,6 @@ def create_app(
                 auth_token=auth_token,
                 clone_depth=req.workspace.clone_depth,
                 clone_dir_name=clone_dir_name,
-                commit_on_exit=req.workspace.commit_on_exit,
             )
 
         session_timeout = req.session_timeout
