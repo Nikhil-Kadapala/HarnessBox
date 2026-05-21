@@ -7,7 +7,6 @@ import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from harnessbox.providers import CommandResult, NativeGitCapable, SandboxProvider
@@ -41,18 +40,18 @@ class Workspace(Protocol):
 EventCallback = Callable[..., Any]
 
 
-class GitWorkspace:
+class GitRepoConfig:
     """Clone a git repo into the sandbox workspace.
 
     Supports HTTPS remotes with optional token auth via git credential helper.
-    Optionally commits and pushes on extract (teardown).
+    On teardown (extract), this is a no-op — system snapshots preserve .git
+    state so users can inspect and decide how to proceed.
 
     Example::
 
-        workspace = GitWorkspace(
+        workspace = GitRepoConfig(
             remote="https://github.com/user/repo.git",
             branch="main",
-            commit_on_exit=True,
         )
     """
 
@@ -62,40 +61,29 @@ class GitWorkspace:
         *,
         branch: str = "main",
         base_branch: str | None = None,
-        commit_on_exit: bool = False,
-        commit_message: str | None = None,
         clone_depth: int | None = None,
         auth_token: str | None = None,
         clone_dir_name: str | None = None,
         on_clone_start: EventCallback | None = None,
         on_clone_complete: EventCallback | None = None,
-        on_commit: EventCallback | None = None,
-        on_push_success: EventCallback | None = None,
-        on_push_failure: EventCallback | None = None,
     ) -> None:
         if not remote:
             raise ValueError("remote URL must not be empty")
         self.remote = remote
         self.branch = branch
         self.base_branch = base_branch or branch
-        self.commit_on_exit = commit_on_exit
-        self.commit_message = commit_message
         self.clone_depth = clone_depth
         self.clone_dir_name = clone_dir_name
         self._auth_token = auth_token
         self._on_clone_start = on_clone_start
         self._on_clone_complete = on_clone_complete
-        self._on_commit = on_commit
-        self._on_push_success = on_push_success
-        self._on_push_failure = on_push_failure
         self._initial_sha: str | None = None
         self._last_snapshot: str | None = None
         self.push_error: str | None = None
 
     def __repr__(self) -> str:
         return (
-            f"GitWorkspace(remote={self.remote!r}, branch={self.branch!r}, "
-            f"commit_on_exit={self.commit_on_exit}, "
+            f"GitRepoConfig(remote={self.remote!r}, branch={self.branch!r}, "
             f"clone_dir_name={self.clone_dir_name!r}, "
             f"auth_token={'***' if self._auth_token else 'None'})"
         )
@@ -341,73 +329,12 @@ class GitWorkspace:
         return any(ind.lower() in stderr.lower() for ind in indicators)
 
     async def extract(self, provider: SandboxProvider, workspace_root: str) -> None:
-        """If commit_on_exit, commit and push. Otherwise no-op."""
-        if not self.commit_on_exit:
-            return
+        """No-op — system snapshots preserve .git state for user inspection."""
 
-        clone_target = (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
-
-        if hasattr(provider, "git_add"):
-            await self._native_commit_push(provider, clone_target)
-        else:
-            await self._shell_commit_push(provider, clone_target)
-
-    async def _native_commit_push(self, provider: Any, workspace_root: str) -> None:
-        """Commit and push using provider's native git API."""
-        if hasattr(provider, "git_status"):
-            status = await provider.git_status(workspace_root)
-            if not status.dirty:
-                return
-
-        msg = (
-            self.commit_message
-            or f"harnessbox: auto-commit {datetime.now(timezone.utc).isoformat()}"
-        )
-        await provider.git_add(workspace_root)
-        await provider.git_commit(workspace_root, msg)
-        self._fire_event(self._on_commit, sha="", message=msg)
-
-        try:
-            await provider.git_push(
-                workspace_root,
-                username="x-access-token" if self._auth_token else None,
-                password=self._auth_token,
-            )
-            self._fire_event(self._on_push_success, branch=self.branch)
-        except Exception as e:
-            self.push_error = str(e)
-            self._fire_event(self._on_push_failure, error=str(e), branch=self.branch)
-
-    async def _shell_commit_push(self, provider: SandboxProvider, workspace_root: str) -> None:
-        """Commit and push using shell git commands (fallback)."""
-        result = await self._run_git(provider, "status --porcelain", cwd=workspace_root)
-        if result.exit_code != 0 or not result.stdout.strip():
-            return
-
-        await self._run_git(provider, "add -A", cwd=workspace_root)
-
-        msg = (
-            self.commit_message
-            or f"harnessbox: auto-commit {datetime.now(timezone.utc).isoformat()}"
-        )
-        commit_result = await self._run_git(provider, f'commit -m "{msg}"', cwd=workspace_root)
-        if commit_result.exit_code == 0:
-            sha = commit_result.stdout.strip().split()[-1] if commit_result.stdout else ""
-            self._fire_event(self._on_commit, sha=sha, message=msg)
-
-        push_result = await self._run_git(
-            provider, f"push origin {self.branch}", cwd=workspace_root
-        )
-        if push_result.exit_code != 0:
-            self.push_error = push_result.stderr
-            self._fire_event(self._on_push_failure, error=push_result.stderr, branch=self.branch)
-        else:
-            self._fire_event(self._on_push_success, branch=self.branch)
-
-    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Create a named snapshot (lightweight git tag) at the current state."""
+    async def create_checkpoint(
+        self, provider: SandboxProvider, workspace_root: str, name: str
+    ) -> None:
+        """Create a named workspace checkpoint as a lightweight git tag."""
         clone_target = (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
@@ -422,8 +349,10 @@ class GitWorkspace:
             raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
         self._last_snapshot = name
 
-    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Restore to a named snapshot."""
+    async def restore_checkpoint(
+        self, provider: SandboxProvider, workspace_root: str, name: str
+    ) -> None:
+        """Restore the workspace to a named checkpoint."""
         clone_target = (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
@@ -434,6 +363,14 @@ class GitWorkspace:
             raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
         self._last_snapshot = name
 
+    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
+        """Deprecated alias for create_checkpoint()."""
+        await self.create_checkpoint(provider, workspace_root, name)
+
+    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
+        """Deprecated alias for restore_checkpoint()."""
+        await self.restore_checkpoint(provider, workspace_root, name)
+
     async def create_pr(
         self,
         provider: SandboxProvider,
@@ -441,17 +378,14 @@ class GitWorkspace:
         title: str,
         body: str = "",
     ) -> dict[str, str]:
-        """Commit, push, and create a GitHub PR via gh CLI. Returns {"url": "..."}."""
+        """Push the current branch and create a GitHub PR via gh CLI. Returns {"url": "..."}."""
         clone_target = self._clone_target(workspace_root)
 
-        # Commit and push any pending changes
-        if hasattr(provider, "git_add"):
-            await self._native_commit_push(provider, clone_target)
-        else:
-            await self._shell_commit_push(provider, clone_target)
-
-        if self.push_error:
-            raise RuntimeError(f"Push failed, cannot create PR: {self.push_error}")
+        # Push existing commits
+        push_result = await self._run_git(provider, f"push origin {self.branch}", cwd=clone_target)
+        if push_result.exit_code != 0:
+            self.push_error = push_result.stderr
+            raise RuntimeError(f"Push failed, cannot create PR: {push_result.stderr}")
 
         # Set GH_TOKEN for gh CLI authentication
         env_cmd = ""
@@ -590,3 +524,7 @@ class _CloneError(Exception):
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+# Backward-compat alias (deprecated — use GitRepoConfig)
+GitWorkspace = GitRepoConfig

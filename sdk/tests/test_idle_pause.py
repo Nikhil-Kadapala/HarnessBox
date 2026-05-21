@@ -128,9 +128,9 @@ class TestIdleTimeout:
         await sandbox._do_idle_pause()
         assert not provider._running or provider._sandbox_id is None
 
-    async def test_timeout_noop_when_failed(self, provider: object) -> None:
+    async def test_timeout_noop_when_dead(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.FAILED
+        sandbox._state = WorkspaceState.DEAD
         await sandbox._do_idle_pause()
 
     async def test_timeout_with_lock(self, provider: object) -> None:

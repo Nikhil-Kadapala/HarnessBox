@@ -159,8 +159,8 @@ All SDK source lives under `sdk/src/harnessbox/`.
 | `security/guards.py` | 10 composable `CredentialGuardSet`s — single source of truth for both settings.json and hook scripts |
 | `security/hooks.py` | Generates PreToolUse hook scripts from guard regex patterns |
 | `security/events.py` | Sandbox lifecycle events — `SandboxEvent` emission, `EventHandler` protocol |
-| `lifecycle.py` | `SessionState` enum + valid transition map (STARTING→ACTIVE→ENDING→MERGED/FAILED) |
-| `workspace.py` | `GitWorkspace` — clone, commit+push, snapshot/restore via tags, diff; uses native E2B git API with shell fallback |
+| `lifecycle.py` | `RuntimeState` enum + valid transition map (STARTING→ACTIVE→DYING→ENDED/DEAD) |
+| `workspace.py` | `GitRepoConfig` — clone, commit+push, snapshot/restore via tags, diff; uses native E2B git API with shell fallback |
 
 ### Key Design Decisions
 

@@ -7,7 +7,7 @@ import pytest
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.providers import CommandResult
 from harnessbox.sandbox import Sandbox
-from harnessbox.workspace import GitWorkspace
+from harnessbox.workspace import GitRepoConfig, GitWorkspace
 
 from .conftest import MockProvider
 
@@ -56,41 +56,32 @@ class TestSandboxWithWorkspace:
         assert not any("git" in c for c in cmds)
 
     @pytest.mark.asyncio
-    async def test_workspace_extract_called_on_end(self, ws_provider):
-        ws_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
+    async def test_end_does_not_commit_or_push(self, ws_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
         await sb.setup()
+
+        pre_end_cmd_count = len(ws_provider._commands)
         await sb.end()
 
-        cmds = ws_provider._commands
-        assert any("git add -A" in c for c in cmds)
-        assert any("push" in c for c in cmds)
+        post_end_cmds = ws_provider._commands[pre_end_cmd_count:]
+        assert not any("commit" in c for c in post_end_cmds)
+        assert not any("push" in c for c in post_end_cmds)
         assert sb.state.value == RuntimeState.ENDED.value
 
     @pytest.mark.asyncio
-    async def test_workspace_extract_best_effort_on_kill(self, ws_provider):
-        ws_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
+    async def test_kill_does_not_commit_or_push(self, ws_provider):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
         await sb.setup()
+
+        pre_kill_cmd_count = len(ws_provider._commands)
         await sb.kill()
 
-        assert sb.state == RuntimeState.FAILED
+        post_kill_cmds = ws_provider._commands[pre_kill_cmd_count:]
+        assert not any("commit" in c for c in post_kill_cmds)
+        assert not any("push" in c for c in post_kill_cmds)
+        assert sb.state == RuntimeState.DEAD
 
     @pytest.mark.asyncio
     async def test_manifest_files_go_into_cloned_directory(self, ws_provider):
@@ -125,66 +116,6 @@ class TestSandboxWithWorkspace:
         )
 
     @pytest.mark.asyncio
-    async def test_push_failure_populates_unpushed_files(self, ws_provider):
-        ws_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-        ws_provider.set_git_response(
-            "push",
-            CommandResult(exit_code=1, stdout="", stderr="rejected"),
-        )
-        ws_provider.set_git_response(
-            "diff --name-only",
-            CommandResult(exit_code=0, stdout="file.txt\n", stderr=""),
-        )
-        ws_provider._files["/workspace/file.txt"] = "changed content"
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-        await sb.end()
-
-        assert sb.unpushed_files is not None
-        assert "file.txt" in sb.unpushed_files
-
-    @pytest.mark.asyncio
-    async def test_no_push_failure_means_no_unpushed_files(self, ws_provider):
-        ws_provider.set_git_response(
-            "status --porcelain",
-            CommandResult(exit_code=0, stdout=" M file.txt\n", stderr=""),
-        )
-
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=True,
-        )
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-        await sb.end()
-
-        assert sb.unpushed_files is None
-
-    @pytest.mark.asyncio
-    async def test_commit_on_exit_false_no_extract(self, ws_provider):
-        ws = GitWorkspace(
-            remote="https://github.com/test/repo.git",
-            commit_on_exit=False,
-        )
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-
-        pre_end_cmd_count = len(ws_provider._commands)
-        await sb.end()
-
-        post_end_cmds = ws_provider._commands[pre_end_cmd_count:]
-        assert not any("commit" in c for c in post_end_cmds)
-        assert not any("push" in c for c in post_end_cmds)
-
-    @pytest.mark.asyncio
     async def test_inject_failure_propagates(self, ws_provider):
         ws_provider.set_git_response(
             "fetch",
@@ -203,4 +134,121 @@ class TestSandboxWithWorkspace:
         async with Sandbox(client=ws_provider, workspace=ws) as sb:
             await sb.setup()
             assert sb.state == RuntimeState.ACTIVE
-        assert sb.state.value == RuntimeState.FAILED.value
+        assert sb.state.value == RuntimeState.DEAD.value
+
+
+class TestGitRepoConfigAlias:
+    def test_alias_is_same_class(self):
+        assert GitWorkspace is GitRepoConfig
+
+    def test_can_instantiate_via_alias(self):
+        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        assert isinstance(ws, GitRepoConfig)
+
+
+class TestSandboxGitFacade:
+    @pytest.mark.asyncio
+    async def test_rename_branch_delegates(self, ws_provider):
+        ws_provider.set_git_response(
+            "branch -m",
+            CommandResult(exit_code=0, stdout="", stderr=""),
+        )
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git", branch="old-branch")
+        sb = Sandbox(client=ws_provider, workspace=ws)
+        await sb.setup()
+
+        await sb.rename_branch("new-branch")
+        assert ws.branch == "new-branch"
+        assert any("branch -m" in c for c in ws_provider._commands)
+
+    @pytest.mark.asyncio
+    async def test_diff_stat_delegates(self, ws_provider):
+        ws_provider.set_git_response(
+            "diff --shortstat",
+            CommandResult(
+                exit_code=0,
+                stdout=" 3 files changed, 15 insertions(+), 5 deletions(-)\n",
+                stderr="",
+            ),
+        )
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
+        sb = Sandbox(client=ws_provider, workspace=ws)
+        await sb.setup()
+
+        stat = await sb.diff_stat()
+        assert stat == {"insertions": 15, "deletions": 5}
+
+    @pytest.mark.asyncio
+    async def test_commit_count_delegates(self, ws_provider):
+        ws_provider.set_git_response(
+            "rev-list --count",
+            CommandResult(exit_code=0, stdout="7\n", stderr=""),
+        )
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
+        sb = Sandbox(client=ws_provider, workspace=ws)
+        await sb.setup()
+
+        count = await sb.commit_count()
+        assert count == 7
+
+    @pytest.mark.asyncio
+    async def test_facade_raises_without_workspace(self, ws_provider):
+        sb = Sandbox(client=ws_provider, workspace=None)
+        await sb.setup()
+
+        with pytest.raises(RuntimeError, match="No git workspace configured"):
+            await sb.rename_branch("x")
+
+        with pytest.raises(RuntimeError, match="No git workspace configured"):
+            await sb.diff_stat()
+
+        with pytest.raises(RuntimeError, match="No git workspace configured"):
+            await sb.commit_count()
+
+    @pytest.mark.asyncio
+    async def test_create_pr_delegates(self, ws_provider):
+        ws_provider.set_git_response(
+            "gh pr create",
+            CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/1\n", stderr=""),
+        )
+        ws = GitRepoConfig(
+            remote="https://github.com/test/repo.git",
+            branch="feat",
+            base_branch="main",
+            auth_token="tok",
+        )
+        sb = Sandbox(client=ws_provider, workspace=ws)
+        await sb.setup()
+
+        result = await sb.create_pr("Add feature", "Description")
+        assert result["url"] == "https://github.com/test/repo/pull/1"
+
+    @pytest.mark.asyncio
+    async def test_check_pr_status_delegates(self, ws_provider):
+        import json
+
+        pr_json = json.dumps(
+            {
+                "state": "OPEN",
+                "merged": False,
+                "url": "https://github.com/test/repo/pull/1",
+                "number": 1,
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        )
+        ws_provider.set_git_response(
+            "gh pr view",
+            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
+        )
+        ws = GitRepoConfig(
+            remote="https://github.com/test/repo.git",
+            branch="feat",
+            auth_token="tok",
+        )
+        sb = Sandbox(client=ws_provider, workspace=ws)
+        await sb.setup()
+
+        status = await sb.check_pr_status()
+        assert status["state"] == "open"
+        assert status["ci_status"] == "success"
+        assert status["number"] == 1

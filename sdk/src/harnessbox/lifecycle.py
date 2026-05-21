@@ -19,9 +19,9 @@ class RuntimeState(str, Enum):
     STARTING = "starting"
     ACTIVE = "active"
     PAUSED = "paused"
-    ENDING = "ending"
+    DYING = "dying"
     ENDED = "ended"
-    FAILED = "failed"
+    DEAD = "dead"
 
 
 class WorkflowState(str, Enum):
@@ -35,12 +35,12 @@ class WorkflowState(str, Enum):
 
 
 VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
-    RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.FAILED}),
-    RuntimeState.ACTIVE: frozenset({RuntimeState.PAUSED, RuntimeState.ENDING, RuntimeState.FAILED}),
-    RuntimeState.PAUSED: frozenset({RuntimeState.ACTIVE, RuntimeState.ENDING, RuntimeState.FAILED}),
-    RuntimeState.ENDING: frozenset({RuntimeState.ENDED, RuntimeState.FAILED}),
+    RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.DEAD}),
+    RuntimeState.ACTIVE: frozenset({RuntimeState.PAUSED, RuntimeState.DYING, RuntimeState.DEAD}),
+    RuntimeState.PAUSED: frozenset({RuntimeState.ACTIVE, RuntimeState.DYING, RuntimeState.DEAD}),
+    RuntimeState.DYING: frozenset({RuntimeState.ENDED, RuntimeState.DEAD}),
     RuntimeState.ENDED: frozenset(),
-    RuntimeState.FAILED: frozenset(),
+    RuntimeState.DEAD: frozenset(),
 }
 
 VALID_WORKFLOW_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {

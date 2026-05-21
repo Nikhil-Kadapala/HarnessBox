@@ -71,7 +71,7 @@ from harnessbox.streaming import (
     EventType as StreamEventType,
 )
 from harnessbox.types import AgentResponse
-from harnessbox.workspace import GitStatus, GitWorkspace, Workspace
+from harnessbox.workspace import GitRepoConfig, GitStatus, GitWorkspace, Workspace
 
 __all__ = [
     "__version__",
@@ -140,8 +140,9 @@ __all__ = [
     "list_harness_types",
     "register_harness_type",
     # Workspace
+    "GitRepoConfig",
     "GitStatus",
-    "GitWorkspace",
+    "GitWorkspace",  # Backward-compat alias for GitRepoConfig
     "Workspace",
     # Event buffer
     "EventBuffer",

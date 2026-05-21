@@ -27,7 +27,6 @@ class TestSetupContext:
         assert ctx.cwd == ""
         assert ctx.manifest_target_dir == ""
         assert ctx.timings == {}
-        assert ctx.skill_installs == []
         assert ctx.setup_script is None
         assert ctx.dirs == []
         assert ctx.files == {}
@@ -222,7 +221,6 @@ class TestBuildSetupPipeline:
             "create_directories",
             "inject_files",
             "set_hook_permissions",
-            "install_skills",
             "run_setup_script",
         ]
 
