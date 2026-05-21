@@ -80,6 +80,11 @@ class AgentRuntime:
         self._agent_session_id: str | None = None
         self._cost_metrics = CostMetrics()
 
+        # Cache provider capability checks (avoids hasattr per-event in hot path)
+        self._has_notify_turn_start = hasattr(provider, "notify_turn_start")
+        self._has_notify_turn_end = hasattr(provider, "notify_turn_end")
+        self._has_extend_timeout = hasattr(provider, "maybe_extend_timeout")
+
         # Callbacks set by Sandbox to coordinate with SandboxSession
         self._on_sandbox_dead: Callable[[], None] | None = None
         self._start_idle_timer: Callable[[], None] | None = None
@@ -139,12 +144,16 @@ class AgentRuntime:
                 pass
             self._agent_process = None
 
-    async def _stream_oneshot(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Spawn a one-shot agent process and yield raw NDJSON lines."""
+    def _require_active(self, action: str) -> None:
+        """Raise if sandbox is not in ACTIVE state."""
         state = self._get_state() if self._get_state else RuntimeState.ACTIVE
         if state != RuntimeState.ACTIVE:
             hint = " Call 'await sandbox.setup()' first." if state == RuntimeState.STARTING else ""
-            raise RuntimeError(f"Cannot run prompt: sandbox is in {state.value!r} state.{hint}")
+            raise RuntimeError(f"Cannot {action}: sandbox is in {state.value!r} state.{hint}")
+
+    async def _stream_oneshot(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Spawn a one-shot agent process and yield raw NDJSON lines."""
+        self._require_active("run prompt")
 
         cwd = self._get_cwd() if self._get_cwd else self._harness_config.workspace_root
         plugin_dirs = self._get_plugin_dirs() if self._get_plugin_dirs else []
@@ -247,8 +256,8 @@ class AgentRuntime:
                 await self._ensure_agent_ready()
                 assert self._agent_process is not None
 
-                if hasattr(self._provider, "notify_turn_start"):
-                    self._provider.notify_turn_start()
+                if self._has_notify_turn_start:
+                    self._provider.notify_turn_start()  # type: ignore[attr-defined]
 
                 try:
                     await self._agent_process.send_prompt(prompt)
@@ -270,13 +279,13 @@ class AgentRuntime:
                         StreamEventType.SESSION_ENDED,
                     ):
                         last_turn_end = event
-                        if hasattr(self._provider, "notify_turn_end"):
-                            self._provider.notify_turn_end()
+                        if self._has_notify_turn_end:
+                            self._provider.notify_turn_end()  # type: ignore[attr-defined]
                     event = await self._event_buffer.push(event)
                     yield event
 
-                    if hasattr(self._provider, "maybe_extend_timeout"):
-                        await self._provider.maybe_extend_timeout()
+                    if self._has_extend_timeout:
+                        await self._provider.maybe_extend_timeout()  # type: ignore[attr-defined]
 
                 result_model_usage = (
                     (last_turn_end.metadata or {}).get("model_usage") if last_turn_end else None
@@ -310,8 +319,8 @@ class AgentRuntime:
                         yield event
 
         except SandboxDeadError as e:
-            if hasattr(self._provider, "notify_turn_end"):
-                self._provider.notify_turn_end()
+            if self._has_notify_turn_end:
+                self._provider.notify_turn_end()  # type: ignore[attr-defined]
             _log.error(
                 f"Sandbox {self._provider.sandbox_id} is dead: {e}",
                 extra={"sandbox_id": self._provider.sandbox_id},
@@ -339,12 +348,7 @@ class AgentRuntime:
 
     async def start_interactive_session(self) -> InteractiveSession:
         """Start a live interactive terminal session via PTY."""
-        state = self._get_state() if self._get_state else RuntimeState.ACTIVE
-        if state != RuntimeState.ACTIVE:
-            hint = " Call 'await sandbox.setup()' first." if state == RuntimeState.STARTING else ""
-            raise RuntimeError(
-                f"Cannot start interactive session: sandbox is in {state.value!r} state.{hint}"
-            )
+        self._require_active("start interactive session")
 
         if not isinstance(self._provider, PTYCapable):
             raise RuntimeError(

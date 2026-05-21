@@ -45,8 +45,8 @@ class SandboxSession:
         self._state = RuntimeState.STARTING
         self._idle_timer_task: asyncio.Task[None] | None = None
         self._paused_sandbox_id: str | None = None
-        self._agent_session_id: str | None = None
         self._stop_agent: StopAgentFn | None = None
+        self._get_agent_session_id: Callable[[], str | None] | None = None
 
     @property
     def state(self) -> RuntimeState:
@@ -66,11 +66,9 @@ class SandboxSession:
 
     @property
     def agent_session_id(self) -> str | None:
-        return self._agent_session_id
-
-    @agent_session_id.setter
-    def agent_session_id(self, value: str | None) -> None:
-        self._agent_session_id = value
+        if self._get_agent_session_id:
+            return self._get_agent_session_id()
+        return None
 
     def set_stop_agent(self, fn: StopAgentFn) -> None:
         """Register the callback to stop the agent process before pausing/killing."""
@@ -115,7 +113,7 @@ class SandboxSession:
             event_id=str(uuid.uuid4()),
             sequence=0,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=self._agent_session_id or self._provider.sandbox_id or "",
+            session_id=self.agent_session_id or self._provider.sandbox_id or "",
             event_type=event_type,
             metadata=metadata,
         )
@@ -223,7 +221,7 @@ class SandboxSession:
                 await self._stop_agent()
             except Exception:
                 pass
-        self._paused_sandbox_id = await self.pause()
+        await self.pause()
 
     # ------------------------------------------------------------------
     # SandboxDeadError callback (used by AgentRuntime)

@@ -185,6 +185,8 @@ class Sandbox:
         self._runtime._get_paused_sandbox_id = lambda: self._session.paused_sandbox_id
         self._runtime._resume_sandbox = self.resume
         self._runtime._clear_paused_id = lambda: setattr(self._session, "paused_sandbox_id", None)
+        self._session._get_agent_session_id = lambda: self._runtime.agent_session_id
+        self._session.set_stop_agent(self._stop_agent_process)
 
     @staticmethod
     def _resolve_string_provider(
@@ -419,7 +421,6 @@ class Sandbox:
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
-        self._session.set_stop_agent(self._stop_agent_process)
         await self._session.kill()
 
     async def pause(self) -> str:
@@ -465,12 +466,10 @@ class Sandbox:
         await self._session._on_idle_timeout()
 
     async def _do_idle_pause(self) -> None:
-        self._session.set_stop_agent(self._stop_agent_process)
         await self._session._do_idle_pause()
 
     async def end(self) -> None:
         """Gracefully end the session."""
-        self._session.set_stop_agent(self._stop_agent_process)
         await self._session.end()
 
     # ------------------------------------------------------------------
