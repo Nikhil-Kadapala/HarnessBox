@@ -722,7 +722,7 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        await info.sandbox.kill()
+        await info.sandbox_conn.kill()
         info.runtime_state = RuntimeState.FAILED.value
         return Response(status_code=204)
 
@@ -733,14 +733,14 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        workspace = info.sandbox._workspace
+        workspace = info.sandbox_conn._workspace
         if workspace and hasattr(workspace, "rename_branch"):
             try:
                 from harnessbox.workspace import GitWorkspace
 
                 assert isinstance(workspace, GitWorkspace)
-                provider = info.sandbox.provider
-                ws_root = info.sandbox._harness_config.workspace_root
+                provider = info.sandbox_conn.provider
+                ws_root = info.sandbox_conn._harness_config.workspace_root
                 await workspace.rename_branch(provider, ws_root, req.name)
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -756,7 +756,7 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        workspace = info.sandbox._workspace
+        workspace = info.sandbox_conn._workspace
         if not workspace or not hasattr(workspace, "create_pr"):
             raise HTTPException(status_code=400, detail="Session has no git workspace")
 
@@ -764,8 +764,8 @@ def create_app(
             from harnessbox.workspace import GitWorkspace
 
             assert isinstance(workspace, GitWorkspace)
-            provider = info.sandbox.provider
-            ws_root = info.sandbox._harness_config.workspace_root
+            provider = info.sandbox_conn.provider
+            ws_root = info.sandbox_conn._harness_config.workspace_root
             result = await workspace.create_pr(provider, ws_root, req.title, req.body)
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -785,7 +785,7 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        workspace = info.sandbox._workspace
+        workspace = info.sandbox_conn._workspace
         if not workspace or not hasattr(workspace, "check_pr_status") or not info.pr_url:
             return _session_response(info)
 
@@ -793,8 +793,8 @@ def create_app(
             from harnessbox.workspace import GitWorkspace
 
             assert isinstance(workspace, GitWorkspace)
-            provider = info.sandbox.provider
-            ws_root = info.sandbox._harness_config.workspace_root
+            provider = info.sandbox_conn.provider
+            ws_root = info.sandbox_conn._harness_config.workspace_root
             pr_data = await workspace.check_pr_status(provider, ws_root)
         except Exception:
             logger.debug("Failed to check PR status for session %s", session_id, exc_info=True)
@@ -851,7 +851,7 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        workspace = info.sandbox._workspace
+        workspace = info.sandbox_conn._workspace
         if not workspace or not hasattr(workspace, "diff_stat"):
             return SessionStatsResponse()
 
@@ -859,8 +859,8 @@ def create_app(
             from harnessbox.workspace import GitWorkspace
 
             assert isinstance(workspace, GitWorkspace)
-            provider = info.sandbox.provider
-            ws_root = info.sandbox._harness_config.workspace_root
+            provider = info.sandbox_conn.provider
+            ws_root = info.sandbox_conn._harness_config.workspace_root
             diff = await workspace.diff_stat(provider, ws_root)
             commits = await workspace.commit_count(provider, ws_root)
         except Exception:
@@ -971,7 +971,7 @@ def create_app(
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
-        if info.sandbox is None:
+        if info.sandbox_conn is None:
             raise HTTPException(
                 status_code=400,
                 detail="Session has no active sandbox. Send a prompt to connect, or use GET /v1/workspaces/{id}/history for historical events.",
@@ -981,7 +981,7 @@ def create_app(
         last_seq = int(last_event_id_str) if last_event_id_str else None
 
         async def event_generator() -> Any:
-            async for event in info.sandbox.event_buffer.stream(last_seq):
+            async for event in info.sandbox_conn.event_buffer.stream(last_seq):
                 yield ServerSentEvent(
                     data=json.dumps(event.to_dict()),
                     event="message",
@@ -1049,7 +1049,7 @@ def create_app(
             info = mgr.get_workspace(session_id)
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
-        agent_process = info.sandbox._agent_process
+        agent_process = info.sandbox_conn._agent_process
         if not agent_process:
             raise HTTPException(status_code=400, detail="No persistent agent process")
         await agent_process.respond_permission(req.request_id, req.behavior)

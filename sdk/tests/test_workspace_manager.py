@@ -512,7 +512,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-revive"] = info
@@ -528,7 +528,7 @@ class TestConnectSandbox:
 
             await mgr._connect_sandbox("w-revive")
 
-        assert info.sandbox is not None
+        assert info.sandbox_conn is not None
         assert info.agent_manager is not None
         assert info.runtime_state == RuntimeState.ACTIVE.value
         mock_sandbox.resume.assert_called_once_with("live-sandbox-42")
@@ -574,7 +574,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-expired"] = info
@@ -595,7 +595,7 @@ class TestConnectSandbox:
             await mgr._connect_sandbox("w-expired")
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
-        assert info.sandbox is not None
+        assert info.sandbox_conn is not None
         mock_provider.create.assert_called_once_with(
             env_vars={},
             timeout=600,
@@ -642,7 +642,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-dead"] = info
@@ -677,7 +677,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-orphan"] = info
@@ -725,7 +725,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-nokey"] = info
@@ -779,7 +779,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-cfg"] = info
@@ -844,7 +844,7 @@ class TestConnectSandbox:
             created_at=now,
             last_active=now,
             harness="claude-code",
-            sandbox=None,
+            sandbox_conn=None,
             agent_manager=None,
         )
         mgr._workspaces["w-prompt"] = info
@@ -881,7 +881,7 @@ class TestConnectSandbox:
             async for event in mgr.prompt("w-prompt", "Hello"):
                 events.append(event)
 
-        assert info.sandbox is not None
+        assert info.sandbox_conn is not None
         assert info.agent_manager is not None
         assert info.runtime_state == RuntimeState.ACTIVE.value
         # First event is USER_PROMPT, last is from agent
