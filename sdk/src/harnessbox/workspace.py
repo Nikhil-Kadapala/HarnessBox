@@ -370,9 +370,7 @@ class GitRepoConfig:
         clone_target = self._clone_target(workspace_root)
 
         # Push existing commits
-        push_result = await self._run_git(
-            provider, f"push origin {self.branch}", cwd=clone_target
-        )
+        push_result = await self._run_git(provider, f"push origin {self.branch}", cwd=clone_target)
         if push_result.exit_code != 0:
             self.push_error = push_result.stderr
             raise RuntimeError(f"Push failed, cannot create PR: {push_result.stderr}")

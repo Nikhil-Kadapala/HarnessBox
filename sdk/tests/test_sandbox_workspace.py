@@ -81,7 +81,7 @@ class TestSandboxWithWorkspace:
         post_kill_cmds = ws_provider._commands[pre_kill_cmd_count:]
         assert not any("commit" in c for c in post_kill_cmds)
         assert not any("push" in c for c in post_kill_cmds)
-        assert sb.state == RuntimeState.FAILED
+        assert sb.state == RuntimeState.DEAD
 
     @pytest.mark.asyncio
     async def test_manifest_files_go_into_cloned_directory(self, ws_provider):
@@ -134,7 +134,7 @@ class TestSandboxWithWorkspace:
         async with Sandbox(client=ws_provider, workspace=ws) as sb:
             await sb.setup()
             assert sb.state == RuntimeState.ACTIVE
-        assert sb.state.value == RuntimeState.FAILED.value
+        assert sb.state.value == RuntimeState.DEAD.value
 
 
 class TestGitRepoConfigAlias:
@@ -227,13 +227,15 @@ class TestSandboxGitFacade:
     async def test_check_pr_status_delegates(self, ws_provider):
         import json
 
-        pr_json = json.dumps({
-            "state": "OPEN",
-            "merged": False,
-            "url": "https://github.com/test/repo/pull/1",
-            "number": 1,
-            "statusCheckRollup": [{"conclusion": "SUCCESS"}],
-        })
+        pr_json = json.dumps(
+            {
+                "state": "OPEN",
+                "merged": False,
+                "url": "https://github.com/test/repo/pull/1",
+                "number": 1,
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        )
         ws_provider.set_git_response(
             "gh pr view",
             CommandResult(exit_code=0, stdout=pr_json, stderr=""),

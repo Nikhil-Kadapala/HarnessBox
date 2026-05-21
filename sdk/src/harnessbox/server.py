@@ -722,7 +722,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found") from exc
 
         await info.sandbox_conn.kill()
-        info.runtime_state = RuntimeState.FAILED.value
+        info.runtime_state = RuntimeState.DEAD.value
         return Response(status_code=204)
 
     @app.post("/v1/workspaces/{session_id}/rename", response_model=SessionResponse)
@@ -796,7 +796,7 @@ def create_app(
 
         return _session_response(info)
 
-    _NON_PROMPTABLE_RUNTIME = frozenset({"failed", "ended", "ending"})
+    _NON_PROMPTABLE_RUNTIME = frozenset({"dead", "ended", "dying"})
 
     @app.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
     async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:

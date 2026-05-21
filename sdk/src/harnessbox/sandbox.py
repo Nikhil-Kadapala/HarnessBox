@@ -101,7 +101,6 @@ class Sandbox:
         one_shot: bool = False,
         system_prompt: str | Path | None = None,
         skills: list[str | Path] | None = None,
-        skill_installs: list[str] | None = None,
         plugins: list[str | Path] | None = None,
         env_vars: dict[str, str] | None = None,
         dirs: list[str] | None = None,
@@ -131,9 +130,6 @@ class Sandbox:
             skills: Local skill files or directories to inject. Single ``.md``
                 files become ``{skills_dir}/{stem}/SKILL.md``. Directories
                 are copied as-is into the skills directory.
-            skill_installs: Registry skills to install via
-                ``npx skills add`` during setup (e.g.,
-                ``["anthropics/skills --skill frontend-design"]``).
             plugins: Local plugin directories to inject and load via
                 the harness's plugin flag (e.g., ``--plugin-dir``).
             env_vars: Environment variables for the sandbox.
@@ -172,7 +168,6 @@ class Sandbox:
         self._security_policy = security_policy
         self._system_prompt_content = self._resolve_prompt(system_prompt)
         self._skills = skills or []
-        self._skill_installs = skill_installs or []
         self._plugins = plugins or []
         self._plugin_dirs: list[str] = []
         self._env_vars = dict(env_vars) if env_vars else {}
@@ -444,7 +439,6 @@ class Sandbox:
             resolved_skills=resolved_skills,
             resolved_plugins=resolved_plugins,
             plugin_dirs=plugin_dirs,
-            skill_installs=self._skill_installs,
             setup_script=self._setup_script,
             cwd=self._cwd,
         )
@@ -498,7 +492,7 @@ class Sandbox:
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
-        if self._state in (RuntimeState.ENDED, RuntimeState.FAILED):
+        if self._state in (RuntimeState.ENDED, RuntimeState.DEAD):
             return
         if self._agent_process:
             self._snapshot_process_metrics()
@@ -511,7 +505,7 @@ class Sandbox:
         try:
             await self._provider.kill()
         finally:
-            self._state = RuntimeState.FAILED
+            self._state = RuntimeState.DEAD
 
     async def pause(self) -> str:
         """Pause the sandbox, preserving state. Returns sandbox_id."""
@@ -566,7 +560,7 @@ class Sandbox:
 
     async def end(self) -> None:
         """Gracefully end the session."""
-        self._transition(RuntimeState.ENDING)
+        self._transition(RuntimeState.DYING)
         if self._agent_process:
             self._snapshot_process_metrics()
             try:
@@ -801,10 +795,10 @@ class Sandbox:
             yield error_event
 
             try:
-                self._transition(RuntimeState.FAILED)
+                self._transition(RuntimeState.DEAD)
             except InvalidTransitionError as transition_err:
                 _log.debug(
-                    f"Could not transition to FAILED (already in {self._state.value}): {transition_err}"
+                    f"Could not transition to DEAD (already in {self._state.value}): {transition_err}"
                 )
 
             return
@@ -950,9 +944,7 @@ class Sandbox:
     async def create_pr(self, title: str, body: str = "") -> dict[str, str]:
         """Commit, push, and create a GitHub PR. Returns {"url": "..."}."""
         ws = self._git_workspace()
-        return await ws.create_pr(
-            self._provider, self._harness_config.workspace_root, title, body
-        )
+        return await ws.create_pr(self._provider, self._harness_config.workspace_root, title, body)
 
     async def check_pr_status(self) -> dict[str, Any]:
         """Check PR status via gh CLI. Returns {state, merged, ci_status, url, number}."""
