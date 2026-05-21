@@ -136,9 +136,9 @@ class Session:
     ) -> CommandResult:
         """Run a shell command in this session's sandbox."""
         info = self._manager.get_workspace(self._session_id)
-        if info.sandbox is None:
-            raise RuntimeError(f"Session {self._session_id} has no live sandbox")
-        return await info.sandbox.run_command(command, cwd=cwd, timeout=timeout)
+        if info.sandbox_conn is None:
+            raise RuntimeError(f"Session {self._session_id} has no live sandbox connection")
+        return await info.sandbox_conn.run_command(command, cwd=cwd, timeout=timeout)
 
     async def kill(self) -> None:
         """Destroy this session's sandbox and release resources."""

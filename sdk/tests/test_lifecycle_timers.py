@@ -425,7 +425,7 @@ class TestSnapshotRecovery:
             workflow_state="in_progress",
             created_at="",
             last_active="",
-            sandbox=mock_sandbox,
+            sandbox_conn=mock_sandbox,
         )
         mgr._workspaces["w-1"] = info
         mgr._locks["w-1"] = asyncio.Lock()

@@ -106,10 +106,6 @@ class WorkspaceConfig:
 class WorkspaceInstance:
     """Workspace record — in-memory state + persistent metadata.
 
-    The sandbox and agent_manager fields may be None when the workspace is
-    loaded from storage (disconnected). They are connected lazily on first
-    prompt via WorkspaceManager._ensure_sandbox().
-
     State is split into two independent dimensions:
     - runtime_state: sandbox infrastructure (STARTING/ACTIVE/PAUSED/ENDING/ENDED/FAILED)
     - workflow_state: project lifecycle (BACKLOG/IN_PROGRESS/IN_REVIEW/MERGED/ARCHIVED)
@@ -128,7 +124,14 @@ class WorkspaceInstance:
     harness: str = "claude-code"
 
     # Runtime refs (not persisted)
-    sandbox: Sandbox | None = None
+    sandbox_conn: Sandbox | None = None
+    """Ephemeral client handle to the provider sandbox.
+
+    None means the process hasn't established a connection yet (e.g. after
+    server restart or storage hydration). The logical sandbox still exists —
+    provider_sandbox_id always identifies it. The connection is created lazily
+    via WorkspaceManager._ensure_sandbox() → _connect_sandbox() on first use.
+    """
     agent_manager: Any = None  # AgentManager, imported lazily to avoid circular import
     workspace_name: str | None = None
     base_branch: str | None = None
@@ -220,6 +223,12 @@ class WorkspaceManager:
         # The idle timer only restarts when this count drops to zero, ensuring we
         # never auto-pause a workspace that still has an active agent turn running.
         self._active_turns: dict[str, int] = {}
+
+    def _ensure_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Return the per-workspace lock, creating it if absent."""
+        if workspace_id not in self._locks:
+            self._locks[workspace_id] = asyncio.Lock()
+        return self._locks[workspace_id]
 
     @classmethod
     async def create(
@@ -329,7 +338,7 @@ class WorkspaceManager:
             created_at=datetime.now(timezone.utc).isoformat(),
             last_active=datetime.now(timezone.utc).isoformat(),
             harness=config.harness,
-            sandbox=sandbox,
+            sandbox_conn=sandbox,
             agent_manager=agent_mgr,
             workspace_name=workspace_name,
             base_branch=base_branch,
@@ -370,7 +379,7 @@ class WorkspaceManager:
             limit: Maximum number of workspaces to load (default: 100).
 
         Note:
-            Loaded workspaces start with sandbox=None (disconnected). The sandbox
+            Loaded workspaces start with sandbox_conn=None (disconnected). The
             connection is established lazily on first prompt via _ensure_sandbox().
         """
         if not self._storage:
@@ -402,7 +411,7 @@ class WorkspaceManager:
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
                     harness=record["harness"],
-                    sandbox=None,
+                    sandbox_conn=None,
                     agent_manager=None,
                     workspace_name=record.get("workspace_name"),
                     base_branch=record.get("base_branch"),
@@ -470,11 +479,11 @@ class WorkspaceManager:
                 # Write attachments to sandbox and build metadata
                 resolved_attachments: list[Attachment] = []
                 if attachments:
-                    cwd = info.sandbox._cwd or "/workspace"
+                    cwd = info.sandbox_conn._cwd or "/workspace"
                     for att in attachments:
                         safe_name = Path(att.filename).name or "attachment"
                         sandbox_path = f"{cwd}/.attachments/{att.attachment_id}/{safe_name}"
-                        await info.sandbox._provider.make_dir(
+                        await info.sandbox_conn._provider.make_dir(
                             f"{cwd}/.attachments/{att.attachment_id}"
                         )
                         raw_data = (
@@ -483,7 +492,7 @@ class WorkspaceManager:
                             else (Path(att.storage_path).read_bytes() if att.storage_path else b"")
                         )
                         if raw_data:
-                            await info.sandbox._provider.write_file(sandbox_path, raw_data)
+                            await info.sandbox_conn._provider.write_file(sandbox_path, raw_data)
                         resolved_attachments.append(
                             Attachment(
                                 attachment_id=att.attachment_id,
@@ -524,8 +533,10 @@ class WorkspaceManager:
                         **({"attachments": attachment_meta} if attachment_meta else {}),
                     },
                 )
-                if info.sandbox._event_buffer:
-                    user_prompt_event = await info.sandbox._event_buffer.push(user_prompt_event)
+                if info.sandbox_conn._event_buffer:
+                    user_prompt_event = await info.sandbox_conn._event_buffer.push(
+                        user_prompt_event
+                    )
                 yield user_prompt_event
 
                 # Augment prompt with file references for the agent
@@ -712,7 +723,7 @@ class WorkspaceManager:
             created_at=record["created_at"],
             last_active=record.get("last_active", record["created_at"]),
             harness=record["harness"],
-            sandbox=sandbox,
+            sandbox_conn=sandbox,
             agent_manager=agent_mgr,
             workspace_name=record.get("workspace_name"),
             base_branch=record.get("base_branch"),
@@ -775,14 +786,14 @@ class WorkspaceManager:
         """Ensure workspace has a live sandbox connection.
 
         Handles all cold-start cases without pre-flight status checks:
-        - sandbox=None (loaded from storage) → reconnect from stored config
-        - runtime_state=paused (sandbox object exists but is paused) → resume
+        - sandbox_conn=None (loaded from storage) → reconnect from stored config
+        - runtime_state=paused (connection exists but sandbox is suspended) → resume
 
-        If the workspace is already active with a live sandbox, this is a no-op.
+        If the workspace is already active with a live connection, this is a no-op.
         """
         info = self.get_workspace(workspace_id)
 
-        if info.sandbox is None:
+        if info.sandbox_conn is None:
             await self._connect_sandbox(workspace_id)
         elif info.runtime_state == RuntimeState.PAUSED.value:
             await self._resume_workspace(workspace_id)
@@ -800,14 +811,11 @@ class WorkspaceManager:
                 "is configured — cannot reconnect without stored configuration."
             )
 
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             info = self.get_workspace(workspace_id)
 
             # Re-check under lock — another concurrent prompt may have connected already
-            if info.sandbox is not None:
+            if info.sandbox_conn is not None:
                 return
 
             record = await self._storage.get_workspace(workspace_id)
@@ -896,7 +904,7 @@ class WorkspaceManager:
                 env_vars=resolved_env_vars,
             )
 
-            info.sandbox = sandbox
+            info.sandbox_conn = sandbox
             info.agent_manager = agent_mgr
             info.runtime_state = RuntimeState.ACTIVE.value
             info.last_active = datetime.now(timezone.utc).isoformat()
@@ -982,9 +990,7 @@ class WorkspaceManager:
     async def pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace: shutdown agents, snapshot, suspend sandbox, persist."""
         info = self.get_workspace(workspace_id)
-        if workspace_id not in self._locks:
-            self._locks[workspace_id] = asyncio.Lock()
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             if info.runtime_state != RuntimeState.ACTIVE.value:
                 raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.PAUSED)
             await self._pause_workspace_locked(workspace_id, info)
@@ -992,9 +998,13 @@ class WorkspaceManager:
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox, restart idle timer."""
         info = self.get_workspace(workspace_id)
-        if info.runtime_state != RuntimeState.PAUSED.value:
-            raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
-        await self._resume_workspace(workspace_id)
+        if not info.sandbox_conn:
+            await self._connect_sandbox(workspace_id)
+            return
+        async with self._ensure_lock(workspace_id):
+            if info.runtime_state != RuntimeState.PAUSED.value:
+                raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.ACTIVE)
+            await self._resume_workspace_locked(workspace_id, info)
 
     async def destroy_workspace(self, workspace_id: str) -> None:
         """Destroy a workspace and kill its sandbox.
@@ -1003,14 +1013,12 @@ class WorkspaceManager:
         """
         self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
-        async with self._locks[workspace_id]:
-            # Shutdown all agents
+        async with self._ensure_lock(workspace_id):
             if info.agent_manager:
                 await info.agent_manager.shutdown_all()
 
-            # Kill sandbox
-            if info.sandbox:
-                await info.sandbox.kill()
+            if info.sandbox_conn:
+                await info.sandbox_conn.kill()
 
             info.runtime_state = RuntimeState.FAILED.value
 
@@ -1058,10 +1066,10 @@ class WorkspaceManager:
         """Pause workspace and create snapshot (acquires lock internally)."""
         self._cancel_idle_timer(workspace_id)
         info = self.get_workspace(workspace_id)
-        if not info.sandbox:
+        if not info.sandbox_conn:
             return
 
-        async with self._locks[workspace_id]:
+        async with self._ensure_lock(workspace_id):
             await self._pause_workspace_locked(workspace_id, info)
 
     async def _pause_workspace_locked(self, workspace_id: str, info: WorkspaceInstance) -> None:
@@ -1075,13 +1083,13 @@ class WorkspaceManager:
 
         # Create snapshot (captures filesystem including ~/.claude/sessions/)
         try:
-            snapshot_id = await info.sandbox.create_snapshot()
+            snapshot_id = await info.sandbox_conn.create_snapshot()
         except Exception as e:
             logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
             snapshot_id = None
 
         # Pause sandbox
-        provider_sandbox_id = await info.sandbox.pause()
+        provider_sandbox_id = await info.sandbox_conn.pause()
 
         info.provider_sandbox_id = provider_sandbox_id
         info.snapshot_id = snapshot_id
@@ -1116,7 +1124,7 @@ class WorkspaceManager:
 
         Raises TimeoutException or ConnectException if all retries fail.
         """
-        if not info.sandbox or not info.provider_sandbox_id:
+        if not info.sandbox_conn or not info.provider_sandbox_id:
             raise ValueError("Cannot resume: sandbox or provider_sandbox_id is None")
 
         if TENACITY_AVAILABLE:
@@ -1127,14 +1135,14 @@ class WorkspaceManager:
                 retry=retry_if_exception_type((TimeoutException, ConnectException)),
             )
             async def _resume_with_retry() -> None:
-                await info.sandbox.resume(info.provider_sandbox_id)  # type: ignore
+                await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
 
             await _resume_with_retry()
         else:
             # Fallback: simple retry without tenacity
             for attempt in range(3):
                 try:
-                    await info.sandbox.resume(info.provider_sandbox_id)  # type: ignore
+                    await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
                     return
                 except (TimeoutException, ConnectException) as e:
                     if attempt == 2:  # Last attempt
@@ -1143,43 +1151,41 @@ class WorkspaceManager:
                     await asyncio.sleep(2**attempt)  # Exponential backoff
 
     async def _resume_workspace(self, workspace_id: str) -> None:
-        """Resume paused workspace with transparent snapshot recovery."""
+        """Resume paused workspace (acquires lock internally)."""
         info = self.get_workspace(workspace_id)
-        if info.runtime_state != RuntimeState.PAUSED.value:
-            return
-
-        if not info.sandbox:
+        if not info.sandbox_conn:
             await self._connect_sandbox(workspace_id)
             return
+        async with self._ensure_lock(workspace_id):
+            if info.runtime_state != RuntimeState.PAUSED.value:
+                return
+            await self._resume_workspace_locked(workspace_id, info)
 
-        async with self._locks[workspace_id]:
-            try:
-                # Try to resume with retries
-                await self._try_resume_sandbox(info)
-            except (TimeoutException, ConnectException, SandboxDeadError) as e:
-                # Check if sandbox expired or was killed
-                if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
-                    await self._recover_from_snapshot(workspace_id, info, cause=e)
-                else:
-                    raise
+    async def _resume_workspace_locked(self, workspace_id: str, info: "WorkspaceInstance") -> None:
+        """Resume workspace internals. Caller must hold self._locks[workspace_id]."""
+        try:
+            await self._try_resume_sandbox(info)
+        except (TimeoutException, ConnectException, SandboxDeadError) as e:
+            if self._is_sandbox_expired(e) or isinstance(e, SandboxDeadError):
+                await self._recover_from_snapshot(workspace_id, info, cause=e)
+            else:
+                raise
 
-            info.runtime_state = RuntimeState.ACTIVE.value
-            info.last_active = datetime.now(timezone.utc).isoformat()
+        info.runtime_state = RuntimeState.ACTIVE.value
+        info.last_active = datetime.now(timezone.utc).isoformat()
 
-            # Persist
-            if self._storage:
-                await self._storage.update_workspace(
-                    workspace_id,
-                    runtime_state=RuntimeState.ACTIVE.value,
-                    last_active=info.last_active,
-                    provider_sandbox_id=info.provider_sandbox_id,
-                )
+        if self._storage:
+            await self._storage.update_workspace(
+                workspace_id,
+                runtime_state=RuntimeState.ACTIVE.value,
+                last_active=info.last_active,
+                provider_sandbox_id=info.provider_sandbox_id,
+            )
 
-            # Restart idle countdown now that workspace is active again
-            if self._auto_pause:
-                self._start_idle_timer(workspace_id)
+        if self._auto_pause:
+            self._start_idle_timer(workspace_id)
 
-            logger.info(f"Resumed workspace {workspace_id}")
+        logger.info(f"Resumed workspace {workspace_id}")
 
     async def _recover_from_snapshot(
         self,
@@ -1208,12 +1214,12 @@ class WorkspaceManager:
             info.snapshot_id,
         )
 
-        if not info.sandbox:
+        if not info.sandbox_conn:
             raise ValueError(
                 f"Workspace {workspace_id} has no live sandbox to recover into."
             ) from cause
 
-        provider = info.sandbox._provider
+        provider = info.sandbox_conn._provider
 
         # The provider must support snapshot-based creation (E2B-specific).
         # We check via duck-typing to stay compatible with custom providers.
