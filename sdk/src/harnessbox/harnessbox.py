@@ -328,7 +328,7 @@ class HarnessBox:
 
     def _build_workspace_config(self, branch: str) -> Any:
         """Convert HarnessBox init params into internal WorkspaceConfig."""
-        from harnessbox.workspace import GitWorkspace
+        from harnessbox.workspace import GitRepoConfig
         from harnessbox.workspace_manager import WorkspaceConfig
 
         merged_env = dict(self._env_vars)
@@ -338,7 +338,7 @@ class HarnessBox:
         workspace = None
         if self._remote:
             git_token = merged_env.get("GITHUB_TOKEN") or merged_env.get("GIT_TOKEN")
-            workspace = GitWorkspace(
+            workspace = GitRepoConfig(
                 remote=self._remote,
                 branch=branch,
                 base_branch="main",

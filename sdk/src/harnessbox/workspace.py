@@ -41,7 +41,7 @@ class Workspace(Protocol):
 EventCallback = Callable[..., Any]
 
 
-class GitWorkspace:
+class GitRepoConfig:
     """Clone a git repo into the sandbox workspace.
 
     Supports HTTPS remotes with optional token auth via git credential helper.
@@ -49,7 +49,7 @@ class GitWorkspace:
 
     Example::
 
-        workspace = GitWorkspace(
+        workspace = GitRepoConfig(
             remote="https://github.com/user/repo.git",
             branch="main",
             commit_on_exit=True,
@@ -94,7 +94,7 @@ class GitWorkspace:
 
     def __repr__(self) -> str:
         return (
-            f"GitWorkspace(remote={self.remote!r}, branch={self.branch!r}, "
+            f"GitRepoConfig(remote={self.remote!r}, branch={self.branch!r}, "
             f"commit_on_exit={self.commit_on_exit}, "
             f"clone_dir_name={self.clone_dir_name!r}, "
             f"auth_token={'***' if self._auth_token else 'None'})"
@@ -590,3 +590,7 @@ class _CloneError(Exception):
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+# Backward-compat alias (deprecated — use GitRepoConfig)
+GitWorkspace = GitRepoConfig

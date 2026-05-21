@@ -965,6 +965,60 @@ class Sandbox:
         return files
 
     # ------------------------------------------------------------------
+    # Git operations facade
+    # ------------------------------------------------------------------
+
+    def _git_workspace(self) -> Any:
+        """Return the GitRepoConfig workspace, or raise if not configured."""
+        from harnessbox.workspace import GitRepoConfig
+
+        if not self._workspace or not isinstance(self._workspace, GitRepoConfig):
+            raise RuntimeError("No git workspace configured for this sandbox")
+        return self._workspace
+
+    async def rename_branch(self, new_name: str) -> None:
+        """Rename the workspace branch in the sandbox."""
+        ws = self._git_workspace()
+        await ws.rename_branch(self._provider, self._harness_config.workspace_root, new_name)
+
+    async def create_pr(self, title: str, body: str = "") -> dict[str, str]:
+        """Commit, push, and create a GitHub PR. Returns {"url": "..."}."""
+        ws = self._git_workspace()
+        return await ws.create_pr(
+            self._provider, self._harness_config.workspace_root, title, body
+        )
+
+    async def check_pr_status(self) -> dict[str, Any]:
+        """Check PR status via gh CLI. Returns {state, merged, ci_status, url, number}."""
+        ws = self._git_workspace()
+        return await ws.check_pr_status(self._provider, self._harness_config.workspace_root)
+
+    async def diff(self) -> str:
+        """Return unified diff of changes since clone (or last snapshot restore)."""
+        ws = self._git_workspace()
+        return await ws.diff(self._provider, self._harness_config.workspace_root)
+
+    async def diff_stat(self) -> dict[str, int]:
+        """Return insertions/deletions since clone."""
+        ws = self._git_workspace()
+        return await ws.diff_stat(self._provider, self._harness_config.workspace_root)
+
+    async def commit_count(self) -> int:
+        """Return number of commits since clone."""
+        ws = self._git_workspace()
+        return await ws.commit_count(self._provider, self._harness_config.workspace_root)
+
+    async def snapshot_workspace(self, name: str) -> None:
+        """Create a named snapshot (lightweight git tag) at the current state."""
+        ws = self._git_workspace()
+        await ws.snapshot(self._provider, self._harness_config.workspace_root, name)
+
+    async def restore_workspace(self, name: str) -> None:
+        """Restore to a named workspace snapshot."""
+        ws = self._git_workspace()
+        await ws.restore(self._provider, self._harness_config.workspace_root, name)
+
+    # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
 
