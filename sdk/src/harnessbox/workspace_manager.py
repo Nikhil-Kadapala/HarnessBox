@@ -85,7 +85,6 @@ class WorkspaceConfig:
     model: str | None = None
     system_prompt: str | Path | None = None
     skills: list[str | Path] = field(default_factory=list)
-    skill_installs: list[str] = field(default_factory=list)
     plugins: list[str | Path] = field(default_factory=list)
     security_policy: SecurityPolicy | None = None
     workspace: Workspace | None = None
@@ -107,7 +106,7 @@ class WorkspaceInstance:
     """Workspace record — in-memory state + persistent metadata.
 
     State is split into two independent dimensions:
-    - runtime_state: sandbox infrastructure (STARTING/ACTIVE/PAUSED/ENDING/ENDED/FAILED)
+    - runtime_state: sandbox infrastructure (STARTING/ACTIVE/PAUSED/DYING/ENDED/DEAD)
     - workflow_state: project lifecycle (BACKLOG/IN_PROGRESS/IN_REVIEW/MERGED/ARCHIVED)
     """
 
@@ -280,7 +279,6 @@ class WorkspaceManager:
             model=config.model,
             system_prompt=config.system_prompt,
             skills=config.skills or None,
-            skill_installs=config.skill_installs or None,
             plugins=config.plugins or None,
             security_policy=config.security_policy,
             workspace=config.workspace,
@@ -556,7 +554,7 @@ class WorkspaceManager:
                         event.event_type == "error"
                         and event.metadata.get("error_code") == "SANDBOX_DEAD"
                     ):
-                        info.runtime_state = RuntimeState.FAILED.value
+                        info.runtime_state = RuntimeState.DEAD.value
 
                     if event.cost_usd is not None:
                         info.total_cost_usd = event.cost_usd
@@ -1020,14 +1018,14 @@ class WorkspaceManager:
             if info.sandbox_conn:
                 await info.sandbox_conn.kill()
 
-            info.runtime_state = RuntimeState.FAILED.value
+            info.runtime_state = RuntimeState.DEAD.value
 
         # Persist final state
         if self._storage:
             try:
                 await self._storage.update_workspace(
                     workspace_id,
-                    runtime_state=RuntimeState.FAILED.value,
+                    runtime_state=RuntimeState.DEAD.value,
                 )
             except Exception as e:
                 logger.error(f"Failed to persist destroyed workspace {workspace_id}: {e}")

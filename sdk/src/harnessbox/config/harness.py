@@ -32,7 +32,6 @@ class HarnessTypeConfig:
     default_template: str | None = None
     skills_dir: str | None = None
     plugin_flag: str | None = None
-    skill_install_cmd: str | None = None
     cli_input_format_flag: str | None = None
     workspace_root: str = "/workspace"
     build_settings: Callable[[SecurityPolicy], dict[str, Any]] | None = None
@@ -172,7 +171,6 @@ register_harness_type(
         default_template="claude",
         skills_dir=".claude/skills",
         plugin_flag="--plugin-dir",
-        skill_install_cmd="npx skills add",
         cli_input_format_flag="--input-format",
         build_settings=_claude_code_build_settings,
         build_hook_script=_claude_code_build_hook,

@@ -455,7 +455,7 @@ class Sandbox:
         Uses a sequential pipeline:
         create sandbox -> check tools -> workspace root -> workspace inject ->
         build manifest -> create dirs -> inject files -> hook permissions ->
-        install skills -> setup script -> ACTIVE.
+        setup script -> ACTIVE.
 
         Agent behavior files (system prompt, skills, plugins) are written
         AFTER workspace injection so they take precedence over repo contents.

@@ -39,7 +39,6 @@ class SetupContext:
     resolved_skills: dict[str, str] | None = None
     resolved_plugins: dict[str, str] | None = None
     plugin_dirs: list[str] = field(default_factory=list)
-    skill_installs: list[str] = field(default_factory=list)
     setup_script: str | None = None
 
     # Populated during execution
@@ -143,8 +142,7 @@ def build_setup_pipeline(
     6. create_directories — mkdir all manifest directories
     7. inject_files — write all manifest files
     8. set_hook_permissions — chmod hook scripts
-    9. install_skills — npx skills add for registry skills
-    10. run_setup_script — user-provided setup command
+    9. run_setup_script — user-provided setup command
 
     Extra steps are appended after the standard ones.
     """
@@ -168,11 +166,6 @@ def build_setup_pipeline(
             name="set_hook_permissions",
             execute=_step_set_hook_permissions,
             skip_if=lambda ctx: not ctx.security_policy or not ctx.harness_config.hooks_dir,
-        ),
-        SetupStep(
-            name="install_skills",
-            execute=_step_install_skills,
-            skip_if=lambda ctx: not ctx.skill_installs or not ctx.harness_config.skill_install_cmd,
         ),
         SetupStep(
             name="run_setup_script",
@@ -282,17 +275,6 @@ async def _step_set_hook_permissions(ctx: SetupContext) -> None:
     hook_path = f"{ctx.manifest_target_dir}/{ctx.harness_config.hooks_dir}/guard_bash.py"
     if hook_path in ctx.manifest.files:
         await ctx.provider.run_command(f"chmod +x {hook_path}")
-
-
-async def _step_install_skills(ctx: SetupContext) -> None:
-    """Install registry skills via the harness's skill install command."""
-    if not ctx.skill_installs or not ctx.harness_config.skill_install_cmd:
-        return
-    for skill_spec in ctx.skill_installs:
-        cmd = f"{ctx.harness_config.skill_install_cmd} {skill_spec}"
-        result = await ctx.provider.run_command(cmd, cwd=ctx.manifest_target_dir)
-        if result.exit_code != 0:
-            raise RuntimeError(f"Skill install failed ({skill_spec}): {result.stderr}")
 
 
 async def _step_run_setup_script(ctx: SetupContext) -> None:

@@ -146,19 +146,19 @@ class TestSetup:
 
 class TestKill:
     @pytest.mark.asyncio
-    async def test_transitions_to_failed(self, mock_provider):
+    async def test_transitions_to_dead(self, mock_provider):
         sb = Sandbox(client=mock_provider)
         await sb.setup()
         await sb.kill()
-        assert sb.state == RuntimeState.FAILED
+        assert sb.state == RuntimeState.DEAD
 
     @pytest.mark.asyncio
-    async def test_idempotent_from_failed(self, mock_provider):
+    async def test_idempotent_from_dead(self, mock_provider):
         sb = Sandbox(client=mock_provider)
         await sb.setup()
         await sb.kill()
         await sb.kill()
-        assert sb.state == RuntimeState.FAILED
+        assert sb.state == RuntimeState.DEAD
 
     @pytest.mark.asyncio
     async def test_idempotent_from_merged(self, mock_provider):
@@ -301,7 +301,7 @@ class TestContextManager:
         async with Sandbox(client=mock_provider) as sb:
             await sb.setup()
             assert sb.state == RuntimeState.ACTIVE
-        assert sb.state.value == RuntimeState.FAILED.value
+        assert sb.state.value == RuntimeState.DEAD.value
 
     @pytest.mark.asyncio
     async def test_context_manager_kills_on_exception(self, mock_provider):
@@ -309,4 +309,4 @@ class TestContextManager:
             async with Sandbox(client=mock_provider) as sb:
                 await sb.setup()
                 raise ValueError("test error")
-        assert sb.state.value == RuntimeState.FAILED.value
+        assert sb.state.value == RuntimeState.DEAD.value

@@ -18,9 +18,9 @@ class TestRuntimeState:
         assert RuntimeState.STARTING.value == "starting"
         assert RuntimeState.ACTIVE.value == "active"
         assert RuntimeState.PAUSED.value == "paused"
-        assert RuntimeState.ENDING.value == "ending"
+        assert RuntimeState.DYING.value == "dying"
         assert RuntimeState.ENDED.value == "ended"
-        assert RuntimeState.FAILED.value == "failed"
+        assert RuntimeState.DEAD.value == "dead"
 
     def test_enum_from_string(self) -> None:
         assert RuntimeState("starting") is RuntimeState.STARTING
@@ -55,15 +55,15 @@ class TestRuntimeTransitions:
         "current,target",
         [
             (RuntimeState.STARTING, RuntimeState.ACTIVE),
-            (RuntimeState.STARTING, RuntimeState.FAILED),
+            (RuntimeState.STARTING, RuntimeState.DEAD),
             (RuntimeState.ACTIVE, RuntimeState.PAUSED),
-            (RuntimeState.ACTIVE, RuntimeState.ENDING),
-            (RuntimeState.ACTIVE, RuntimeState.FAILED),
+            (RuntimeState.ACTIVE, RuntimeState.DYING),
+            (RuntimeState.ACTIVE, RuntimeState.DEAD),
             (RuntimeState.PAUSED, RuntimeState.ACTIVE),
-            (RuntimeState.PAUSED, RuntimeState.ENDING),
-            (RuntimeState.PAUSED, RuntimeState.FAILED),
-            (RuntimeState.ENDING, RuntimeState.ENDED),
-            (RuntimeState.ENDING, RuntimeState.FAILED),
+            (RuntimeState.PAUSED, RuntimeState.DYING),
+            (RuntimeState.PAUSED, RuntimeState.DEAD),
+            (RuntimeState.DYING, RuntimeState.ENDED),
+            (RuntimeState.DYING, RuntimeState.DEAD),
         ],
     )
     def test_valid_transitions_return_true(
@@ -74,16 +74,16 @@ class TestRuntimeTransitions:
     @pytest.mark.parametrize(
         "current,target",
         [
-            (RuntimeState.STARTING, RuntimeState.ENDING),
+            (RuntimeState.STARTING, RuntimeState.DYING),
             (RuntimeState.STARTING, RuntimeState.PAUSED),
             (RuntimeState.ACTIVE, RuntimeState.STARTING),
             (RuntimeState.PAUSED, RuntimeState.STARTING),
-            (RuntimeState.ENDING, RuntimeState.ACTIVE),
-            (RuntimeState.ENDING, RuntimeState.STARTING),
+            (RuntimeState.DYING, RuntimeState.ACTIVE),
+            (RuntimeState.DYING, RuntimeState.STARTING),
             (RuntimeState.ENDED, RuntimeState.ACTIVE),
             (RuntimeState.ENDED, RuntimeState.STARTING),
-            (RuntimeState.FAILED, RuntimeState.ACTIVE),
-            (RuntimeState.FAILED, RuntimeState.STARTING),
+            (RuntimeState.DEAD, RuntimeState.ACTIVE),
+            (RuntimeState.DEAD, RuntimeState.STARTING),
         ],
     )
     def test_invalid_transitions_return_false(
@@ -93,7 +93,7 @@ class TestRuntimeTransitions:
 
     def test_terminal_states_have_no_outgoing(self) -> None:
         assert VALID_RUNTIME_TRANSITIONS[RuntimeState.ENDED] == frozenset()
-        assert VALID_RUNTIME_TRANSITIONS[RuntimeState.FAILED] == frozenset()
+        assert VALID_RUNTIME_TRANSITIONS[RuntimeState.DEAD] == frozenset()
 
 
 class TestWorkflowTransitions:
@@ -140,9 +140,9 @@ class TestWorkflowTransitions:
 
 class TestInvalidTransitionError:
     def test_message_includes_states(self) -> None:
-        err = InvalidTransitionError(RuntimeState.STARTING, RuntimeState.ENDING)
+        err = InvalidTransitionError(RuntimeState.STARTING, RuntimeState.DYING)
         assert "starting" in str(err)
-        assert "ending" in str(err)
+        assert "dying" in str(err)
 
     def test_attributes(self) -> None:
         err = InvalidTransitionError(RuntimeState.ACTIVE, RuntimeState.STARTING)
