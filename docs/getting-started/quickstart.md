@@ -26,8 +26,8 @@ async def main():
 
     # Send a prompt and stream the agent's response
     async for event in session.send_message("echo 'Hello from HarnessBox!'"):
-        if event.text:
-            print(event.text, end="")
+        if event.delta:
+            print(event.delta, end="")
 
     await session.kill()
 

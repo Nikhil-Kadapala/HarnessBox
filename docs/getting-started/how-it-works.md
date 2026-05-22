@@ -79,13 +79,13 @@ Agent output is parsed from NDJSON (Claude Code's `--output-format stream-json`)
 
 | Event Type | Description |
 |------------|-------------|
-| `USER_PROMPT` | Prompt sent to the agent |
-| `AGENT_TEXT` | Text output from the agent |
-| `THINKING` | Agent's internal reasoning |
-| `TOOL_CALL` | Agent invoking a tool (Bash, Read, Write, etc.) |
-| `TOOL_RESULT` | Result returned from a tool |
-| `TURN_ENDED` | Agent finished responding |
+| `SESSION_STARTED` | Session initialized |
 | `SESSION_ENDED` | Session terminated |
+| `TURN_STARTED` | Agent turn started |
+| `TURN_ENDED` | Agent turn completed (with cost metrics) |
+| `ITEM_STARTED` | Message, tool, or reasoning item started |
+| `ITEM_DELTA` | Incremental content chunk (text, tool inputs, reasoning) |
+| `ITEM_COMPLETED` | Message, tool, or reasoning item completed |
 | `ERROR` | Error occurred |
 
 ## Sessions

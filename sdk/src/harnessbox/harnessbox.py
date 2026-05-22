@@ -202,7 +202,7 @@ class HarnessBox:
 
         session = await hb.create_session()
         async for event in session.send_message("Fix the failing test"):
-            print(event.text or "", end="")
+            print(event.delta or "", end="")
         await session.kill()
     """
 
