@@ -38,24 +38,26 @@ pip install "harnessbox[e2b]"
 
 ```python
 import os
-from harnessbox import HarnessBox, GitWorkspace
+from harnessbox import HarnessBox, WorkspaceConfig
+from harnessbox.workspace import GitRepoConfig
 
 hb = HarnessBox(
     provider="e2b",
     harness="claude-code",
+    workspace_config=WorkspaceConfig(
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/user/repo.git",
+            branch="main",
+        ),
+    ),
     secrets={
         "provider_api_key": os.getenv("E2B_API_KEY"),
         "harness_secrets": {"ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")},
     },
-    workspace=GitWorkspace(
-        remote="https://github.com/user/repo.git",
-        branch="main",
-        commit_on_exit=True,
-    ),
 )
 
-sandbox_id = await hb.create()
-async for event in hb.send_message("Fix the tests"):
+session = await hb.create_session()
+async for event in session.send_message("Fix the tests"):
     print(event.delta or "", end="")
 await hb.kill()
 ```
@@ -66,13 +68,19 @@ Run multiple agents on different branches simultaneously:
 
 ```python
 import os
-from harnessbox import HarnessBox, WorkspaceMode
+from harnessbox import HarnessBox, WorkspaceConfig, WorkspaceMode
+from harnessbox.workspace import GitRepoConfig
 
 hb = HarnessBox(
     provider="e2b",
     harness="claude-code",
-    remote="https://github.com/user/repo.git",
-    workspace_mode=WorkspaceMode.NEW,
+    workspace_config=WorkspaceConfig(
+        workspace_mode=WorkspaceMode.NEW,
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/user/repo.git",
+            branch="main",
+        ),
+    ),
     secrets={
         "provider_api_key": os.getenv("E2B_API_KEY"),
         "harness_secrets": {"ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")},
@@ -103,12 +111,22 @@ See [`examples/multi_session.py`](sdk/examples/multi_session.py) for a complete 
 HarnessBox is a Python library. You import it, provision a sandbox, and stream agent output. That's the whole product.
 
 ```python
-from harnessbox import HarnessBox
+from harnessbox import HarnessBox, WorkspaceConfig
+from harnessbox.workspace import GitRepoConfig
 
-hb = HarnessBox(provider="e2b", harness="claude-code", secrets={...})
-await hb.create()
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    workspace_config=WorkspaceConfig(
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/user/repo.git",
+        )
+    ),
+    secrets={...}
+)
+session = await hb.create_session()
 
-async for event in hb.send_message("Fix the failing test"):
+async for event in session.send_message("Fix the failing test"):
     print(event.delta or "", end="")
 
 await hb.kill()
@@ -232,7 +250,8 @@ policy = SecurityPolicy(
 ### HarnessBox
 
 ```python
-from harnessbox import HarnessBox, HarnessBoxSecrets
+from harnessbox import HarnessBox, HarnessBoxSecrets, WorkspaceConfig, WorkspaceMode
+from harnessbox.workspace import GitRepoConfig
 
 hb = HarnessBox(
     provider="e2b",                    # Provider name or instance
@@ -244,40 +263,61 @@ hb = HarnessBox(
     ),
     model="claude-sonnet-4-6-20250514",
     system_prompt=Path("CLAUDE.md"),    # Path to load from file, or str for inline content
-    workspace=GitWorkspace(...),
+    workspace_config=WorkspaceConfig(
+        workspace_mode=WorkspaceMode.NEW,
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/org/repo.git",
+            branch="feat/auth",
+            base_branch="main",
+        ),
+    ),
     security_policy=SecurityPolicy(...),
     setup_script="npm install",
     timeout=300,
 )
 
 # Lifecycle
-sandbox_id = await hb.create()
-async for event in hb.send_message("Fix tests"):
+session = await hb.create_session()
+async for event in session.send_message("Fix tests"):
     print(event.delta)
-response = await hb.send_message("Fix tests", stream=False)
-result = await hb.run_command("pytest")
-await hb.write_file("/workspace/f.py", "content")
-content = await hb.read_file("/workspace/f.py")
+
+# Non-streaming
+response = await session.send_message("Fix tests", stream=False)
+
+# Run a raw shell command in the session
+result = await session.run_command("pytest")
+
+# Clean up all sessions
 await hb.kill()
 
 # Context manager (auto create + kill)
-async with HarnessBox(provider="e2b") as hb:
-    async for event in hb.send_message("Hello"):
+async with HarnessBox(provider="e2b", workspace_config=WorkspaceConfig()) as hb:
+    session = await hb.create_session()
+    async for event in session.send_message("Hello"):
         print(event.delta)
 ```
 
-### GitWorkspace
+### WorkspaceConfig
 
 ```python
-GitWorkspace(
-    remote: str,                          # HTTPS git remote URL
+WorkspaceConfig(
+    workspace_mode: WorkspaceMode = WorkspaceMode.NEW, # NEW or SHARED
+    git_repo_config: GitRepoConfig | None = None,      # Git repo setup
+    file_system_config: FileSystemConfig | None = None,# Local directory mapping
+)
+```
+
+### GitRepoConfig
+
+```python
+GitRepoConfig(
+    remote: str,                          # Git remote HTTPS or SSH URL
     *,
-    branch: str = "main",
-    base_branch: str | None = None,       # Branch to fork from
-    commit_on_exit: bool = False,
-    commit_message: str | None = None,
-    clone_depth: int | None = None,
-    auth_token: str | None = None,        # Never stored as env var
+    branch: str = "main",                 # Checkout branch
+    base_branch: str | None = None,       # Base branch to fork from
+    clone_depth: int | None = None,       # Git shallow clone depth
+    auth_token: str | None = None,        # Git access token for auth
+    clone_dir_name: str | None = None,    # Custom name for directory
 )
 ```
 
@@ -295,15 +335,15 @@ SecurityPolicy(
 ## Project Structure
 
 ```
-harnessbox/
+sdk/src/harnessbox/
   __init__.py                   # public API
-  harnessbox.py                 # HarnessBox — sole public entry point
+  harnessbox.py                 # HarnessBox — public entry point
   workspace_manager.py          # internal workspace orchestration
   agent_manager.py              # internal agent lifecycle
   sandbox.py                    # internal sandbox orchestration
-  workspace.py                  # Workspace protocol, GitWorkspace
+  workspace.py                  # Workspace protocol, GitRepoConfig
   providers.py                  # SandboxProvider protocol
-  lifecycle.py                  # WorkspaceState machine
+  lifecycle.py                  # SessionStatus & RuntimeState transition map
   storage.py                    # StorageBackend protocol
   streaming.py                  # UniversalEvent, StreamParser
   events.py                     # EventBuffer (SSE replay)
@@ -320,7 +360,8 @@ harnessbox/
   _storage/
     sqlite.py                   # SQLite backend
     memory.py                   # In-memory backend
-tests/                          # 651 tests
+sdk/tests/                      # Unit & integration tests
+app/web/                        # Web application front-end (Vite/React)
 ```
 
 ## License

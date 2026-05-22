@@ -9,8 +9,8 @@ hb = HarnessBox(provider="e2b", harness="claude-code", workspace_config=Workspac
 session = await hb.create_session()
 
 async for event in session.send_message("Refactor the auth module"):
-    if event.text:
-        print(event.text, end="")
+    if event.delta:
+        print(event.delta, end="")
 
 await session.kill()
 ```
@@ -88,12 +88,16 @@ assert session.status == SessionStatus.KILLED
 Stream agent responses as typed events:
 
 ```python
+from harnessbox.streaming import EventType as StreamEventType, ItemKind
+
 async for event in session.send_message("Fix the failing test in test_auth.py"):
     match event.event_type:
-        case StreamEventType.AGENT_TEXT:
-            print(event.text, end="")
-        case StreamEventType.TOOL_CALL:
-            print(f"\n[Tool: {event.tool_name}]")
+        case StreamEventType.ITEM_DELTA:
+            if event.item_kind == ItemKind.MESSAGE:
+                print(event.delta or "", end="")
+        case StreamEventType.ITEM_STARTED:
+            if event.item_kind == ItemKind.TOOL_CALL:
+                print(f"\n[Tool: {event.tool_kind}]")
         case StreamEventType.TURN_ENDED:
             print("\n--- Done ---")
 ```

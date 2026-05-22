@@ -3,47 +3,58 @@
 When you send a prompt to the agent, responses stream back as typed `UniversalEvent` objects. The SDK parses the agent's NDJSON output (Claude Code's `--output-format stream-json`) into structured events you can handle programmatically.
 
 ```python
+from harnessbox.streaming import EventType as StreamEventType, ItemKind
+
 async for event in session.send_message("Fix the failing test"):
     match event.event_type:
-        case StreamEventType.AGENT_TEXT:
-            print(event.text, end="")
-        case StreamEventType.TOOL_CALL:
-            print(f"\n[Calling {event.tool_name}]")
-        case StreamEventType.TOOL_RESULT:
-            print(f"[Result: {event.text[:100]}]")
+        case StreamEventType.ITEM_DELTA:
+            if event.item_kind == ItemKind.MESSAGE:
+                print(event.delta or "", end="")
+            elif event.item_kind == ItemKind.REASONING:
+                print(event.delta or "", end="")
+        case StreamEventType.ITEM_STARTED:
+            if event.item_kind == ItemKind.TOOL_CALL:
+                print(f"\n[Calling tool: {event.tool_kind}]")
         case StreamEventType.TURN_ENDED:
             print("\n--- Agent finished ---")
 ```
 
 ## Event Types
 
-| Type | Description | Key Fields |
-|------|-------------|------------|
-| `USER_PROMPT` | Prompt sent to the agent | `text` |
-| `AGENT_TEXT` | Text output from the agent | `text` |
-| `THINKING` | Agent's internal reasoning (extended thinking) | `text` |
-| `TOOL_CALL` | Agent invoking a tool | `tool_name`, `tool_input`, `tool_call_id` |
-| `TOOL_RESULT` | Result returned from a tool | `text`, `tool_call_id` |
-| `TURN_ENDED` | Agent finished responding | `metadata` (cost, duration) |
-| `SESSION_STARTED` | Agent session initialized | |
-| `SESSION_ENDED` | Session terminated | |
-| `ERROR` | Error occurred | `error_message` |
+| Type (Enum) | Description | Key Fields |
+|-------------|-------------|------------|
+| `SESSION_STARTED` | Session initialized | `session_id` |
+| `SESSION_ENDED` | Session terminated | `session_id` |
+| `TURN_STARTED` | Agent turn started | `session_id` |
+| `TURN_ENDED` | Agent turn completed | `cost_usd`, `duration_ms` |
+| `ITEM_STARTED` | Sub-item (message/tool/reasoning) started | `item_id`, `item_kind` |
+| `ITEM_DELTA` | Incremental chunk of item content | `item_id`, `item_kind`, `delta` |
+| `ITEM_COMPLETED` | Sub-item completed | `item_id`, `item_kind` |
+| `ERROR` | An error occurred | `error_message` |
 
 ## UniversalEvent
 
 Every event is a `UniversalEvent` dataclass:
 
 ```python
-from harnessbox.streaming import UniversalEvent, StreamParser
+from harnessbox.streaming import UniversalEvent, EventType, ItemKind, ItemStatus
 
 event = UniversalEvent(
-    event_type=StreamEventType.AGENT_TEXT,
-    text="Here's the fix...",
-    tool_name=None,
-    tool_input=None,
-    tool_call_id=None,
+    event_id="...",
+    sequence=1,
+    timestamp="...",
+    session_id="...",
+    event_type=EventType.ITEM_DELTA,
+    item_id="...",
+    item_kind=ItemKind.MESSAGE,
+    item_status=ItemStatus.IN_PROGRESS,
+    content=(...),
+    delta="Here's the fix...",
+    tool_kind=None,
+    cost_usd=None,
+    duration_ms=None,
     error_message=None,
-    metadata=None,
+    metadata={},
 )
 ```
 
@@ -51,13 +62,21 @@ event = UniversalEvent(
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `event_type` | EventType | The event classification |
-| `text` | str or None | Text content (for text, thinking, tool results) |
-| `tool_name` | str or None | Tool being called (Bash, Read, Write, Edit, etc.) |
-| `tool_input` | str or None | JSON input to the tool |
-| `tool_call_id` | str or None | Unique ID linking tool calls to results |
+| `event_id` | str | Unique event identifier |
+| `sequence` | int | Monotonically increasing sequence number |
+| `timestamp` | str | ISO-8601 UTC timestamp |
+| `session_id` | str | Session identifier |
+| `event_type` | EventType | The event type classification (e.g., `item.delta`) |
+| `item_id` | str or None | Identifier for the message/tool/reasoning block |
+| `item_kind` | ItemKind or None | Kind of item: `message`, `tool_call`, `tool_result`, `reasoning`, `status` |
+| `item_status` | ItemStatus or None | Status of the item: `in_progress`, `completed`, `failed` |
+| `content` | tuple[ContentPart, ...] | Structured content representation |
+| `delta` | str or None | Incremental text content (for MESSAGE, REASONING, status, etc.) |
+| `tool_kind` | ToolKind or None | Category of tool: `bash`, `file_change`, `file_read`, `web`, `agent`, `other` |
+| `cost_usd` | float or None | USD cost accrued for this turn (available on `TURN_ENDED`) |
+| `duration_ms` | int or None | Execution duration in milliseconds (available on `TURN_ENDED`) |
 | `error_message` | str or None | Error description |
-| `metadata` | dict or None | Additional data (cost metrics on TURN_ENDED) |
+| `metadata` | dict | Additional raw metadata |
 
 ## StreamParser
 
@@ -83,19 +102,19 @@ Tools are classified by kind for UI rendering:
 ```python
 from harnessbox.streaming import classify_tool, ToolKind
 
-kind = classify_tool("Bash")        # ToolKind.COMMAND
+kind = classify_tool("Bash")        # ToolKind.BASH
 kind = classify_tool("Read")        # ToolKind.FILE_READ
-kind = classify_tool("Write")       # ToolKind.FILE_WRITE
-kind = classify_tool("WebSearch")   # ToolKind.NETWORK
+kind = classify_tool("Write")       # ToolKind.FILE_CHANGE
+kind = classify_tool("WebSearch")   # ToolKind.WEB
 ```
 
 | ToolKind | Tools |
 |----------|-------|
-| `COMMAND` | Bash |
+| `BASH` | Bash, Shell |
 | `FILE_READ` | Read, Grep, Glob |
-| `FILE_WRITE` | Write, Edit |
-| `NETWORK` | WebFetch, WebSearch |
-| `MCP` | Any `mcp__*` tool |
+| `FILE_CHANGE` | Write, Edit, MultiEdit |
+| `WEB` | WebFetch, WebSearch |
+| `AGENT` | Agent |
 | `OTHER` | Everything else |
 
 ## Cost Tracking
@@ -104,10 +123,8 @@ kind = classify_tool("WebSearch")   # ToolKind.NETWORK
 
 ```python
 async for event in session.send_message("Refactor auth"):
-    if event.event_type == StreamEventType.TURN_ENDED and event.metadata:
-        cost = event.metadata.get("cost_usd")
-        duration = event.metadata.get("duration_ms")
-        print(f"Cost: ${cost:.4f}, Duration: {duration}ms")
+    if event.event_type == StreamEventType.TURN_ENDED:
+        print(f"Cost: ${event.cost_usd:.4f}, Duration: {event.duration_ms}ms")
 ```
 
 ## Related

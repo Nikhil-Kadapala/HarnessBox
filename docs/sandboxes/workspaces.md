@@ -73,24 +73,21 @@ See [Snapshots](snapshots.md) for the full API.
 # Rename the current branch
 await sandbox.rename_branch("feat/better-name")
 
-# Get diff stats
-diff = await workspace.diff_stat(provider, workspace_root)
-print(f"Files changed: {diff.files_changed}")
-print(f"Insertions: {diff.insertions}")
-print(f"Deletions: {diff.deletions}")
+# Get diff stats (returns a dict containing insertions and deletions)
+diff = await sandbox.diff_stat()
+print(f"Insertions: {diff['insertions']}")
+print(f"Deletions: {diff['deletions']}")
 ```
 
 ## Create Pull Request
 
 ```python
-pr = await workspace.create_pr(
-    provider=provider,
-    workspace_root="/workspace",
+# Commit, push, and create a GitHub PR (returns a dict with PR url)
+pr = await sandbox.create_pr(
     title="feat: implement OAuth flow",
     body="Adds Google OAuth with session management",
 )
-print(f"PR URL: {pr.url}")
-print(f"PR Number: {pr.number}")
+print(f"PR URL: {pr['url']}")
 ```
 
 ## Workspace Protocol

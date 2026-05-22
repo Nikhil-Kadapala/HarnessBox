@@ -48,7 +48,7 @@ snapshot = await hb.save_snapshot()
 worker = HarnessBox.create_from_snapshot(snapshot.id)
 task_session = await worker.create_session()
 async for event in task_session.send_message("Fix the auth bug"):
-    print(event.text, end="")
+    print(event.delta or "", end="")
 ```
 
 **Auto-recovery:** Snapshots are created automatically before idle-timeout pause. If a sandbox dies unexpectedly (`SandboxDeadError`), the workspace manager restores from the latest snapshot transparently.

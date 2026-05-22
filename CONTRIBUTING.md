@@ -4,72 +4,93 @@ Thanks for your interest in contributing. HarnessBox is an early-stage project a
 
 ## Development Setup
 
+HarnessBox consists of two components: the SDK in `sdk/` and the Web App in `app/web/`.
+
+### SDK Setup & Testing
+
+First, install `uv` (if you don't have it):
 ```bash
-# Clone the repo
-git clone https://github.com/Nikhil-Kadapala/HarnessBox.git
-cd HarnessBox
-
-# Install uv (if you don't have it)
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-# Install dependencies
+Then, set up the SDK:
+```bash
+cd sdk
 uv sync
+```
 
-# Run tests
+Running checks and tests for the SDK:
+```bash
+# Run all tests (uses MockProvider)
 uv run pytest tests/ -v
+
+# Run a specific test file
+uv run pytest tests/unit/test_workspace.py -v
+
+# Run a specific test
+uv run pytest tests/unit/test_workspace.py::TestGitRepoConfigInject::test_clone_public_repo -v
 
 # Lint
 uv run ruff check .
 
+# Format check
+uv run ruff format --check .
+
 # Type check
 uv run mypy .
+
+# Run full CI check
+uv run ruff check . && uv run mypy . && uv run pytest tests/ -v
 ```
 
-## Running Tests
+### Web App Setup & Testing
 
-All tests use a `MockProvider` (no real sandbox needed). Tests run in ~0.1s.
-
+The web application uses Bun:
 ```bash
-# All tests
-uv run pytest tests/ -v
-
-# Specific test file
-uv run pytest tests/test_workspace.py -v
-
-# Specific test
-uv run pytest tests/test_workspace.py::TestGitWorkspaceInject::test_clone_public_repo -v
+cd app/web
+bun install
 ```
 
-## Code Style
+Running dev server and checks:
+```bash
+# Run dev server (Vite)
+bun run dev
 
-- Python 3.12+
-- Ruff for linting (line length 100)
-- Mypy strict mode for source, relaxed for tests
-- No runtime dependencies (stdlib only)
-- Provider SDKs are optional extras
+# Run tests (Vitest)
+bun run test
+
+# Lint (oxlint)
+bun run lint
+
+# Type check
+bunx tsc --noEmit
+
+# Production build
+bun run build
+```
 
 ## Submitting Changes
 
 1. Fork the repo
 2. Create a branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Run `uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`
+4. Ensure all CI checks pass (for SDK: `cd sdk && uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`)
 5. Commit with conventional commits (`feat:`, `fix:`, `docs:`, `test:`)
 6. Open a PR against `main`
 
 ## Adding a New Provider
 
-Providers live in `harnessbox/_providers/`. To add one:
+Providers live in `sdk/src/harnessbox/_providers/`. To add one:
 
-1. Create `harnessbox/_providers/yourprovider.py`
-2. Implement the `SandboxProvider` protocol (see `providers.py`)
-3. Register it in `harnessbox/_providers/__init__.py`
-4. Add tests in `tests/test_providers.py`
-5. Add an optional dependency in `pyproject.toml`
+1. Create `sdk/src/harnessbox/_providers/yourprovider.py`
+2. Implement the `SandboxProvider` protocol (see `sdk/src/harnessbox/providers.py`)
+3. Register it in `sdk/src/harnessbox/_providers/__init__.py`
+4. Add tests in `sdk/tests/unit/test_providers.py`
+5. Add an optional dependency in `sdk/pyproject.toml`
 
 ## Adding a New Harness Type
 
-Harness types are registered in `harnessbox/config/harness.py`:
+Harness types are registered in `sdk/src/harnessbox/config/harness.py`:
 
 ```python
 register_harness_type(HarnessTypeConfig(

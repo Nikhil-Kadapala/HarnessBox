@@ -18,8 +18,8 @@ HarnessBox is a platform for running AI coding agents in secure sandbox environm
 cd sdk
 uv sync                          # Install all dependencies
 uv run pytest tests/ -v          # Run all tests (~0.2s, uses MockProvider)
-uv run pytest tests/test_sandbox.py -v                                    # Single file
-uv run pytest tests/test_workspace.py::TestGitWorkspaceInject::test_clone_public_repo -v  # Single test
+uv run pytest tests/integration/test_sandbox.py -v                                    # Single file
+uv run pytest tests/unit/test_workspace.py::TestGitRepoConfigInject::test_clone_public_repo -v  # Single test
 uv run ruff check .              # Lint
 uv run ruff format --check .     # Format check
 uv run mypy .                    # Type check (strict for source, relaxed for tests)

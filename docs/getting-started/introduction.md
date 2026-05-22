@@ -49,8 +49,8 @@ async with HarnessBox(
     session = await hb.create_session()
 
     async for event in session.send_message("Write a hello world script"):
-        if event.text:
-            print(event.text)
+        if event.delta:
+            print(event.delta, end="")
 
     await session.kill()
 ```
