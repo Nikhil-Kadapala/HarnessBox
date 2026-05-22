@@ -102,7 +102,6 @@ class Session:
             return SessionStatus.KILLED
         return to_session_status(RuntimeState(info.runtime_state))
 
-
     @overload
     def send_message(
         self, input: str, *, stream: Literal[True] = True
@@ -326,8 +325,8 @@ class HarnessBox:
         workspace = None
         if self._workspace_config and self._workspace_config.git_repo_config:
             src = self._workspace_config.git_repo_config
-            git_token = src._auth_token or merged_env.get("GITHUB_TOKEN") or merged_env.get(
-                "GIT_TOKEN"
+            git_token = (
+                src._auth_token or merged_env.get("GITHUB_TOKEN") or merged_env.get("GIT_TOKEN")
             )
             workspace = GitRepoConfig(
                 remote=src.remote,
@@ -381,9 +380,9 @@ class HarnessBox:
         else:
             workspaces = self._manager.list_workspaces()
             active = [
-                w for w in workspaces
-                if w.sandbox_conn is not None
-                and w.runtime_state == RuntimeState.ACTIVE.value
+                w
+                for w in workspaces
+                if w.sandbox_conn is not None and w.runtime_state == RuntimeState.ACTIVE.value
             ]
             if not active:
                 raise RuntimeError("No active sessions — nothing to snapshot.")

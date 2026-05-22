@@ -53,7 +53,9 @@ class TestSandboxPause:
         mock_process.stop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_pause_already_paused_raises_invalid_transition(self, provider: MockProvider) -> None:
+    async def test_pause_already_paused_raises_invalid_transition(
+        self, provider: MockProvider
+    ) -> None:
         from harnessbox.lifecycle import InvalidTransitionError
 
         sb = _active_sandbox(provider)
@@ -62,7 +64,9 @@ class TestSandboxPause:
             await sb.pause()
 
     @pytest.mark.asyncio
-    async def test_pause_dead_sandbox_raises_invalid_transition(self, provider: MockProvider) -> None:
+    async def test_pause_dead_sandbox_raises_invalid_transition(
+        self, provider: MockProvider
+    ) -> None:
         from harnessbox.lifecycle import InvalidTransitionError
 
         sb = _active_sandbox(provider)

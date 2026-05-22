@@ -243,4 +243,3 @@ class WorkspaceMount:
     async def commit_count(self, provider: SandboxProvider) -> int:
         ws = self._git_workspace()
         return await ws.commit_count(provider, self._harness_config.workspace_root)
-

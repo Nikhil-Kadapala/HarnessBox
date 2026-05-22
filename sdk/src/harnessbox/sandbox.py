@@ -316,7 +316,6 @@ class Sandbox:
     def _cwd(self, value: str) -> None:
         self._mount.cwd = value
 
-
     @property
     def _workspace(self) -> Workspace | None:
         return self._mount.workspace
@@ -620,8 +619,6 @@ class Sandbox:
     async def commit_count(self) -> int:
         """Return number of commits since clone."""
         return await self._mount.commit_count(self._provider)
-
-
 
     # ------------------------------------------------------------------
     # Context manager

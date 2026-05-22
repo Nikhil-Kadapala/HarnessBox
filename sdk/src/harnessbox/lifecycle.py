@@ -107,5 +107,3 @@ def validate_runtime_transition(current: RuntimeState, target: RuntimeState) -> 
 def validate_workflow_transition(current: WorkflowState, target: WorkflowState) -> bool:
     """Return True if the workflow transition from *current* to *target* is allowed."""
     return target in VALID_WORKFLOW_TRANSITIONS.get(current, frozenset())
-
-

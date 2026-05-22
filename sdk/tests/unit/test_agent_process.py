@@ -69,7 +69,10 @@ class TestSendCommand:
                     "type": "user",
                     "message": {
                         "content": [
-                            {"type": "local-command-stdout", "text": "**Tokens:** 153.7k / 200k (77%)"}
+                            {
+                                "type": "local-command-stdout",
+                                "text": "**Tokens:** 153.7k / 200k (77%)",
+                            }
                         ]
                     },
                 }
@@ -127,7 +130,11 @@ class TestPollStatus:
                 return {
                     "total_cost_usd": 0.05,
                     "modelUsage": {
-                        "claude-sonnet-4.5": {"inputTokens": 1000, "outputTokens": 500, "costUSD": 0.05}
+                        "claude-sonnet-4.5": {
+                            "inputTokens": 1000,
+                            "outputTokens": 500,
+                            "costUSD": 0.05,
+                        }
                     },
                 }
             return {}
