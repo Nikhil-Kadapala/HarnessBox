@@ -82,6 +82,8 @@ class MockProvider:
         timeout: int | None = None,
     ) -> CommandResult:
         self._commands.append(command)
+        if command.startswith("echo "):
+            return CommandResult(exit_code=0, stdout=command[5:] + "\n", stderr="")
         return CommandResult(exit_code=0, stdout="", stderr="")
 
     async def start_session(

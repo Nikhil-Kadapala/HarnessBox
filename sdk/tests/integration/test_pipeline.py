@@ -12,8 +12,7 @@ from harnessbox.config.pipeline import (
     build_setup_pipeline,
 )
 from harnessbox.security.policy import SecurityPolicy
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 class TestSetupContext:

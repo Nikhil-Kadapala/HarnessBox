@@ -127,10 +127,11 @@ Before marking any task done, confirm:
 `HarnessBox` is the public SDK entry point. `Sandbox` is the internal orchestrator.
 
 **Public API (for SDK users):**
-1. **Construct** — `HarnessBox(provider="e2b", harness="claude-code", secrets=..., workspace=...)`
-2. **Create** — `await hb.create()` provisions sandbox, injects config, clones workspace, runs setup
-3. **Execute** — `async for event in hb.send_message(prompt)` or `await hb.run_command(cmd)`
-4. **Kill** — `await hb.kill()` destroys sandbox
+1. **Construct** — `HarnessBox(provider="e2b", harness="claude-code", secrets=..., workspace_config=...)`
+2. **Create Session** — `session = await hb.create_session(branch="feat/x")` provisions sandbox, injects config, clones workspace, runs setup
+3. **Execute** — `async for event in session.send_message(prompt)` or `await session.run_command(cmd)`
+4. **Snapshot** — `snapshot = await hb.save_snapshot()` / `HarnessBox.create_from_snapshot(id)`
+5. **Kill** — `await hb.kill()` destroys all sessions
 
 **Internal orchestration (Sandbox, used by WorkspaceManager and server):**
 1. **Construct** — `Sandbox(client="e2b", harness="claude-code", security_policy=..., workspace=...)`
@@ -144,7 +145,7 @@ All SDK source lives under `sdk/src/harnessbox/`.
 
 | Module | Role |
 |--------|------|
-| `harnessbox.py` | Public API — `HarnessBox` wrapper, `HarnessBoxSecrets`, credential separation |
+| `harnessbox.py` | Public API — `HarnessBox` entry point, `Session` handle, `Snapshot`, `HarnessBoxSecrets`, `WorkspaceConfig` |
 | `sandbox.py` | Internal orchestration — lifecycle, provider delegation, file I/O, agent execution |
 | `streaming.py` | `UniversalEvent` schema + `StreamParser` — stateful NDJSON parser for Claude Code's `--output-format stream-json`, maps to UI events (text, thinking, tool calls, results) |
 | `events.py` | `EventBuffer` — per-session ring buffer (1024) with async broadcast for SSE replay on reconnection |
@@ -160,11 +161,11 @@ All SDK source lives under `sdk/src/harnessbox/`.
 | `security/hooks.py` | Generates PreToolUse hook scripts from guard regex patterns |
 | `security/events.py` | Sandbox lifecycle events — `SandboxEvent` emission, `EventHandler` protocol |
 | `lifecycle.py` | `RuntimeState` enum + valid transition map (STARTING→ACTIVE→DYING→ENDED/DEAD) |
-| `workspace.py` | `GitRepoConfig` — clone, commit+push, snapshot/restore via tags, diff; uses native E2B git API with shell fallback |
+| `workspace.py` | `GitRepoConfig` — clone, commit+push, diff; uses native E2B git API (provider protocol methods) |
 
 ### Key Design Decisions
 
-- **Protocol-based extensibility** — `SandboxProvider` and `Workspace` are `Protocol` classes (structural typing), not ABCs.
+- **Protocol-based extensibility** — `SandboxProvider` is a `Protocol` class (structural typing), not an ABC. All providers must implement the full git API (9 methods).
 - **Single source of truth for guards** — Each `CredentialGuardSet` defines `bash_deny_globs`, `read_deny_globs`, and `hook_regexes` together.
 - **Credentials never as env vars** — Git auth tokens use `git credential helper`, not environment variables.
 - **Manifest is pure computation** — `build_manifest()` takes config and returns a `SandboxManifest`. No I/O.

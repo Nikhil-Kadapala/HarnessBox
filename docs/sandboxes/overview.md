@@ -183,4 +183,4 @@ async with HarnessBox(
 - [Security Policies](security.md) — Restricting agent permissions
 - [Streaming Events](streaming.md) — Event types and parsing
 - [Git Workspaces](workspaces.md) — Repository management
-- [Checkpoints](checkpoints.md) — Snapshot and restore
+- [Snapshots](snapshots.md) — Saving and forking from snapshots

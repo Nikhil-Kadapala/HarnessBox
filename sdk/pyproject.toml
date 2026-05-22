@@ -108,6 +108,9 @@ disable_error_code = ["union-attr", "attr-defined", "misc", "no-any-return", "un
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests requiring E2B_API_KEY (deselect with -m 'not e2e')",
+]
 
 [tool.coverage.run]
 source = ["harnessbox"]

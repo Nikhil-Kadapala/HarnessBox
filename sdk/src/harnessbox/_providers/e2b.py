@@ -194,7 +194,12 @@ class E2BProvider:
         await self._sandbox.files.write(path, content)
 
     async def read_file(self, path: str) -> str:
-        content: str = await self._sandbox.files.read(path)
+        try:
+            content: str = await self._sandbox.files.read(path)
+        except Exception as e:
+            if "does not exist" in str(e) or "not found" in str(e).lower():
+                raise FileNotFoundError(path) from e
+            raise
         return content
 
     async def make_dir(self, path: str) -> None:

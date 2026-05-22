@@ -9,8 +9,7 @@ import pytest
 
 from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 @pytest.fixture
