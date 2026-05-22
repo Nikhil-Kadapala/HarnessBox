@@ -1,14 +1,14 @@
-# CLAUDE.md
+# For AI Coding Agents
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file guides AI Coding Agents when working on the HarnessBox project.
 
 ## What is HarnessBox
 
 HarnessBox is a platform for running AI coding agents in secure sandbox environments. It consists of:
 
 - **`sdk/`** — Python SDK providing sandbox security, workspace, and harness primitives. Zero runtime dependencies — provider SDKs are optional extras.
-- **`apps/web/`** — Web application (planned)
-- **`apps/desktop/`** — Desktop application via Tauri (planned)
+- **`app/web/`** — Web application (planned)
+- **`app/desktop/`** — Desktop application via Tauri (planned)
 
 ## Commands
 
@@ -26,10 +26,10 @@ uv run mypy .                    # Type check (strict for source, relaxed for te
 uv run ruff check . && uv run mypy . && uv run pytest tests/ -v  # Full CI check
 ```
 
-### Web App (`apps/web/`)
+### Web App (`app/web/`)
 
 ```bash
-cd apps/web
+cd app/web
 bun install                      # Install all dependencies
 bun run dev                      # Dev server (Vite)
 bun run build                    # Type check + production build
@@ -47,7 +47,7 @@ CI runs lint → type check → tests on PRs targeting main.
 Follow this when the context window is filled over 50%.
 Carefully watch for meaningful conversation boundaries and tool call boundaries to identify checkpoints where it is most beneficial and safe to compact without losing critical information.
 Do not wait until compaction gets auto-triggered midway through implementation.
-Save context to `.context/CONTEXT.md` so you can refer back after compaction.
+Save context with `/context-save` so you can refer back after compaction with `/context-restore`.
 
 ## Intent before Implementation
 Make sure to ask enough questions to clearly capture the user's intent before creating plans for new features, upgrades, or revamps. Probe the user to clearly state their intent and make outcomes explicit so implementation results in maximum success.

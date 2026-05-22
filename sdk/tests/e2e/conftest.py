@@ -12,13 +12,13 @@ TEST_FIXTURE_REPO = "https://github.com/Nikhil-Kadapala/harnessbox-test-fixture.
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip E2E tests when E2B_API_KEY is not set."""
-    if E2B_API_KEY:
-        return
+    """Skip E2E tests when E2B_API_KEY is not set, and apply e2e marker."""
     skip = pytest.mark.skip(reason="E2B_API_KEY not set — skipping E2E tests")
     for item in items:
         if "/e2e/" in str(item.fspath):
-            item.add_marker(skip)
+            item.add_marker(pytest.mark.e2e)
+            if not E2B_API_KEY:
+                item.add_marker(skip)
 
 
 @pytest.fixture
