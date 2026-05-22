@@ -1,92 +1,38 @@
 # TODOs
 
-Deferred items from v0.2.0 planning. These are post-adoption features that should be informed by real usage data from the EventHandler system.
+Deferred items. Post-adoption features informed by real usage data.
 
-## ~~Rename Sandbox -> HarnessBox~~ ✅ DONE (v0.3.0)
+## Known Issues (from PR #32 code review — add tests if these areas mutate)
 
-**Decision:** Added `HarnessBox` as a public wrapper class via composition instead of a mechanical rename. `Sandbox` stays as the internal orchestration layer used by `WorkspaceManager` and `server.py`.
+### 1. `git_create_branch` fails for existing remote branches
 
-**What shipped:**
-- `HarnessBox` class in `harnessbox.py` — wraps `Sandbox` via composition
-- `HarnessBoxSecrets` dataclass — separates `provider_api_key` from `harness_secrets`
-- `api_key` field for platform auth (future cloud service, `None` = self-hosted)
-- Context manager support (`async with HarnessBox(...) as hb`)
-- 18 tests covering init, lifecycle, delegation, and error paths
+**Location:** `sdk/src/harnessbox/workspace.py` — `_native_clone()`
 
-**Secrets architecture (future work):**
-- Credential probing for self-hosted: server layer detects available credentials at startup
-- Agent vault for enterprise: encrypted store with sealed token injection (see "Secret Management" TODO below)
-- Current state: `harness_secrets` dict merged into env vars for sandbox injection
+The code always clones with `branch=self.base_branch`, then calls `provider.git_create_branch(workspace_root, self.branch)` when branch differs. If the target branch already exists remotely (common resume scenario), `git_create_branch` will fail because you can't create a branch that already exists. Should either clone directly with `branch=self.branch`, or detect existing branches and checkout instead of create.
 
-## Workspace Modes + Worktree Support (v0.4.0)
+**When to fix:** If users report failures resuming work on existing feature branches, or if `_native_clone` is modified.
 
-**What:** HarnessBox becomes the sole orchestrator for workspaces. Users specify a git remote + branch and a workspace mode (SHARED or NEW). HarnessBox manages all lifecycle internally. WorkspaceManager becomes a private implementation detail — never imported by users.
+### 2. SDK is now E2B-only (shell git fallback removed)
 
-**Domain model (see CONTEXT.md):**
-- **Sandbox** = cloud VM (compute unit)
-- **Workspace** = sandbox + git repo config + mode (logical unit HarnessBox manages)
-- **Session** = agent conversation (one agent process + one branch/worktree)
+**Location:** `sdk/src/harnessbox/workspace.py`, `sdk/src/harnessbox/providers.py`
 
-**Two modes:**
+PR #32 removed the shell-based git clone fallback and merged `NativeGitCapable` into the base `SandboxProvider` protocol. All providers must now implement 9 git methods. Currently only `E2BProvider` and `MockProvider` exist. Any future non-E2B provider will fail at runtime if it doesn't implement the full git API.
 
-```python
-from harnessbox import HarnessBox, WorkspaceMode
+**When to fix:** Before adding a second real provider (Daytona, Docker, etc.). Document in README that providers must implement the full git protocol surface, or restore a shell-based adapter pattern for providers without native git.
 
-# NEW mode: each session gets its own sandbox + branch
-hb = HarnessBox(
-    provider="e2b",
-    harness="claude-code",
-    remote="https://github.com/user/repo.git",
-    workspace_mode=WorkspaceMode.NEW,
-    secrets={...},
-)
+### 3. `SessionStatus` conflates ENDED/DEAD/DYING into KILLED
 
-session1 = await hb.create_session(branch="feat/auth")
-session2 = await hb.create_session(branch="feat/ui")
-# session1 → Sandbox A (isolated VM, branch feat/auth)
-# session2 → Sandbox B (isolated VM, branch feat/ui)
+**Location:** `sdk/src/harnessbox/lifecycle.py` — `_RUNTIME_TO_STATUS` mapping
 
-async for event in hb.send_message(session1.id, "Fix the auth bug"):
-    print(event.delta)
+All terminal `RuntimeState` values (`DYING`, `ENDED`, `DEAD`) map to `SessionStatus.KILLED`. Users cannot distinguish between a session that ended successfully vs. crashed vs. is shutting down. Internal code uses `RuntimeState` directly so this doesn't cause bugs today, but any consumer of the public `SessionStatus` API loses this information.
 
-# SHARED mode: all sessions share one sandbox via git worktrees
-hb = HarnessBox(
-    provider="e2b",
-    harness="claude-code",
-    remote="https://github.com/user/repo.git",
-    workspace_mode=WorkspaceMode.SHARED,
-    secrets={...},
-)
+**When to fix:** If monitoring/debugging requires distinguishing clean exits from failures at the public API level, or if `SessionStatus` is used in client-facing dashboards.
 
-session1 = await hb.create_session(branch="feat/auth")
-session2 = await hb.create_session(branch="feat/ui")
-# session1 → worktree at /workspace/worktrees/feat-auth (shared VM)
-# session2 → worktree at /workspace/worktrees/feat-ui (shared VM)
-# Agents CAN see each other's worktrees (feature, not a bug)
-```
+## ~~Workspace Modes + Worktree Support~~ ✅ DONE
 
-**Key design decisions:**
-- One agent process per session (concurrent, independent conversations)
-- In SHARED mode, cross-worktree visibility is intentional (enables cross-branch awareness)
-- Sessions provisioned eagerly (sandbox created immediately, not on first message)
-- Workspaces auto-pause after idle timeout, resume transparently
-- WorkspaceManager, Sandbox, AgentManager are private — users never import them
+Shipped: `WorkspaceMode.NEW` + `create_session(branch=...)` + `Session` handle. `WorkspaceMode.SHARED` is a declared stub (raises NotImplementedError).
 
-**Implementation plan:**
-1. Add `remote`, `workspace_mode` params to `HarnessBox.__init__`
-2. Add `create_session(branch=...)` method that returns a `Session` object
-3. Add `send_message(session_id, prompt)` overload (in addition to current no-session mode)
-4. In NEW mode: `create_session` spins up a new `Sandbox` per session
-5. In SHARED mode: `create_session` runs `git worktree add` in the shared sandbox
-6. HarnessBox internally delegates to WorkspaceManager for lifecycle
-7. Remove WorkspaceManager, WorkspaceConfig, WorkspaceInstance from `__init__.py` exports
-8. Update server.py to use HarnessBox as the top-level orchestrator
-
-**Backwards compatibility:**
-- Current `HarnessBox(workspace=GitWorkspace(...))` + `hb.create()` + `hb.send_message(prompt)` continues to work as a single-session shorthand (no workspace_mode = legacy single-sandbox behavior)
-- Multi-session requires explicit `workspace_mode` + `create_session()`
-
-**Depends on:** Nothing. This is the next major feature after v0.3.0.
+**Remaining:** Implement `WorkspaceMode.SHARED` (git worktrees in a shared sandbox) when there's demand.
 
 ## HarnessBox as Server Client (base_url pattern)
 
@@ -110,7 +56,7 @@ hb = HarnessBox(base_url="http://hbox.internal:8080", api_key="hb_live_...")
 - SSE streaming via httpx async streaming for `send_message()`
 - Server validates `api_key` on each request
 
-**Depends on:** Workspace Modes (v0.4.0) must ship first so the server and SDK have the same API shape.
+**Depends on:** Nothing. Workspace Modes shipped — server and SDK have the same API shape.
 
 ## Subagent Visibility — Parallel Execution UI
 
@@ -286,165 +232,15 @@ INSTALLABLE_TOOLS = {
 
 **Depends on:** Timing instrumentation (completed), user feedback on which tools are most needed.
 
-## Sandbox Snapshots — Preserve state on kill/archive for later restoration
+## ~~Sandbox Snapshots~~ ✅ DONE
 
-**What:** When a user kills or archives a session, save a snapshot of the sandbox state (filesystem, installed tools, git state) so they can restore it later instead of starting from scratch.
+Shipped: `HarnessBox.save_snapshot()` + `HarnessBox.create_from_snapshot(snapshot_id)`. VM-level snapshots via E2B provider. `workspace_manager._create_from_snapshot()` handles auto-restoration on `SandboxDeadError`.
 
-**Why:** Currently, if a sandbox times out or is killed, the session becomes unusable and throws exceptions. Users lose all progress (installed tools, modified files, git changes). Snapshots allow users to "pause and resume" work across sessions.
+**Note:** Git-tag-based workspace checkpoints (`create_checkpoint`/`restore_checkpoint`) were removed in PR #32 in favor of VM-level snapshots. The semantic difference: VM snapshots capture entire sandbox state (all sessions), while git checkpoints were workspace-scoped. If per-workspace restore is needed in the future, consider re-adding git-tag checkpoints alongside VM snapshots.
 
-**Error scenario (current behavior):**
-```
-User sends prompt → Sandbox timed out (502 Bad Gateway) →
-  "The sandbox was not found" exception →
-    SSE stream crashes with unhandled ExceptionGroup →
-      User sees 500 error, session is dead
-```
+## ~~Graceful Error Handling for Killed/Timed-Out Sandboxes~~ ✅ DONE
 
-**Design:**
-- **Snapshot creation**: When user calls `/v1/sessions/{id}/kill` or `/v1/sessions/{id}/archive`, run:
-  1. Commit current workspace changes (if `GitWorkspace` with `commit_on_exit`)
-  2. Create E2B snapshot via `sandbox.snapshot()` (returns snapshot_id)
-  3. Store snapshot metadata in session manager: `SnapshotInfo(snapshot_id, created_at, tools_installed, git_sha)`
-- **Snapshot restoration**: When creating a new session with `restore_from: session_id`:
-  1. Look up snapshot_id from archived session
-  2. Create new E2B sandbox from snapshot: `AsyncSandbox.create(snapshot=snapshot_id)`
-  3. Resume agent process with `--resume {conversation_id}`
-- **Snapshot expiry**: E2B snapshots expire after 7 days (platform limit). Show warning to user if snapshot is >6 days old.
-
-**Implementation:**
-1. Add `snapshot_id: str | None` to `SessionInfo` in `session.py`
-2. Add `/v1/sessions/{id}/archive` endpoint in `server.py` (like `/kill` but saves snapshot first)
-3. Update `Sandbox.kill()` to accept `save_snapshot: bool = False` parameter
-4. Add `Sandbox.create_snapshot() -> str` method that wraps `provider.snapshot()`
-5. Add `restore_from: str | None` to `CreateSessionRequest` (session_id to restore from)
-6. Update `SessionManager.create()` to check for `restore_from`, load snapshot_id, pass to provider
-7. Add snapshot metadata to `GET /v1/sessions` response
-
-**Tradeoffs:**
-- Pro: Users can pause work and resume later without losing progress
-- Pro: Graceful handling of timeout/kill scenarios
-- Con: E2B snapshots expire after 7 days (platform limitation)
-- Con: Snapshots count against E2B storage quota
-
-**Depends on:** Graceful error handling for killed sandboxes (see plan below).
-
-## Graceful Error Handling for Killed/Timed-Out Sandboxes
-
-**Problem:** When a sandbox times out or is killed, subsequent operations throw unhandled exceptions that crash the SSE stream and show 500 errors to users.
-
-**Current error flow:**
-1. User sends prompt via `/v1/sessions/{id}/prompt`
-2. Sandbox is dead (timed out, killed, or destroyed)
-3. `send_stdin()` raises `TimeoutException: The sandbox was not found`
-4. Retry logic attempts `--resume`, but sandbox is still gone (502 Bad Gateway)
-5. `start_persistent()` raises another `TimeoutException`
-6. Exception bubbles up through SSE stream → `ExceptionGroup` in ASGI → 500 error
-
-**Solution: Catch sandbox-not-found errors and return structured error events**
-
-### Phase 1: Detect sandbox death in run_prompt_events()
-
-Update `sandbox.py::run_prompt_events()`:
-
-```python
-async def run_prompt_events(self, prompt: str) -> AsyncIterator[dict[str, Any]]:
-    """Stream agent output events. Yields structured error if sandbox is dead."""
-    try:
-        # Existing logic: ensure agent ready, send prompt, stream output
-        ...
-    except (TimeoutException, ConnectException) as e:
-        if "sandbox was not found" in str(e).lower() or "502" in str(e):
-            # Sandbox is dead, yield structured error event
-            yield {
-                "type": "error",
-                "error": {
-                    "code": "SANDBOX_DEAD",
-                    "message": "Sandbox has timed out or been destroyed. Create a new session or restore from snapshot.",
-                    "details": str(e),
-                    "recoverable": False,
-                }
-            }
-            # Transition session state to FAILED
-            self._state = SessionState.FAILED
-            return
-        raise  # Re-raise non-sandbox errors
-```
-
-### Phase 2: Handle in SessionManager.prompt()
-
-Update `session.py::SessionManager.prompt()`:
-
-```python
-async def prompt(self, session_id: str, prompt: str) -> AsyncIterator[dict[str, Any]]:
-    """Stream prompt response. Marks session as FAILED if sandbox is dead."""
-    async with self._locks[session_id]:
-        info = self._sessions.get(session_id)
-        if not info:
-            raise KeyError(f"Session {session_id} not found")
-        
-        async for event in info.sandbox.run_prompt_events(prompt):
-            if event.get("type") == "error" and event["error"]["code"] == "SANDBOX_DEAD":
-                # Mark session as failed, stop streaming
-                info.state = SessionState.FAILED
-                yield event
-                return
-            yield event
-```
-
-### Phase 3: Update web UI to show recovery options
-
-When the web app receives an error event with `code: "SANDBOX_DEAD"`:
-
-```typescript
-if (event.type === "error" && event.error.code === "SANDBOX_DEAD") {
-  // Show user-friendly error with actions
-  showError({
-    title: "Session Ended",
-    message: "Your sandbox has timed out or been terminated.",
-    actions: [
-      { label: "Create New Session", onClick: () => createNewSession() },
-      { label: "View Logs", onClick: () => showLogs() },
-      // Future: { label: "Restore from Snapshot", onClick: () => restore() }
-    ]
-  });
-}
-```
-
-### Phase 4: Prevent new prompts to dead sessions
-
-Add session state check in `POST /v1/sessions/{id}/prompt`:
-
-```python
-@app.post("/v1/sessions/{id}/prompt")
-async def prompt_session(id: str, req: PromptRequest):
-    info = mgr._sessions.get(id)
-    if not info:
-        raise HTTPException(404, "Session not found")
-    
-    if info.state in (SessionState.FAILED, SessionState.MERGED):
-        raise HTTPException(
-            409,
-            detail={
-                "error": "Session is not active",
-                "state": info.state.value,
-                "message": "This session has ended. Create a new session to continue."
-            }
-        )
-    
-    return EventSourceResponse(event_generator())
-```
-
-### Implementation checklist:
-
-- [ ] Add `TimeoutException`, `ConnectException` to imports in `sandbox.py`
-- [ ] Wrap `run_prompt_events()` with try/except for sandbox-not-found errors
-- [ ] Yield structured error event with `code: "SANDBOX_DEAD"`
-- [ ] Transition session state to FAILED when sandbox dies
-- [ ] Add state check in `POST /v1/sessions/{id}/prompt` endpoint
-- [ ] Update web UI to handle `SANDBOX_DEAD` error events gracefully
-- [ ] Add integration test: create session, kill sandbox externally, send prompt, verify error event
-
-**Timeline:** Implement Phase 1-4 immediately (graceful errors). Snapshot feature follows after.
+Shipped: `SandboxDeadError` exception, `AgentRuntime` catches it and calls `mark_dead()`, `WorkspaceManager.prompt()` handles `SandboxDeadError` with auto-restoration via `_create_from_snapshot()`. Session state transitions to `DEAD` on sandbox expiry.
 
 ## Multi-Agent Collaboration — Agent-to-agent invocation and shared state
 
