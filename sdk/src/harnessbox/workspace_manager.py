@@ -99,6 +99,7 @@ class WorkspaceConfig:
     session_timeout: int = 1800  # 30min default (auto-pause timeout)
     branch_label: str = ""
     remote_label: str = ""
+    snapshot_id: str | None = None
 
 
 @dataclass
@@ -295,6 +296,7 @@ class WorkspaceManager:
             session_lock=lock,
             storage=self._storage,
             session_id=wid,
+            snapshot_id=config.snapshot_id,
         )
         await sandbox.setup()
 

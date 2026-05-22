@@ -24,15 +24,15 @@ class TestMigrationRunner:
     def test_run_pending_applies_all_migrations(self, conn):
         runner = MigrationRunner(conn)
         applied = runner.run_pending()
-        assert applied == 3
-        assert runner.get_version() == 3
+        assert applied == 4
+        assert runner.get_version() == 4
 
     def test_run_pending_idempotent(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
         applied = runner.run_pending()
         assert applied == 0
-        assert runner.get_version() == 3
+        assert runner.get_version() == 4
 
     def test_creates_workspaces_table(self, conn):
         runner = MigrationRunner(conn)
@@ -67,7 +67,7 @@ class TestMigrationRunner:
     def test_rollback_on_failure(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        assert runner.get_version() == 3
+        assert runner.get_version() == 4
 
         # Monkey-patch MIGRATIONS to add a failing migration
         from harnessbox._storage import migrations
@@ -91,8 +91,8 @@ class TestMigrationRunner:
             with pytest.raises(RuntimeError, match="Intentional failure"):
                 runner.run_pending()
 
-            # Version should stay at 3 (v004 rolled back)
-            assert runner.get_version() == 3
+            # Version should stay at 4 (v005 rolled back)
+            assert runner.get_version() == 4
         finally:
             migrations.MIGRATIONS[:] = original
             del sys.modules["harnessbox._storage.migrations._fake_broken"]
@@ -119,10 +119,10 @@ class TestMigrationRunner:
         finally:
             migrations.MIGRATIONS[:] = original
 
-        # Now run remaining (v002 + v003)
+        # Now run remaining (v002 + v003 + v004)
         applied = runner.run_pending()
-        assert applied == 2
-        assert runner.get_version() == 3
+        assert applied == 3
+        assert runner.get_version() == 4
 
         # Index should exist now
         cursor = conn.execute(

@@ -177,6 +177,7 @@ class WorkspaceMount:
         provider: SandboxProvider,
         security_policy: SecurityPolicy | None,
         timeout: int,
+        snapshot_id: str | None = None,
     ) -> SetupContext:
         resolved_skills = self._resolve_skills()
         resolved_plugins, plugin_dirs = self._resolve_plugins()
@@ -196,6 +197,7 @@ class WorkspaceMount:
             plugin_dirs=plugin_dirs,
             setup_script=self._setup_script,
             cwd=self._cwd,
+            snapshot_id=snapshot_id,
         )
 
     def sync_from_setup_context(self, ctx: SetupContext) -> None:
@@ -242,10 +244,3 @@ class WorkspaceMount:
         ws = self._git_workspace()
         return await ws.commit_count(provider, self._harness_config.workspace_root)
 
-    async def create_checkpoint(self, provider: SandboxProvider, name: str) -> None:
-        ws = self._git_workspace()
-        await ws.create_checkpoint(provider, self._harness_config.workspace_root, name)
-
-    async def restore_checkpoint(self, provider: SandboxProvider, name: str) -> None:
-        ws = self._git_workspace()
-        await ws.restore_checkpoint(provider, self._harness_config.workspace_root, name)

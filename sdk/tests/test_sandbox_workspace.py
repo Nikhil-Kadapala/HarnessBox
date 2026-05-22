@@ -7,7 +7,7 @@ import pytest
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.providers import CommandResult
 from harnessbox.sandbox import Sandbox
-from harnessbox.workspace import GitRepoConfig, GitWorkspace
+from harnessbox.workspace import GitRepoConfig
 
 from .conftest import MockProvider
 
@@ -38,7 +38,7 @@ def ws_provider():
 class TestSandboxWithWorkspace:
     @pytest.mark.asyncio
     async def test_workspace_inject_called_on_setup(self, ws_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
         await sb.setup()
 
@@ -57,7 +57,7 @@ class TestSandboxWithWorkspace:
 
     @pytest.mark.asyncio
     async def test_end_does_not_commit_or_push(self, ws_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
         await sb.setup()
 
@@ -71,7 +71,7 @@ class TestSandboxWithWorkspace:
 
     @pytest.mark.asyncio
     async def test_kill_does_not_commit_or_push(self, ws_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
         await sb.setup()
 
@@ -86,7 +86,7 @@ class TestSandboxWithWorkspace:
     @pytest.mark.asyncio
     async def test_manifest_files_go_into_cloned_directory(self, ws_provider):
         """Verify manifest files (CLAUDE.md, .claude/) are injected into the cloned repo directory."""
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             clone_dir_name="alexandria",
         )
@@ -122,7 +122,7 @@ class TestSandboxWithWorkspace:
             CommandResult(exit_code=128, stdout="", stderr="Authentication failed"),
         )
 
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
 
         with pytest.raises(RuntimeError, match="git clone failed"):
@@ -130,7 +130,7 @@ class TestSandboxWithWorkspace:
 
     @pytest.mark.asyncio
     async def test_context_manager_with_workspace(self, ws_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         async with Sandbox(client=ws_provider, workspace=ws) as sb:
             await sb.setup()
             assert sb.state == RuntimeState.ACTIVE
@@ -138,11 +138,8 @@ class TestSandboxWithWorkspace:
 
 
 class TestGitRepoConfigAlias:
-    def test_alias_is_same_class(self):
-        assert GitWorkspace is GitRepoConfig
-
     def test_can_instantiate_via_alias(self):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         assert isinstance(ws, GitRepoConfig)
 
 

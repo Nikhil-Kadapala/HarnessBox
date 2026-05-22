@@ -1,33 +1,33 @@
-"""Tests for harnessbox.workspace — GitWorkspace, Workspace protocol."""
+"""Tests for harnessbox.workspace — GitRepoConfig, Workspace protocol."""
 
 from __future__ import annotations
 
 import pytest
 
 from harnessbox.providers import CommandResult
-from harnessbox.workspace import GitWorkspace, Workspace, _parse_shortstat
+from harnessbox.workspace import GitRepoConfig, Workspace, _parse_shortstat
 
 from .conftest import MockProvider
 
 
 class TestWorkspaceProtocol:
-    def test_git_workspace_satisfies_protocol(self):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+    def test_git_repo_config_satisfies_protocol(self):
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         assert isinstance(ws, Workspace)
 
 
-class TestGitWorkspaceInit:
+class TestGitRepoConfigInit:
     def test_basic_construction(self):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         assert ws.remote == "https://github.com/test/repo.git"
         assert ws.branch == "main"
 
     def test_empty_remote_raises(self):
         with pytest.raises(ValueError, match="remote URL must not be empty"):
-            GitWorkspace(remote="")
+            GitRepoConfig(remote="")
 
     def test_custom_params(self):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="dev",
             clone_depth=1,
@@ -37,7 +37,7 @@ class TestGitWorkspaceInit:
         assert ws.clone_depth == 1
 
     def test_repr_redacts_token(self):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             auth_token="ghp_secret123",
         )
@@ -46,7 +46,7 @@ class TestGitWorkspaceInit:
         assert "***" in r
 
     def test_repr_shows_none_when_no_token(self):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         r = repr(ws)
         assert "auth_token=None" in r
 
@@ -75,10 +75,10 @@ def git_provider():
     return _GitMockProvider()
 
 
-class TestGitWorkspaceInject:
+class TestGitRepoConfigInject:
     @pytest.mark.asyncio
     async def test_clone_public_repo(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
 
         cmds = git_provider._commands
@@ -89,7 +89,7 @@ class TestGitWorkspaceInject:
 
     @pytest.mark.asyncio
     async def test_clone_with_auth_token(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             auth_token="ghp_test",
         )
@@ -116,7 +116,7 @@ class TestGitWorkspaceInject:
 
     @pytest.mark.asyncio
     async def test_clone_with_depth(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             clone_depth=1,
         )
@@ -129,7 +129,7 @@ class TestGitWorkspaceInject:
     @pytest.mark.asyncio
     async def test_clone_into_subdirectory(self, git_provider):
         """When clone_dir_name is set, clone should happen in subdirectory."""
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             clone_dir_name="alexandria",
         )
@@ -144,7 +144,7 @@ class TestGitWorkspaceInject:
 
     @pytest.mark.asyncio
     async def test_clone_custom_branch(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="develop",
         )
@@ -157,7 +157,7 @@ class TestGitWorkspaceInject:
     @pytest.mark.asyncio
     async def test_clone_checks_out_branch(self, git_provider):
         """Verify that checkout runs after fetch to create working tree on specified branch."""
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="feature-x",
         )
@@ -174,7 +174,7 @@ class TestGitWorkspaceInject:
 
     @pytest.mark.asyncio
     async def test_clone_sets_git_identity(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
 
         cmds = git_provider._commands
@@ -183,7 +183,7 @@ class TestGitWorkspaceInject:
 
     @pytest.mark.asyncio
     async def test_clone_sets_safe_directory(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
 
         cmds = git_provider._commands
@@ -205,7 +205,7 @@ class TestGitWorkspaceInject:
 
         git_provider.run_command = counting_run
 
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
         assert call_count == 2
 
@@ -216,7 +216,7 @@ class TestGitWorkspaceInject:
             CommandResult(exit_code=128, stdout="", stderr="Authentication failed"),
         )
 
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         with pytest.raises(RuntimeError, match="git clone failed"):
             await ws.inject(git_provider, "/workspace")
 
@@ -227,45 +227,27 @@ class TestGitWorkspaceInject:
             CommandResult(exit_code=0, stdout="abc123def", stderr=""),
         )
 
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
         assert ws._initial_sha == "abc123def"
 
 
-class TestGitWorkspaceExtract:
+class TestGitRepoConfigExtract:
     @pytest.mark.asyncio
     async def test_extract_is_noop(self, git_provider):
         """Extract is a no-op — system snapshots preserve .git state."""
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.extract(git_provider, "/workspace")
         assert len(git_provider._commands) == 0
 
 
-class TestGitWorkspaceCheckpoints:
-    @pytest.mark.asyncio
-    async def test_create_checkpoint_stages_commits_and_tags(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        await ws.create_checkpoint(git_provider, "/workspace", "ready")
-
-        cmds = git_provider._commands
-        assert any("git add -A" in c for c in cmds)
-        assert any('git commit --allow-empty -m "snapshot: ready"' in c for c in cmds)
-        assert any("git tag harnessbox-snap-ready" in c for c in cmds)
-
-    @pytest.mark.asyncio
-    async def test_restore_checkpoint_checks_out_tagged_files(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        await ws.restore_checkpoint(git_provider, "/workspace", "ready")
-
-        cmds = git_provider._commands
-        assert any("git checkout harnessbox-snap-ready -- ." in c for c in cmds)
 
 
-class TestGitWorkspaceEvents:
+class TestGitRepoConfigEvents:
     @pytest.mark.asyncio
     async def test_clone_events_fire(self, git_provider):
         events = []
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             on_clone_start=lambda **kw: events.append(("start", kw)),
             on_clone_complete=lambda **kw: events.append(("complete", kw)),
@@ -278,47 +260,9 @@ class TestGitWorkspaceEvents:
         assert events[1][1]["success"] is True
 
 
-class TestGitWorkspaceSnapshot:
-    @pytest.mark.asyncio
-    async def test_snapshot_creates_tag(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        await ws.snapshot(git_provider, "/workspace", "v1")
-
-        cmds = git_provider._commands
-        assert any("tag harnessbox-snap-v1" in c for c in cmds)
-
-    @pytest.mark.asyncio
-    async def test_snapshot_commits_first(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        await ws.snapshot(git_provider, "/workspace", "checkpoint")
-
-        cmds = git_provider._commands
-        add_idx = next(i for i, c in enumerate(cmds) if "add -A" in c)
-        commit_idx = next(i for i, c in enumerate(cmds) if "commit" in c)
-        tag_idx = next(i for i, c in enumerate(cmds) if "tag" in c)
-        assert add_idx < commit_idx < tag_idx
-
-    @pytest.mark.asyncio
-    async def test_restore_checks_out_tag(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        await ws.restore(git_provider, "/workspace", "v1")
-
-        cmds = git_provider._commands
-        assert any("checkout harnessbox-snap-v1 -- ." in c for c in cmds)
-
-    @pytest.mark.asyncio
-    async def test_restore_failure_raises(self, git_provider):
-        git_provider.set_git_response(
-            "checkout harnessbox-snap",
-            CommandResult(exit_code=1, stdout="", stderr="error: pathspec"),
-        )
-
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        with pytest.raises(RuntimeError, match="Failed to restore snapshot"):
-            await ws.restore(git_provider, "/workspace", "nonexistent")
 
 
-class TestGitWorkspaceDiff:
+class TestGitRepoConfigDiff:
     @pytest.mark.asyncio
     async def test_diff_against_initial_sha(self, git_provider):
         git_provider.set_git_response(
@@ -326,7 +270,7 @@ class TestGitWorkspaceDiff:
             CommandResult(exit_code=0, stdout="abc123", stderr=""),
         )
 
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         await ws.inject(git_provider, "/workspace")
 
         git_provider.set_git_response(
@@ -337,18 +281,6 @@ class TestGitWorkspaceDiff:
         result = await ws.diff(git_provider, "/workspace")
         assert "file.txt" in result
 
-    @pytest.mark.asyncio
-    async def test_diff_against_snapshot(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
-        ws._last_snapshot = "v1"
-
-        git_provider.set_git_response(
-            "diff harnessbox-snap-v1",
-            CommandResult(exit_code=0, stdout="changes since v1", stderr=""),
-        )
-
-        result = await ws.diff(git_provider, "/workspace")
-        assert "changes since v1" in result
 
 
 class TestParseShortstat:
@@ -372,7 +304,7 @@ class TestParseShortstat:
         assert _parse_shortstat(out) == {"insertions": 1, "deletions": 0}
 
 
-class TestGitWorkspaceDiffStat:
+class TestGitRepoConfigDiffStat:
     @pytest.fixture
     def git_provider(self):
         p = _GitMockProvider()
@@ -380,7 +312,7 @@ class TestGitWorkspaceDiffStat:
 
     @pytest.mark.asyncio
     async def test_diff_stat_returns_counts(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -397,7 +329,7 @@ class TestGitWorkspaceDiffStat:
 
     @pytest.mark.asyncio
     async def test_diff_stat_empty_when_no_changes(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -410,7 +342,7 @@ class TestGitWorkspaceDiffStat:
 
     @pytest.mark.asyncio
     async def test_diff_stat_with_clone_dir(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git", clone_dir_name="tokyo")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git", clone_dir_name="tokyo")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -426,14 +358,14 @@ class TestGitWorkspaceDiffStat:
         assert result == {"insertions": 5, "deletions": 0}
 
 
-class TestGitWorkspaceCommitCount:
+class TestGitRepoConfigCommitCount:
     @pytest.fixture
     def git_provider(self):
         return _GitMockProvider()
 
     @pytest.mark.asyncio
     async def test_commit_count(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -446,7 +378,7 @@ class TestGitWorkspaceCommitCount:
 
     @pytest.mark.asyncio
     async def test_commit_count_zero_on_failure(self, git_provider):
-        ws = GitWorkspace(remote="https://github.com/test/repo.git")
+        ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         ws._initial_sha = "abc123"
 
         git_provider.set_git_response(
@@ -458,14 +390,14 @@ class TestGitWorkspaceCommitCount:
         assert result == 0
 
 
-class TestGitWorkspaceCreatePR:
+class TestGitRepoConfigCreatePR:
     @pytest.fixture
     def git_provider(self):
         return _GitMockProvider()
 
     @pytest.mark.asyncio
     async def test_create_pr_happy_path(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -482,7 +414,7 @@ class TestGitWorkspaceCreatePR:
 
     @pytest.mark.asyncio
     async def test_create_pr_push_fails(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -498,7 +430,7 @@ class TestGitWorkspaceCreatePR:
 
     @pytest.mark.asyncio
     async def test_create_pr_gh_fails(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -514,7 +446,7 @@ class TestGitWorkspaceCreatePR:
 
     @pytest.mark.asyncio
     async def test_create_pr_shlex_escapes_title(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -529,7 +461,7 @@ class TestGitWorkspaceCreatePR:
         assert "url" in result
 
 
-class TestGitWorkspaceCheckPRStatus:
+class TestGitRepoConfigCheckPRStatus:
     @pytest.fixture
     def git_provider(self):
         return _GitMockProvider()
@@ -538,7 +470,7 @@ class TestGitWorkspaceCheckPRStatus:
     async def test_check_pr_status_merged(self, git_provider):
         import json
 
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -565,7 +497,7 @@ class TestGitWorkspaceCheckPRStatus:
 
     @pytest.mark.asyncio
     async def test_check_pr_status_no_pr(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -583,7 +515,7 @@ class TestGitWorkspaceCheckPRStatus:
     async def test_check_pr_status_ci_failure(self, git_provider):
         import json
 
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -610,14 +542,14 @@ class TestGitWorkspaceCheckPRStatus:
         assert result["ci_status"] == "failure"
 
 
-class TestGitWorkspaceRenameBranch:
+class TestGitRepoConfigRenameBranch:
     @pytest.fixture
     def git_provider(self):
         return _GitMockProvider()
 
     @pytest.mark.asyncio
     async def test_rename_branch(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",
@@ -633,7 +565,7 @@ class TestGitWorkspaceRenameBranch:
 
     @pytest.mark.asyncio
     async def test_rename_branch_failure(self, git_provider):
-        ws = GitWorkspace(
+        ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="tokyo",
             base_branch="main",

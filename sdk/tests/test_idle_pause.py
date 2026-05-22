@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from harnessbox.config.harness import get_harness_type
-from harnessbox.lifecycle import WorkspaceState
+from harnessbox.lifecycle import RuntimeState
 from harnessbox.sandbox import Sandbox
 
 
@@ -60,7 +60,7 @@ class TestBuildSessionCommand:
 class TestIdleTimerLifecycle:
     async def test_start_creates_task(self, provider: object) -> None:
         sandbox = _make_sandbox(provider, session_timeout=10)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._start_idle_timer()
         assert sandbox._idle_timer_task is not None
         assert not sandbox._idle_timer_task.done()
@@ -68,7 +68,7 @@ class TestIdleTimerLifecycle:
 
     async def test_cancel_stops_task(self, provider: object) -> None:
         sandbox = _make_sandbox(provider, session_timeout=10)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._start_idle_timer()
         task = sandbox._idle_timer_task
         sandbox._cancel_idle_timer()
@@ -83,7 +83,7 @@ class TestIdleTimerLifecycle:
 
     async def test_start_replaces_existing(self, provider: object) -> None:
         sandbox = _make_sandbox(provider, session_timeout=10)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._start_idle_timer()
         first_task = sandbox._idle_timer_task
         sandbox._start_idle_timer()
@@ -95,7 +95,7 @@ class TestIdleTimerLifecycle:
 
     async def test_zero_timeout_no_timer(self, provider: object) -> None:
         sandbox = _make_sandbox(provider, session_timeout=0)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._start_idle_timer()
         assert sandbox._idle_timer_task is None
 
@@ -103,16 +103,16 @@ class TestIdleTimerLifecycle:
 class TestIdleTimeout:
     async def test_timeout_pauses_sandbox(self, provider: object) -> None:
         sandbox = _make_sandbox(provider, session_timeout=0)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         provider._running = True  # type: ignore[attr-defined]
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
         await sandbox._do_idle_pause()
-        assert sandbox._state == WorkspaceState.PAUSED
+        assert sandbox._state == RuntimeState.PAUSED
         assert sandbox._paused_sandbox_id == "mock-sandbox-123"
 
     async def test_timeout_stops_agent_process(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         provider._running = True  # type: ignore[attr-defined]
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
         mock_process = MagicMock()
@@ -124,19 +124,19 @@ class TestIdleTimeout:
 
     async def test_timeout_noop_when_paused(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.PAUSED
+        sandbox._state = RuntimeState.PAUSED
         await sandbox._do_idle_pause()
         assert not provider._running or provider._sandbox_id is None
 
     async def test_timeout_noop_when_dead(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.DEAD
+        sandbox._state = RuntimeState.DEAD
         await sandbox._do_idle_pause()
 
     async def test_timeout_with_lock(self, provider: object) -> None:
         lock = asyncio.Lock()
         sandbox = _make_sandbox(provider, session_timeout=0, session_lock=lock)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._session_timeout = 0
         provider._running = True  # type: ignore[attr-defined]
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
@@ -144,20 +144,20 @@ class TestIdleTimeout:
         async with lock:
             task = asyncio.create_task(sandbox._on_idle_timeout())
             await asyncio.sleep(0.05)
-            assert sandbox._state == WorkspaceState.ACTIVE
+            assert sandbox._state == RuntimeState.ACTIVE
 
         await asyncio.sleep(0.05)
         await task
-        assert sandbox._state == WorkspaceState.PAUSED
+        assert sandbox._state == RuntimeState.PAUSED
 
 
 class TestResumeFromPause:
     async def test_resume_clears_paused_state(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.PAUSED
+        sandbox._state = RuntimeState.PAUSED
         sandbox._paused_sandbox_id = "mock-sandbox-123"
         await sandbox.resume("mock-sandbox-123")
-        assert sandbox._state == WorkspaceState.ACTIVE
+        assert sandbox._state == RuntimeState.ACTIVE
 
     def test_agent_session_id_preserved(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
@@ -168,7 +168,7 @@ class TestResumeFromPause:
 class TestEnsureAgentReady:
     async def test_first_start(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         provider._running = True  # type: ignore[attr-defined]
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]
 
@@ -180,20 +180,20 @@ class TestEnsureAgentReady:
 
     async def test_resumes_from_paused(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.PAUSED
+        sandbox._state = RuntimeState.PAUSED
         sandbox._paused_sandbox_id = "mock-sandbox-123"
         provider._running = False  # type: ignore[attr-defined]
 
         # Mock start_session on provider
         provider.start_session = AsyncMock(return_value=42)  # type: ignore[attr-defined]
         await sandbox._ensure_agent_ready()
-        assert sandbox._state == WorkspaceState.ACTIVE
+        assert sandbox._state == RuntimeState.ACTIVE
         assert sandbox._paused_sandbox_id is None
         assert sandbox._agent_process is not None
 
     async def test_restarts_dead_process(self, provider: object) -> None:
         sandbox = _make_sandbox(provider)
-        sandbox._state = WorkspaceState.ACTIVE
+        sandbox._state = RuntimeState.ACTIVE
         sandbox._agent_session_id = "claude-sess-abc"
         provider._running = True  # type: ignore[attr-defined]
         provider._sandbox_id = "mock-sandbox-123"  # type: ignore[attr-defined]

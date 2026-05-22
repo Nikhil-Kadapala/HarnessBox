@@ -263,10 +263,10 @@ class TestWorkspacePooling:
     @pytest.mark.asyncio
     async def test_get_or_create_creates_when_no_match(self):
         """Should create new workspace when no paused workspace matches."""
-        from harnessbox.workspace import GitWorkspace
+        from harnessbox.workspace import GitRepoConfig
 
         mgr = WorkspaceManager()
-        workspace = GitWorkspace(
+        workspace = GitRepoConfig(
             remote="https://github.com/user/repo.git",
             branch="main",
         )
@@ -295,10 +295,10 @@ class TestWorkspacePooling:
     @pytest.mark.asyncio
     async def test_get_or_create_resumes_paused_in_memory(self):
         """Should resume paused workspace if found in memory."""
-        from harnessbox.workspace import GitWorkspace
+        from harnessbox.workspace import GitRepoConfig
 
         mgr = WorkspaceManager()
-        workspace = GitWorkspace(
+        workspace = GitRepoConfig(
             remote="https://github.com/user/repo.git",
             branch="main",
         )
@@ -403,10 +403,10 @@ class TestResumeWorkspaceRaceCondition:
         """Two concurrent resume_workspace calls: one succeeds, the other raises."""
         import asyncio
 
-        from harnessbox.workspace import GitWorkspace
+        from harnessbox.workspace import GitRepoConfig
 
         mgr = WorkspaceManager()
-        workspace = GitWorkspace(
+        workspace = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="main",
         )

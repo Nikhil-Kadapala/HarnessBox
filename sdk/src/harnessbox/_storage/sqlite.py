@@ -81,10 +81,10 @@ class SQLiteBackend:
                 """
                 INSERT INTO workspaces (
                     workspace_id, remote, branch, provider, provider_sandbox_id,
-                    snapshot_id, harness, status, runtime_state, workflow_state,
+                    snapshot_id, harness, runtime_state, workflow_state,
                     created_at, last_active, config_json, workspace_name, base_branch,
                     pr_url, pr_number, ci_status, total_cost_usd
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["workspace_id"],
@@ -94,7 +94,6 @@ class SQLiteBackend:
                     record.get("provider_sandbox_id"),
                     record.get("snapshot_id"),
                     record["harness"],
-                    record["runtime_state"],  # legacy column kept for backward compat
                     record["runtime_state"],
                     record.get("workflow_state", "backlog"),
                     record["created_at"],

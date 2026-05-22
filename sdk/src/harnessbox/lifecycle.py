@@ -13,8 +13,27 @@ from __future__ import annotations
 from enum import Enum
 
 
+class SessionStatus(str, Enum):
+    """User-facing session status.
+
+    Users see only three states:
+    - RUNNING: actively doing work, accepting prompts
+    - SLEEPING: paused to save cost, wakes transparently on next interaction
+    - KILLED: user explicitly destroyed it, gone forever
+    """
+
+    RUNNING = "running"
+    SLEEPING = "sleeping"
+    KILLED = "killed"
+
+
 class RuntimeState(str, Enum):
-    """Sandbox infrastructure states — managed by WorkspaceManager/Sandbox."""
+    """Internal sandbox infrastructure states.
+
+    These are internal orchestration states used by WorkspaceManager and Sandbox
+    for lifecycle management. Users never see these directly — they are mapped to
+    SessionStatus (running/sleeping/killed) at the public API boundary.
+    """
 
     STARTING = "starting"
     ACTIVE = "active"
@@ -22,6 +41,21 @@ class RuntimeState(str, Enum):
     DYING = "dying"
     ENDED = "ended"
     DEAD = "dead"
+
+
+_RUNTIME_TO_STATUS: dict[RuntimeState, SessionStatus] = {
+    RuntimeState.STARTING: SessionStatus.RUNNING,
+    RuntimeState.ACTIVE: SessionStatus.RUNNING,
+    RuntimeState.PAUSED: SessionStatus.SLEEPING,
+    RuntimeState.DYING: SessionStatus.KILLED,
+    RuntimeState.ENDED: SessionStatus.KILLED,
+    RuntimeState.DEAD: SessionStatus.KILLED,
+}
+
+
+def to_session_status(state: RuntimeState) -> SessionStatus:
+    """Map internal RuntimeState to user-facing SessionStatus."""
+    return _RUNTIME_TO_STATUS[state]
 
 
 class WorkflowState(str, Enum):
@@ -75,17 +109,3 @@ def validate_workflow_transition(current: WorkflowState, target: WorkflowState) 
     return target in VALID_WORKFLOW_TRANSITIONS.get(current, frozenset())
 
 
-# ---------------------------------------------------------------------------
-# Backward compatibility — deprecated aliases
-# ---------------------------------------------------------------------------
-
-WorkspaceState = RuntimeState
-"""Deprecated: Use RuntimeState for sandbox states or WorkflowState for PR states."""
-
-VALID_TRANSITIONS = VALID_RUNTIME_TRANSITIONS
-"""Deprecated: Use VALID_RUNTIME_TRANSITIONS or VALID_WORKFLOW_TRANSITIONS."""
-
-
-def validate_transition(current: RuntimeState, target: RuntimeState) -> bool:
-    """Deprecated: Use validate_runtime_transition()."""
-    return validate_runtime_transition(current, target)

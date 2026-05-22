@@ -35,10 +35,12 @@ class MockProvider:
         self,
         env_vars: dict[str, str] | None = None,
         timeout: int = 300,
+        snapshot_id: str | None = None,
     ) -> None:
-        self._sandbox_id = "mock-sandbox-123"
+        self._sandbox_id = f"mock-sandbox-from-{snapshot_id}" if snapshot_id else "mock-sandbox-123"
         self._running = True
         self._env_vars = dict(env_vars) if env_vars else {}
+        self._snapshot_id = snapshot_id
 
     async def kill(self) -> None:
         self._running = False

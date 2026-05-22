@@ -233,7 +233,7 @@ class TestToolBlocks:
 class TestToolResults:
     def test_bash_tool_result(self) -> None:
         p = StreamParser()
-        p._tool_map = {"call-1": _ToolInfo(name="Bash", input_buffer='{"command": "ls"}')}
+        p.tool_map = {"call-1": _ToolInfo(name="Bash", input_buffer='{"command": "ls"}')}
         results = p.parse_line(
             _line(
                 type="user",
@@ -257,7 +257,7 @@ class TestToolResults:
 
     def test_file_change_result(self) -> None:
         p = StreamParser()
-        p._tool_map = {
+        p.tool_map = {
             "call-2": _ToolInfo(name="Write", input_buffer='{"file_path": "/app/main.py"}')
         }
         results = p.parse_line(
@@ -282,7 +282,7 @@ class TestToolResults:
 
     def test_error_tool_result(self) -> None:
         p = StreamParser()
-        p._tool_map = {"call-3": _ToolInfo(name="Bash", input_buffer="{}")}
+        p.tool_map = {"call-3": _ToolInfo(name="Bash", input_buffer="{}")}
         results = p.parse_line(
             _line(
                 type="user",
@@ -376,8 +376,8 @@ class TestResults:
                 },
             )
         )
-        assert "call-1" in p._tool_map
-        assert p._tool_map["call-1"].name == "Bash"
+        assert "call-1" in p.tool_map
+        assert p.tool_map["call-1"].name == "Bash"
 
     def test_result_event(self) -> None:
         p = StreamParser()

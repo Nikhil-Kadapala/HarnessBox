@@ -42,8 +42,13 @@ class SandboxProvider(Protocol):
         self,
         env_vars: dict[str, str] | None = None,
         timeout: int = 300,
+        snapshot_id: str | None = None,
     ) -> None:
-        """Create and start a new sandbox instance."""
+        """Create and start a new sandbox instance.
+
+        If snapshot_id is provided, the sandbox is created from a previously
+        saved snapshot instead of a template.
+        """
         ...
 
     async def kill(self) -> None:

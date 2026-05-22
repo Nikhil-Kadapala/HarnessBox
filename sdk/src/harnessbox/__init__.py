@@ -23,17 +23,24 @@ from harnessbox.credentials import (
     detect_credentials,
 )
 from harnessbox.events import EventBuffer
-from harnessbox.harnessbox import HarnessBox, HarnessBoxSecrets, Session, WorkspaceMode
+from harnessbox.harnessbox import (
+    FileSystemConfig,
+    HarnessBox,
+    HarnessBoxSecrets,
+    Session,
+    Snapshot,
+    WorkspaceConfig,
+    WorkspaceMode,
+)
 from harnessbox.lifecycle import (
     VALID_RUNTIME_TRANSITIONS,
-    VALID_TRANSITIONS,
     VALID_WORKFLOW_TRANSITIONS,
     InvalidTransitionError,
     RuntimeState,
+    SessionStatus,
     WorkflowState,
-    WorkspaceState,
+    to_session_status,
     validate_runtime_transition,
-    validate_transition,
     validate_workflow_transition,
 )
 from harnessbox.process import AgentProcess
@@ -54,7 +61,6 @@ from harnessbox.security.guards import (
 )
 from harnessbox.security.policy import SecurityPolicy, build_settings
 from harnessbox.streaming import (
-    AgentStreamEvent,
     Attachment,
     ContentPart,
     ItemKind,
@@ -67,11 +73,9 @@ from harnessbox.streaming import (
     parse_line,
     parse_stream_line,
 )
-from harnessbox.streaming import (
-    EventType as StreamEventType,
-)
+from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.types import AgentResponse
-from harnessbox.workspace import GitRepoConfig, GitStatus, GitWorkspace, Workspace
+from harnessbox.workspace import GitRepoConfig, GitStatus, Workspace
 
 __all__ = [
     "__version__",
@@ -86,18 +90,16 @@ __all__ = [
     "InvalidTransitionError",
     "SecurityPolicy",
     "RuntimeState",
+    "SessionStatus",
     "WorkflowState",
-    "WorkspaceState",
     "VALID_RUNTIME_TRANSITIONS",
     "VALID_WORKFLOW_TRANSITIONS",
-    "VALID_TRANSITIONS",
     "build_settings",
     "merge_guard_sets",
+    "to_session_status",
     "validate_runtime_transition",
     "validate_workflow_transition",
-    "validate_transition",
     # Streaming
-    "AgentStreamEvent",
     "Attachment",
     "ContentPart",
     "InteractiveSession",
@@ -121,9 +123,12 @@ __all__ = [
     "detect_claude_auth_mode",
     "detect_credentials",
     # HarnessBox (public API)
+    "FileSystemConfig",
     "HarnessBox",
     "HarnessBoxSecrets",
     "Session",
+    "Snapshot",
+    "WorkspaceConfig",
     "WorkspaceMode",
     # Sandbox (internal orchestration)
     "AgentResponse",
@@ -142,7 +147,6 @@ __all__ = [
     # Workspace
     "GitRepoConfig",
     "GitStatus",
-    "GitWorkspace",  # Backward-compat alias for GitRepoConfig
     "Workspace",
     # Event buffer
     "EventBuffer",

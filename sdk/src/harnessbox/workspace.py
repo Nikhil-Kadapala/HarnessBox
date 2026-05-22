@@ -78,7 +78,6 @@ class GitRepoConfig:
         self._on_clone_start = on_clone_start
         self._on_clone_complete = on_clone_complete
         self._initial_sha: str | None = None
-        self._last_snapshot: str | None = None
         self.push_error: str | None = None
 
     def __repr__(self) -> str:
@@ -331,45 +330,7 @@ class GitRepoConfig:
     async def extract(self, provider: SandboxProvider, workspace_root: str) -> None:
         """No-op — system snapshots preserve .git state for user inspection."""
 
-    async def create_checkpoint(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
-        """Create a named workspace checkpoint as a lightweight git tag."""
-        clone_target = (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
-        await self._run_git(provider, "add -A", cwd=clone_target)
-        await self._run_git(
-            provider,
-            f'commit --allow-empty -m "snapshot: {name}"',
-            cwd=clone_target,
-        )
-        tag_result = await self._run_git(provider, f"tag harnessbox-snap-{name}", cwd=clone_target)
-        if tag_result.exit_code != 0:
-            raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
-        self._last_snapshot = name
 
-    async def restore_checkpoint(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
-        """Restore the workspace to a named checkpoint."""
-        clone_target = (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
-        result = await self._run_git(
-            provider, f"checkout harnessbox-snap-{name} -- .", cwd=clone_target
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
-        self._last_snapshot = name
-
-    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Deprecated alias for create_checkpoint()."""
-        await self.create_checkpoint(provider, workspace_root, name)
-
-    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Deprecated alias for restore_checkpoint()."""
-        await self.restore_checkpoint(provider, workspace_root, name)
 
     async def create_pr(
         self,
@@ -473,8 +434,6 @@ class GitRepoConfig:
         return f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
 
     def _diff_ref(self) -> str:
-        if self._last_snapshot:
-            return f"harnessbox-snap-{self._last_snapshot}"
         if self._initial_sha:
             return self._initial_sha
         return "HEAD"
@@ -526,5 +485,3 @@ class _CloneError(Exception):
         self.retryable = retryable
 
 
-# Backward-compat alias (deprecated — use GitRepoConfig)
-GitWorkspace = GitRepoConfig
