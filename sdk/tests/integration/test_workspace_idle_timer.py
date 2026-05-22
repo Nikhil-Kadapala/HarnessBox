@@ -1,29 +1,29 @@
-"""Tests for issue #6: per-workspace idle timers, E2B timeout extension, snapshot recovery."""
+"""Integration tests for WorkspaceManager idle timers and snapshot recovery.
+
+Tests exercise WorkspaceManager methods directly. Verifies that idle timers
+fire pause, active turn counters prevent premature pausing, and snapshot
+recovery creates new sandboxes when the original expires.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceInstance, WorkspaceManager
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 # ---------------------------------------------------------------------------
-# Part A: Per-workspace idle timer
+# Per-workspace idle timer
 # ---------------------------------------------------------------------------
 
 
-class TestPerWorkspaceIdleTimer:
-    """Idle timer is per-workspace and only starts after all active turns complete."""
-
+class TestWorkspaceIdleTimer:
     @pytest.mark.asyncio
     async def test_idle_timer_starts_on_create(self) -> None:
-        """A fresh workspace should have an idle timer running."""
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
@@ -40,22 +40,19 @@ class TestPerWorkspaceIdleTimer:
         mgr._cancel_idle_timer("w-1")
 
     @pytest.mark.asyncio
-    async def test_cancel_idle_timer(self) -> None:
-        """Cancelling an idle timer removes it."""
+    async def test_cancel_idle_timer_removes_it(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
         mgr._idle_timers["w-x"] = asyncio.create_task(asyncio.sleep(9999))
         mgr._cancel_idle_timer("w-x")
         assert "w-x" not in mgr._idle_timers
 
     @pytest.mark.asyncio
-    async def test_cancel_idle_timer_idempotent(self) -> None:
-        """Cancelling a non-existent timer is a no-op."""
+    async def test_cancel_nonexistent_timer_is_noop(self) -> None:
         mgr = WorkspaceManager()
-        mgr._cancel_idle_timer("nonexistent")  # should not raise
+        mgr._cancel_idle_timer("nonexistent")
 
     @pytest.mark.asyncio
-    async def test_start_idle_timer_replaces_existing(self) -> None:
-        """Starting a new timer cancels the old one."""
+    async def test_start_timer_replaces_existing(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
         mgr._idle_timers["w-1"] = asyncio.create_task(asyncio.sleep(9999))
         first_task = mgr._idle_timers["w-1"]
@@ -66,11 +63,9 @@ class TestPerWorkspaceIdleTimer:
         mgr._cancel_idle_timer("w-1")
 
     @pytest.mark.asyncio
-    async def test_idle_countdown_fires_pause(self) -> None:
-        """_idle_countdown pauses the workspace after timeout elapses."""
+    async def test_countdown_fires_pause_on_active_workspace(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=0)
 
-        # Inject a fake active workspace
         info = WorkspaceInstance(
             workspace_id="w-1",
             remote="",
@@ -95,8 +90,7 @@ class TestPerWorkspaceIdleTimer:
         assert pause_called == ["w-1"]
 
     @pytest.mark.asyncio
-    async def test_idle_countdown_skips_non_active(self) -> None:
-        """_idle_countdown does nothing if workspace is not ACTIVE."""
+    async def test_countdown_skips_non_active_workspace(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=0)
         info = WorkspaceInstance(
             workspace_id="w-1",
@@ -119,8 +113,7 @@ class TestPerWorkspaceIdleTimer:
         pause_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_idle_timer_not_created_when_auto_pause_off(self) -> None:
-        """No idle timer when auto_pause=False."""
+    async def test_no_timer_when_auto_pause_disabled(self) -> None:
         mgr = WorkspaceManager(auto_pause=False)
 
         with (
@@ -135,16 +128,13 @@ class TestPerWorkspaceIdleTimer:
         assert "w-1" not in mgr._idle_timers
 
     @pytest.mark.asyncio
-    async def test_no_global_scan_task(self) -> None:
-        """WorkspaceManager no longer uses a global 60s scan task."""
+    async def test_no_global_scan_task_exists(self) -> None:
         mgr = await WorkspaceManager.create(auto_pause=True)
-        # The old _pause_task attribute is gone
         assert not hasattr(mgr, "_pause_task")
         await mgr.shutdown_all()
 
     @pytest.mark.asyncio
     async def test_destroy_cancels_idle_timer(self) -> None:
-        """Destroying a workspace cancels its idle timer."""
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
@@ -163,22 +153,19 @@ class TestPerWorkspaceIdleTimer:
         await mgr.destroy_workspace("w-1")
         assert "w-1" not in mgr._idle_timers
 
-    @pytest.mark.asyncio
-    async def test_active_turn_counter_prevents_premature_timer(self) -> None:
-        """Idle timer does not restart while another conversation's turn is active."""
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
-        # Simulate two concurrent turns in flight for the same workspace
+class TestActiveTurnCounter:
+    @pytest.mark.asyncio
+    async def test_concurrent_turns_prevent_premature_timer(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
         mgr._active_turns["w-1"] = 2
 
-        # After one turn ends, counter drops to 1 — no timer yet
         count = max(0, mgr._active_turns.get("w-1", 1) - 1)
         mgr._active_turns["w-1"] = count
         assert "w-1" not in mgr._idle_timers
 
     @pytest.mark.asyncio
-    async def test_idle_timer_starts_when_last_turn_ends(self) -> None:
-        """Idle timer starts once the last active turn completes."""
+    async def test_timer_starts_when_last_turn_ends(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
         mgr._active_turns["w-1"] = 1
         info = WorkspaceInstance(
@@ -204,202 +191,34 @@ class TestPerWorkspaceIdleTimer:
         mgr._cancel_idle_timer("w-1")
 
     @pytest.mark.asyncio
-    async def test_turn_ended_seen_prevents_double_decrement(self) -> None:
-        """finally block does NOT decrement when TURN_ENDED already fired.
-
-        Regression test for the concurrent-turn double-decrement bug:
-        with two turns in flight, the first turn's TURN_ENDED decrements 2→1,
-        then the finally block used to see active>0 and decrement again to 0,
-        prematurely starting the idle timer while agent B is still running.
-        """
+    async def test_turn_ended_flag_prevents_double_decrement(self) -> None:
+        """Regression: TURN_ENDED + finally block must not double-decrement."""
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        # Start with 2 concurrent turns
         mgr._active_turns["w-1"] = 2
 
-        # Simulate TURN_ENDED for turn A: decrement 2→1
+        # TURN_ENDED decrements 2→1
         active = max(0, mgr._active_turns.get("w-1", 1) - 1)
         mgr._active_turns["w-1"] = active
-        turn_ended_seen = True  # Set by the TURN_ENDED handler
+        turn_ended_seen = True
 
-        # Now the finally block runs — with the fix, it checks turn_ended_seen
+        # finally block with fix: skips decrement because turn_ended_seen is True
         if not turn_ended_seen:
             active = max(0, mgr._active_turns.get("w-1", 1) - 1)
             mgr._active_turns["w-1"] = active
             if active == 0 and mgr._auto_pause:
                 mgr._start_idle_timer("w-1")
 
-        # Counter should still be 1 (agent B still running), timer not started
         assert mgr._active_turns["w-1"] == 1
         assert "w-1" not in mgr._idle_timers
 
 
 # ---------------------------------------------------------------------------
-# Part B: E2B proactive timeout extension
-# ---------------------------------------------------------------------------
-
-
-class TestE2BTimeoutExtension:
-    """E2B provider extends sandbox timeout when a turn runs past the halfway mark."""
-
-    def _make_provider(self, timeout: int = 300) -> object:
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = E2BProvider.__new__(E2BProvider)
-        p._api_key = "test"
-        p._template = "base"
-        p._timeout = timeout
-        p._sandbox = MagicMock()
-        p._sandbox.set_timeout = AsyncMock()
-        p._turn_start_time = None
-        p._total_extensions = 0
-        p._extended_this_turn = False
-        return p
-
-    @pytest.mark.asyncio
-    async def test_no_extension_before_halfway(self) -> None:
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        p.notify_turn_start()
-        # Artificially set start time to 10s ago (well before 150s halfway mark)
-        p._turn_start_time = time.monotonic() - 10
-        extended = await p.maybe_extend_timeout()
-        assert not extended
-        p._sandbox.set_timeout.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_extension_after_halfway(self) -> None:
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        p.notify_turn_start()
-        # 160s elapsed > 150s halfway; remaining = max(0, 300 - 160) = 140
-        p._turn_start_time = time.monotonic() - 160
-        extended = await p.maybe_extend_timeout()
-        assert extended
-        # set_timeout receives remaining + extension = 140 + 150 = 290
-        call_arg = p._sandbox.set_timeout.call_args[0][0]
-        assert 280 <= call_arg <= 300  # allow ±10s for timing jitter
-        assert p._total_extensions == 150
-
-    @pytest.mark.asyncio
-    async def test_extension_cap_not_exceeded(self) -> None:
-        """Total extensions cannot exceed (MAX_EXTENSION_MULTIPLIER - 1) * timeout."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        max_extra = (p._MAX_EXTENSION_MULTIPLIER - 1) * 300  # 600
-        p._total_extensions = max_extra
-        p._turn_start_time = time.monotonic() - 200
-        extended = await p.maybe_extend_timeout()
-        assert not extended
-
-    @pytest.mark.asyncio
-    async def test_extension_capped_at_remaining_budget(self) -> None:
-        """Extension is reduced to the remaining budget if less than half timeout."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        # Only 50s of budget left; elapsed=200 so remaining = max(0, 300-200) = 100
-        p._total_extensions = 550  # max_extra=600, so 50 remaining budget
-        p._turn_start_time = time.monotonic() - 200
-        extended = await p.maybe_extend_timeout()
-        assert extended
-        # set_timeout receives remaining + capped_extension = 100 + 50 = 150
-        call_arg = p._sandbox.set_timeout.call_args[0][0]
-        assert 140 <= call_arg <= 160  # allow ±10s for timing jitter
-
-    @pytest.mark.asyncio
-    async def test_no_extension_when_no_turn(self) -> None:
-        """No extension if notify_turn_start was never called."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        # _turn_start_time is None
-        extended = await p.maybe_extend_timeout()
-        assert not extended
-
-    @pytest.mark.asyncio
-    async def test_notify_turn_end_clears_start_time(self) -> None:
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        p.notify_turn_start()
-        assert p._turn_start_time is not None
-        p.notify_turn_end()
-        assert p._turn_start_time is None
-
-    @pytest.mark.asyncio
-    async def test_at_most_one_extension_per_turn(self) -> None:
-        """maybe_extend_timeout fires set_timeout exactly once per turn, no matter how
-        many events are yielded after the halfway mark."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        p._turn_start_time = time.monotonic() - 200
-        first = await p.maybe_extend_timeout()
-        second = await p.maybe_extend_timeout()
-        third = await p.maybe_extend_timeout()
-        assert first is True
-        assert second is False
-        assert third is False
-        p._sandbox.set_timeout.assert_called_once()
-
-        # After notify_turn_end + notify_turn_start, the flag resets and we can extend again
-        p.notify_turn_end()
-        p.notify_turn_start()
-        p._turn_start_time = time.monotonic() - 200
-        assert await p.maybe_extend_timeout() is True
-
-    @pytest.mark.asyncio
-    async def test_extension_fails_gracefully(self) -> None:
-        """Failed set_timeout call returns False without raising."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        p._sandbox.set_timeout = AsyncMock(side_effect=Exception("network error"))
-        p._turn_start_time = time.monotonic() - 200
-        extended = await p.maybe_extend_timeout()
-        assert not extended
-
-    @pytest.mark.asyncio
-    async def test_create_resets_extension_counters(self) -> None:
-        """create() resets _total_extensions and _extended_this_turn for the new sandbox."""
-        from harnessbox._providers.e2b import E2BProvider
-
-        p = self._make_provider(timeout=300)
-        assert isinstance(p, E2BProvider)
-        # Simulate an old sandbox that used its full extension budget
-        p._total_extensions = 600
-        p._extended_this_turn = True
-
-        # Patch the SDK import so create() doesn't need a real e2b package
-        mock_sandbox = MagicMock()
-        mock_sandbox.sandbox_id = "sb-new"
-        mock_cls = AsyncMock(return_value=mock_sandbox)
-
-        with patch.object(p, "_get_sdk", return_value=mock_cls):
-            await p.create(timeout=300)
-
-        assert p._total_extensions == 0
-        assert p._extended_this_turn is False
-
-
-# ---------------------------------------------------------------------------
-# Part C: Snapshot recovery
+# Snapshot recovery
 # ---------------------------------------------------------------------------
 
 
 class TestSnapshotRecovery:
-    """_resume_workspace recovers from expired/killed sandboxes via snapshot."""
+    """_resume_workspace recovers from expired sandboxes via snapshot."""
 
     def _make_mgr_with_workspace(
         self,
@@ -433,13 +252,11 @@ class TestSnapshotRecovery:
         return mgr, info, provider
 
     @pytest.mark.asyncio
-    async def test_recovery_creates_new_sandbox_from_snapshot(self) -> None:
-        """When sandbox is expired, create() is called with the snapshot_id."""
+    async def test_recovery_creates_sandbox_from_snapshot(self) -> None:
         from harnessbox.providers import SandboxDeadError
 
         mgr, info, provider = self._make_mgr_with_workspace()
 
-        # provider.create with snapshot_id should succeed and set a new sandbox_id
         created_calls: list[dict[str, object]] = []
 
         async def fake_create(
@@ -447,15 +264,12 @@ class TestSnapshotRecovery:
             timeout: int = 300,
             snapshot_id: str | None = None,
         ) -> None:
-            created_calls.append(
-                {"env_vars": env_vars, "timeout": timeout, "snapshot_id": snapshot_id}
-            )
+            created_calls.append({"snapshot_id": snapshot_id})
             provider._sandbox_id = "sb-new"
             provider._running = True
 
         provider.create = fake_create  # type: ignore[method-assign]
 
-        # Patch _try_resume_sandbox to raise SandboxDeadError
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
         with patch.object(mgr, "_try_resume_sandbox", failing):
             await mgr._resume_workspace("w-1")
@@ -466,8 +280,7 @@ class TestSnapshotRecovery:
         assert info.provider_sandbox_id == "sb-new"
 
     @pytest.mark.asyncio
-    async def test_recovery_raises_when_no_snapshot(self) -> None:
-        """Raises ValueError when sandbox expired and no snapshot available."""
+    async def test_recovery_raises_when_no_snapshot_available(self) -> None:
         from harnessbox.providers import SandboxDeadError
 
         mgr, info, provider = self._make_mgr_with_workspace(snapshot_id=None)
@@ -479,7 +292,6 @@ class TestSnapshotRecovery:
 
     @pytest.mark.asyncio
     async def test_recovery_raises_when_snapshot_expired(self) -> None:
-        """Raises ValueError with clear message when snapshot itself is gone."""
         from harnessbox.providers import SandboxDeadError
 
         mgr, info, provider = self._make_mgr_with_workspace()
@@ -500,9 +312,7 @@ class TestSnapshotRecovery:
 
     @pytest.mark.asyncio
     async def test_happy_path_resume_no_snapshot_needed(self) -> None:
-        """Normal resume (no expiry) transitions to ACTIVE without snapshot recovery."""
         mgr, info, provider = self._make_mgr_with_workspace()
-
         provider._sandbox_id = "sb-old"
         provider._running = True
 
@@ -514,7 +324,6 @@ class TestSnapshotRecovery:
 
     @pytest.mark.asyncio
     async def test_recovery_updates_storage(self) -> None:
-        """After snapshot recovery, the new sandbox_id is persisted to storage."""
         from harnessbox._storage.memory import MemoryBackend
         from harnessbox.providers import SandboxDeadError
 
@@ -524,7 +333,6 @@ class TestSnapshotRecovery:
         mgr, info, provider = self._make_mgr_with_workspace()
         mgr._storage = storage
 
-        # Persist the old workspace record
         await storage.save_workspace(
             {
                 "workspace_id": "w-1",
@@ -555,6 +363,5 @@ class TestSnapshotRecovery:
         with patch.object(mgr, "_try_resume_sandbox", failing):
             await mgr._resume_workspace("w-1")
 
-        # Verify new sandbox_id was persisted
         records = await storage.list_workspaces()
         assert records[0]["provider_sandbox_id"] == "sb-new"

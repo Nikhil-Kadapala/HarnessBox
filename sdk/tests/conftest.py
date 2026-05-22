@@ -110,6 +110,52 @@ class MockProvider:
         for line in self._stream_lines:
             yield line
 
+    # -- NativeGitCapable methods --
+
+    async def git_clone(
+        self,
+        url: str,
+        dest: str,
+        *,
+        branch: str | None = None,
+        depth: int | None = None,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        self._commands.append(f"git_clone:{url}:{dest}:branch={branch}:depth={depth}")
+
+    async def git_add(self, path: str, *, files: list[str] | None = None) -> None:
+        self._commands.append(f"git_add:{path}:files={files}")
+
+    async def git_commit(self, path: str, message: str) -> None:
+        self._commands.append(f"git_commit:{path}:{message}")
+
+    async def git_push(
+        self, path: str, *, username: str | None = None, password: str | None = None
+    ) -> None:
+        self._commands.append(f"git_push:{path}")
+
+    async def git_status(self, path: str) -> Any:
+        from harnessbox.workspace import GitStatus
+
+        return GitStatus(branch="main", ahead=0, behind=0, dirty=False)
+
+    async def git_configure_user(self, name: str, email: str, *, path: str | None = None) -> None:
+        self._commands.append(f"git_configure_user:{name}:{email}:path={path}")
+
+    async def git_dangerously_authenticate(
+        self, username: str, password: str, *, host: str = "github.com"
+    ) -> None:
+        self._commands.append(f"git_dangerously_authenticate:{username}:host={host}")
+
+    async def git_create_branch(self, path: str, branch: str) -> None:
+        self._commands.append(f"git_create_branch:{path}:{branch}")
+
+    async def git_set_config(
+        self, key: str, value: str, *, scope: str = "global", path: str | None = None
+    ) -> None:
+        self._commands.append(f"git_set_config:{key}={value}:scope={scope}:path={path}")
+
 
 @pytest.fixture
 def mock_provider() -> MockProvider:

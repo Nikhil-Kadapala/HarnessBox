@@ -165,6 +165,22 @@ class NativeGitCapable(Protocol):
         """Configure git user identity for the repository at *path*."""
         ...
 
+    async def git_dangerously_authenticate(
+        self, username: str, password: str, *, host: str = "github.com"
+    ) -> None:
+        """Store credentials in git credential helper inside the sandbox."""
+        ...
+
+    async def git_create_branch(self, path: str, branch: str) -> None:
+        """Create and switch to a new branch in the repository at *path*."""
+        ...
+
+    async def git_set_config(
+        self, key: str, value: str, *, scope: str = "global", path: str | None = None
+    ) -> None:
+        """Set a git configuration value."""
+        ...
+
 
 @runtime_checkable
 class PTYCapable(Protocol):

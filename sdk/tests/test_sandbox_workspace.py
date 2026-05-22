@@ -43,8 +43,8 @@ class TestSandboxWithWorkspace:
         await sb.setup()
 
         cmds = ws_provider._commands
-        assert any("git init" in c for c in cmds)
-        assert any("git fetch" in c for c in cmds)
+        assert any("git_clone:" in c for c in cmds)
+        assert any("git_configure_user:" in c for c in cmds)
         assert sb.state == RuntimeState.ACTIVE
 
     @pytest.mark.asyncio
@@ -117,10 +117,10 @@ class TestSandboxWithWorkspace:
 
     @pytest.mark.asyncio
     async def test_inject_failure_propagates(self, ws_provider):
-        ws_provider.set_git_response(
-            "fetch",
-            CommandResult(exit_code=128, stdout="", stderr="Authentication failed"),
-        )
+        async def failing_clone(*args, **kwargs):
+            raise RuntimeError("Authentication failed")
+
+        ws_provider.git_clone = failing_clone
 
         ws = GitRepoConfig(remote="https://github.com/test/repo.git")
         sb = Sandbox(client=ws_provider, workspace=ws)
