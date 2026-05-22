@@ -11,6 +11,12 @@ from tests.conftest import MockProvider
 E2B_API_KEY = os.environ.get("E2B_API_KEY")
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if "/contract/" in str(item.fspath):
+            item.add_marker(pytest.mark.contract)
+
+
 @pytest.fixture(params=["mock", "e2b"])
 async def provider(request):
     """Parametrized fixture: runs each contract test against both providers.

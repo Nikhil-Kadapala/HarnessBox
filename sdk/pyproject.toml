@@ -109,6 +109,9 @@ disable_error_code = ["union-attr", "attr-defined", "misc", "no-any-return", "un
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
+    "unit: Single-module isolation tests (no cross-module coordination)",
+    "integration: Multi-component coordination tests",
+    "contract: Provider behavioral contract tests (parametrized mock/e2b)",
     "e2e: end-to-end tests requiring E2B_API_KEY (deselect with -m 'not e2e')",
 ]
 
