@@ -6,8 +6,7 @@ import pytest
 
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.events import CallbackHandler, EventType, SandboxEvent
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 class _EventCollector:

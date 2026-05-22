@@ -8,8 +8,7 @@ import pytest
 
 from harnessbox.sandbox import Sandbox
 from harnessbox.streaming import EventType
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 @pytest.fixture

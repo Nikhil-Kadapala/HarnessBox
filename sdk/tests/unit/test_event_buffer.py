@@ -240,8 +240,7 @@ class TestEventBufferInSandbox:
         import json
 
         from harnessbox.sandbox import Sandbox
-
-        from .conftest import MockProvider
+        from tests.conftest import MockProvider
 
         provider = MockProvider()
         provider._stream_lines = [

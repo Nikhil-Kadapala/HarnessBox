@@ -969,7 +969,7 @@ class TestNDJSONFixture:
         """Replay a real recorded NDJSON session and verify event invariants."""
         from pathlib import Path
 
-        fixture_path = Path(__file__).parent / "fixtures" / "recorded_turn.ndjson"
+        fixture_path = Path(__file__).parent.parent / "fixtures" / "recorded_turn.ndjson"
         lines = fixture_path.read_text().strip().splitlines()
 
         p = StreamParser(persistent=True)

@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 
 from harnessbox.sandbox import Sandbox
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 @pytest.fixture

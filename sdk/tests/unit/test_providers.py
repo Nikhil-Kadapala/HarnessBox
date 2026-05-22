@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 
 from harnessbox.providers import CommandResult, SandboxProvider
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 class TestCommandResult:

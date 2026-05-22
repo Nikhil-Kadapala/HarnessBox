@@ -8,8 +8,7 @@ from harnessbox.lifecycle import RuntimeState
 from harnessbox.providers import CommandResult
 from harnessbox.sandbox import Sandbox
 from harnessbox.workspace import GitRepoConfig
-
-from .conftest import MockProvider
+from tests.conftest import MockProvider
 
 
 class _WorkspaceMockProvider(MockProvider):
