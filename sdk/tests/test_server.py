@@ -503,3 +503,43 @@ class TestWorkspaceEndpoints:
         assert resp.status_code == 400
         detail = resp.json()["detail"]
         assert "Failed to read remote URL" in detail or "No remote.origin.url found" in detail
+
+
+class TestServerTimeoutFields:
+    def test_create_workspace_with_timeouts(self) -> None:
+        app = create_app(manager=WorkspaceManager())
+        client = TestClient(app)
+
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-1"
+
+            resp = client.post(
+                "/v1/workspaces",
+                json={
+                    "session_id": "t-1",
+                    "sandbox_timeout": 3600,
+                    "session_timeout": 1800,
+                },
+            )
+        assert resp.status_code == 201
+
+    def test_session_timeout_clamped_to_sandbox_timeout(self) -> None:
+        app = create_app(manager=WorkspaceManager())
+        client = TestClient(app)
+
+        with patch("harnessbox.workspace_manager.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-1"
+
+            resp = client.post(
+                "/v1/workspaces",
+                json={
+                    "session_id": "t-2",
+                    "sandbox_timeout": 300,
+                    "session_timeout": 600,
+                },
+            )
+        assert resp.status_code == 201

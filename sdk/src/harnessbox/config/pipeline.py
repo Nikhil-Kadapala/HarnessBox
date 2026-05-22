@@ -41,6 +41,9 @@ class SetupContext:
     plugin_dirs: list[str] = field(default_factory=list)
     setup_script: str | None = None
 
+    # Snapshot-based creation (skips template)
+    snapshot_id: str | None = None
+
     # Populated during execution
     manifest: SandboxManifest | None = None
     manifest_target_dir: str = ""
@@ -190,7 +193,11 @@ def _is_mock_provider(ctx: SetupContext) -> bool:
 
 
 async def _step_create_sandbox(ctx: SetupContext) -> None:
-    await ctx.provider.create(env_vars=ctx.env_vars or {}, timeout=ctx.timeout)
+    await ctx.provider.create(
+        env_vars=ctx.env_vars or {},
+        timeout=ctx.timeout,
+        snapshot_id=ctx.snapshot_id,
+    )
 
 
 async def _step_check_tools(ctx: SetupContext) -> None:

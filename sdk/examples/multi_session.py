@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import os
 
-from harnessbox import HarnessBox, WorkspaceMode
+from harnessbox import HarnessBox, WorkspaceConfig
+from harnessbox.workspace import GitRepoConfig
 
 
 async def main() -> None:
@@ -24,8 +25,13 @@ async def main() -> None:
     hb = HarnessBox(
         provider="e2b",
         harness="claude-code",
-        remote="https://github.com/your-org/your-repo.git",
-        workspace_mode=WorkspaceMode.NEW,
+        workspace_config=WorkspaceConfig(
+            git_repo_config=GitRepoConfig(
+                remote="https://github.com/your-org/your-repo.git",
+                branch="main",
+                base_branch="main",
+            ),
+        ),
         secrets={
             "provider_api_key": e2b_key,
             "harness_secrets": {
@@ -38,8 +44,8 @@ async def main() -> None:
     auth_session = await hb.create_session(branch="feat/auth")
     ui_session = await hb.create_session(branch="feat/ui")
 
-    print(f"Auth session: {auth_session.id} (branch: {auth_session.branch})")
-    print(f"UI session:   {ui_session.id} (branch: {ui_session.branch})")
+    print(f"Auth session: {auth_session.id} on sandbox {auth_session.sandbox_id}")
+    print(f"UI session:   {ui_session.id} on sandbox {ui_session.sandbox_id}")
 
     # Send messages to each session
     async for event in auth_session.send_message("List the files in this repo"):
@@ -56,9 +62,8 @@ async def main() -> None:
     print(f"UI status:   {ui_session.status}")
 
     # Clean up
-    await auth_session.kill()
-    await ui_session.kill()
-    print("\nSessions destroyed.")
+    await hb.kill()
+    print("\nAll sessions destroyed.")
 
 
 if __name__ == "__main__":

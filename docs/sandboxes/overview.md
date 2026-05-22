@@ -1,0 +1,186 @@
+# Sandboxes
+
+A sandbox is a secure, isolated cloud VM pre-configured with an AI coding agent. Each one has its own filesystem, network stack, and process space — completely isolated from other sandboxes via hardware-level virtualization. Think of it as a disposable development environment that boots in seconds, runs your agent, and tears down cleanly.
+
+```python
+from harnessbox import HarnessBox, WorkspaceConfig
+
+hb = HarnessBox(provider="e2b", harness="claude-code", workspace_config=WorkspaceConfig())
+session = await hb.create_session()
+
+async for event in session.send_message("Refactor the auth module"):
+    if event.text:
+        print(event.text, end="")
+
+await session.kill()
+```
+
+## Creating a Sandbox
+
+```python
+from harnessbox import HarnessBox, HarnessBoxSecrets, WorkspaceConfig
+from harnessbox.workspace import GitRepoConfig
+from harnessbox.security.policy import SecurityPolicy
+
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    workspace_config=WorkspaceConfig(
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/org/repo.git",
+            branch="feat/new-feature",
+            base_branch="main",
+        ),
+    ),
+    secrets=HarnessBoxSecrets(
+        provider_api_key="your-e2b-key",
+        harness_secrets={"ANTHROPIC_API_KEY": "sk-ant-..."},
+        git_token="ghp_...",
+    ),
+    security_policy=SecurityPolicy(
+        denied_tools=["computer"],
+        bash_deny_patterns=["rm -rf /"],
+    ),
+    model="claude-sonnet-4-6-20250514",
+    session_timeout=1800,
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `provider` | str | `"e2b"` | Sandbox provider backend |
+| `harness` | str | `"claude-code"` | AI agent type to run |
+| `workspace_config` | WorkspaceConfig | required | Workspace configuration; optionally contains `git_repo_config` for repository cloning |
+| `secrets` | HarnessBoxSecrets | None | API keys and tokens (never stored as env vars) |
+| `security_policy` | SecurityPolicy | None | Agent permission restrictions |
+| `model` | str | None | Model override for the agent |
+| `session_timeout` | int | 1800 | Idle timeout in seconds |
+
+## Lifecycle
+
+Sessions have three states:
+
+| Status | Description |
+|--------|-------------|
+| `running` | Active, accepting prompts and commands |
+| `sleeping` | Paused to save cost, wakes transparently on next interaction |
+| `killed` | User explicitly destroyed it, gone forever |
+
+Sandboxes are persistent. When idle, they sleep automatically to save cost. On the next `send_message()` or `run_command()`, the sandbox wakes transparently — no manual resume needed. Sessions only reach `killed` when you explicitly call `session.kill()` or `hb.kill()`.
+
+```python
+from harnessbox.lifecycle import SessionStatus
+
+session = await hb.create_session()
+assert session.status == SessionStatus.RUNNING
+
+# After idle timeout, session sleeps automatically
+# Next interaction wakes it transparently
+
+await session.kill()
+assert session.status == SessionStatus.KILLED
+```
+
+## Sending Prompts
+
+Stream agent responses as typed events:
+
+```python
+async for event in session.send_message("Fix the failing test in test_auth.py"):
+    match event.event_type:
+        case StreamEventType.AGENT_TEXT:
+            print(event.text, end="")
+        case StreamEventType.TOOL_CALL:
+            print(f"\n[Tool: {event.tool_name}]")
+        case StreamEventType.TURN_ENDED:
+            print("\n--- Done ---")
+```
+
+Or get a single response without streaming:
+
+```python
+result = await session.send_message("What files are in /workspace?", stream=False)
+print(result.text)
+```
+
+## Running Commands
+
+Execute shell commands directly, bypassing the agent:
+
+```python
+result = await session.run_command("pytest tests/ -v")
+print(result.stdout)
+print(f"Exit code: {result.exit_code}")
+```
+
+## Killing a Session
+
+```python
+await session.kill()
+```
+
+If a git workspace is configured, `kill()` commits pending changes and pushes before destroying the sandbox.
+
+## Multiple Sessions
+
+HarnessBox supports multiple concurrent sessions:
+
+```python
+from harnessbox import HarnessBox, WorkspaceConfig
+from harnessbox.workspace import GitRepoConfig
+
+hb = HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    workspace_config=WorkspaceConfig(
+        git_repo_config=GitRepoConfig(
+            remote="https://github.com/org/repo.git",
+            base_branch="main",
+        ),
+    ),
+)
+
+auth_session = await hb.create_session(branch="feat/auth")
+ui_session = await hb.create_session(branch="feat/ui")
+
+# Work on both in parallel
+await auth_session.send_message("Implement OAuth flow", stream=False)
+await ui_session.send_message("Build the login page", stream=False)
+
+# Clean up all sessions
+await hb.kill()
+```
+
+## Context Manager
+
+The context manager is a no-op on enter and calls `kill()` on exit, ensuring all sessions are cleaned up:
+
+```python
+async with HarnessBox(
+    provider="e2b",
+    harness="claude-code",
+    workspace_config=WorkspaceConfig(),
+) as hb:
+    session = await hb.create_session()
+    await session.send_message("Hello", stream=False)
+# hb.kill() called automatically on exit — all sessions destroyed
+```
+
+## Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `session.id` | str | Unique session identifier |
+| `session.sandbox_id` | str | Provider VM identifier |
+| `session.branch` | str | Git branch this session operates on |
+| `session.status` | SessionStatus | Current status: `running`, `sleeping`, or `killed` |
+
+## Related
+
+- [Running Commands](commands.md) — Command execution details
+- [Security Policies](security.md) — Restricting agent permissions
+- [Streaming Events](streaming.md) — Event types and parsing
+- [Git Workspaces](workspaces.md) — Repository management
+- [Checkpoints](checkpoints.md) — Snapshot and restore

@@ -327,6 +327,24 @@ class E2BProvider:
             kwargs["path"] = path
         await self._sandbox.git.configure_user(name, email, **kwargs)
 
+    async def git_dangerously_authenticate(
+        self, username: str, password: str, *, host: str = "github.com"
+    ) -> None:
+        await self._sandbox.git.dangerously_authenticate(
+            username=username, password=password, host=host
+        )
+
+    async def git_create_branch(self, path: str, branch: str) -> None:
+        await self._sandbox.git.create_branch(path, branch)
+
+    async def git_set_config(
+        self, key: str, value: str, *, scope: str = "global", path: str | None = None
+    ) -> None:
+        kwargs: dict[str, Any] = {"scope": scope}
+        if path:
+            kwargs["path"] = path
+        await self._sandbox.git.set_config(key, value, **kwargs)
+
     # -- PTY (E2B-specific, not on base SandboxProvider protocol) --
 
     async def pty_create(

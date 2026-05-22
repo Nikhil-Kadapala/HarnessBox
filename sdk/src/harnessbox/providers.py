@@ -42,8 +42,13 @@ class SandboxProvider(Protocol):
         self,
         env_vars: dict[str, str] | None = None,
         timeout: int = 300,
+        snapshot_id: str | None = None,
     ) -> None:
-        """Create and start a new sandbox instance."""
+        """Create and start a new sandbox instance.
+
+        If snapshot_id is provided, the sandbox is created from a previously
+        saved snapshot instead of a template.
+        """
         ...
 
     async def kill(self) -> None:
@@ -158,6 +163,22 @@ class NativeGitCapable(Protocol):
 
     async def git_configure_user(self, name: str, email: str, *, path: str | None = None) -> None:
         """Configure git user identity for the repository at *path*."""
+        ...
+
+    async def git_dangerously_authenticate(
+        self, username: str, password: str, *, host: str = "github.com"
+    ) -> None:
+        """Store credentials in git credential helper inside the sandbox."""
+        ...
+
+    async def git_create_branch(self, path: str, branch: str) -> None:
+        """Create and switch to a new branch in the repository at *path*."""
+        ...
+
+    async def git_set_config(
+        self, key: str, value: str, *, scope: str = "global", path: str | None = None
+    ) -> None:
+        """Set a git configuration value."""
         ...
 
 

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from harnessbox.providers import CommandResult, NativeGitCapable, SandboxProvider
+from harnessbox.providers import CommandResult, SandboxProvider
 
 _log = logging.getLogger(__name__)
 
@@ -78,7 +78,6 @@ class GitRepoConfig:
         self._on_clone_start = on_clone_start
         self._on_clone_complete = on_clone_complete
         self._initial_sha: str | None = None
-        self._last_snapshot: str | None = None
         self.push_error: str | None = None
 
     def __repr__(self) -> str:
@@ -100,85 +99,41 @@ class GitRepoConfig:
     ) -> CommandResult:
         return await provider.run_command(f"git {cmd}", cwd=cwd)
 
-    def _authed_remote(self) -> str:
-        if self._auth_token and self.remote.startswith("https://"):
-            return self.remote.replace("https://", f"https://x-access-token:{self._auth_token}@")
-        return self.remote
-
-    def _clean_remote(self) -> str:
-        return self.remote
-
     async def inject(self, provider: SandboxProvider, workspace_root: str) -> None:
         """Clone the repo into workspace_root inside the sandbox."""
         inject_start = time.time()
         self._fire_event(self._on_clone_start, remote=self.remote, branch=self.branch)
 
-        # Determine clone target directory
         clone_target = (
             f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
         )
 
-        # Create clone directory if needed
-        mkdir_start = time.time()
         if self.clone_dir_name:
             result = await provider.run_command(f"mkdir -p {clone_target}")
             if result.exit_code != 0:
                 raise RuntimeError(f"Failed to create clone directory: {result.stderr}")
-        _log.info(f"git_mkdir took {time.time() - mkdir_start:.2f}s")
 
-        use_native = isinstance(provider, NativeGitCapable)
-        clone_start = time.time()
-
-        if use_native:
-            try:
-                await self._native_clone(provider, clone_target)
-                _log.info(f"git_clone_native took {time.time() - clone_start:.2f}s")
-                _log.info(f"git_inject_total took {time.time() - inject_start:.2f}s")
-                self._fire_event(
-                    self._on_clone_complete,
-                    remote=self.remote,
-                    branch=self.branch,
-                    success=True,
-                )
-                return
-            except Exception as e:
-                _log.info(f"git_clone_native failed after {time.time() - clone_start:.2f}s")
-                self._fire_event(
-                    self._on_clone_complete,
-                    remote=self.remote,
-                    branch=self.branch,
-                    success=False,
-                    error=str(e),
-                )
-                raise RuntimeError(f"git clone failed: {e}") from e
-
-        for attempt in range(2):
-            try:
-                await self._do_clone(provider, clone_target)
-                _log.info(f"git_clone_shell took {time.time() - clone_start:.2f}s")
-                _log.info(f"git_inject_total took {time.time() - inject_start:.2f}s")
-                self._fire_event(
-                    self._on_clone_complete,
-                    remote=self.remote,
-                    branch=self.branch,
-                    success=True,
-                )
-                return
-            except _CloneError as e:
-                if e.retryable and attempt == 0:
-                    continue
-                _log.info(f"git_clone_shell failed after {time.time() - clone_start:.2f}s")
-                self._fire_event(
-                    self._on_clone_complete,
-                    remote=self.remote,
-                    branch=self.branch,
-                    success=False,
-                    error=str(e),
-                )
-                raise RuntimeError(f"git clone failed: {e}") from e
+        try:
+            await self._native_clone(provider, clone_target)
+            _log.info(f"git_inject_total took {time.time() - inject_start:.2f}s")
+            self._fire_event(
+                self._on_clone_complete,
+                remote=self.remote,
+                branch=self.branch,
+                success=True,
+            )
+        except Exception as e:
+            self._fire_event(
+                self._on_clone_complete,
+                remote=self.remote,
+                branch=self.branch,
+                success=False,
+                error=str(e),
+            )
+            raise RuntimeError(f"git clone failed: {e}") from e
 
     async def _native_clone(self, provider: Any, workspace_root: str) -> None:
-        """Clone using provider's native git API (E2B)."""
+        """Clone using provider's native git API."""
         await provider.git_clone(
             self.remote,
             workspace_root,
@@ -187,189 +142,23 @@ class GitRepoConfig:
             username="x-access-token" if self._auth_token else None,
             password=self._auth_token,
         )
-        if hasattr(provider, "git_configure_user"):
-            await provider.git_configure_user(
-                "harnessbox", "harnessbox@noreply", path=workspace_root
-            )
-        await self._run_git(
-            provider, f"config --global safe.directory {workspace_root}", cwd=workspace_root
-        )
-        if self._auth_token:
-            await self._run_git(
-                provider,
-                f"remote set-url origin {self._clean_remote()}",
-                cwd=workspace_root,
-            )
-            cred_file = f"{workspace_root}/.git-credentials"
-            cred_url = self._clean_remote().replace(
-                "https://", f"https://x-access-token:{self._auth_token}@"
-            )
-            await provider.run_command(
-                f"echo '{cred_url}' > {cred_file} && chmod 600 {cred_file}",
-                cwd=workspace_root,
-            )
-            await self._run_git(
-                provider,
-                f"config credential.helper 'store --file {cred_file}'",
-                cwd=workspace_root,
-            )
-        if self.branch != self.base_branch:
-            await self._run_git(provider, f"checkout -b {self.branch}", cwd=workspace_root)
-        sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
-        if sha_result.exit_code == 0:
-            self._initial_sha = sha_result.stdout.strip()
-
-    async def _do_clone(self, provider: SandboxProvider, workspace_root: str) -> None:
-        result = await self._run_git(provider, "init", cwd=workspace_root)
-        if result.exit_code != 0:
-            raise _CloneError(f"git init failed: {result.stderr}", retryable=False)
-
-        result = await self._run_git(
-            provider,
-            f"remote add origin {self._authed_remote()}",
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            raise _CloneError(f"git remote add failed: {result.stderr}", retryable=False)
-
-        result = await self._run_git(
-            provider,
-            "config user.name harnessbox",
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            raise _CloneError(f"git config user.name failed: {result.stderr}", retryable=False)
-
-        result = await self._run_git(
-            provider,
-            "config user.email harnessbox@noreply",
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            raise _CloneError(f"git config user.email failed: {result.stderr}", retryable=False)
-
-        result = await self._run_git(
-            provider,
-            f"config --global safe.directory {workspace_root}",
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            raise _CloneError(f"git config safe.directory failed: {result.stderr}", retryable=False)
-
-        depth_flag = f"--depth {self.clone_depth}" if self.clone_depth else ""
-        result = await self._run_git(
-            provider,
-            f"fetch origin {self.base_branch} {depth_flag}".strip(),
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            retryable = not self._is_auth_or_notfound(result.stderr)
-            raise _CloneError(f"git fetch failed: {result.stderr}", retryable=retryable)
-
-        if self.branch != self.base_branch:
-            result = await self._run_git(
-                provider,
-                f"checkout -b {self.branch} origin/{self.base_branch}",
-                cwd=workspace_root,
-            )
-        else:
-            result = await self._run_git(
-                provider,
-                f"checkout -b {self.branch} origin/{self.branch}",
-                cwd=workspace_root,
-            )
-        if result.exit_code != 0:
-            raise _CloneError(f"git checkout failed: {result.stderr}", retryable=False)
-
-        result = await self._run_git(
-            provider,
-            f"remote set-url origin {self._clean_remote()}",
-            cwd=workspace_root,
-        )
-        if result.exit_code != 0:
-            raise _CloneError(f"git remote set-url failed: {result.stderr}", retryable=False)
+        await provider.git_configure_user("harnessbox", "harnessbox@noreply", path=workspace_root)
+        await provider.git_set_config("safe.directory", workspace_root, scope="global")
 
         if self._auth_token:
-            cred_file = f"{workspace_root}/.git-credentials"
-            cred_url = self._clean_remote().replace(
-                "https://", f"https://x-access-token:{self._auth_token}@"
+            await provider.git_dangerously_authenticate(
+                username="x-access-token", password=self._auth_token
             )
-            await provider.run_command(
-                f"echo '{cred_url}' > {cred_file} && chmod 600 {cred_file}",
-                cwd=workspace_root,
-            )
-            result = await self._run_git(
-                provider,
-                f"config credential.helper 'store --file {cred_file}'",
-                cwd=workspace_root,
-            )
-            if result.exit_code != 0:
-                raise _CloneError(
-                    f"git config credential.helper failed: {result.stderr}", retryable=False
-                )
+
+        if self.branch != self.base_branch:
+            await provider.git_create_branch(workspace_root, self.branch)
 
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:
             self._initial_sha = sha_result.stdout.strip()
-
-        lfs_result = await self._run_git(provider, "lfs ls-files 2>/dev/null", cwd=workspace_root)
-        if lfs_result.exit_code == 0 and lfs_result.stdout.strip():
-            pass
-
-        sub_result = await provider.run_command(
-            f"test -f {workspace_root}/.gitmodules && echo HAS_SUBMODULES || echo NONE",
-            cwd=workspace_root,
-        )
-        if "HAS_SUBMODULES" in sub_result.stdout:
-            pass
-
-    @staticmethod
-    def _is_auth_or_notfound(stderr: str) -> bool:
-        indicators = ["401", "403", "404", "Authentication failed", "not found", "does not exist"]
-        return any(ind.lower() in stderr.lower() for ind in indicators)
 
     async def extract(self, provider: SandboxProvider, workspace_root: str) -> None:
         """No-op — system snapshots preserve .git state for user inspection."""
-
-    async def create_checkpoint(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
-        """Create a named workspace checkpoint as a lightweight git tag."""
-        clone_target = (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
-        await self._run_git(provider, "add -A", cwd=clone_target)
-        await self._run_git(
-            provider,
-            f'commit --allow-empty -m "snapshot: {name}"',
-            cwd=clone_target,
-        )
-        tag_result = await self._run_git(provider, f"tag harnessbox-snap-{name}", cwd=clone_target)
-        if tag_result.exit_code != 0:
-            raise RuntimeError(f"Failed to create snapshot {name!r}: {tag_result.stderr}")
-        self._last_snapshot = name
-
-    async def restore_checkpoint(
-        self, provider: SandboxProvider, workspace_root: str, name: str
-    ) -> None:
-        """Restore the workspace to a named checkpoint."""
-        clone_target = (
-            f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
-        )
-        result = await self._run_git(
-            provider, f"checkout harnessbox-snap-{name} -- .", cwd=clone_target
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(f"Failed to restore snapshot {name!r}: {result.stderr}")
-        self._last_snapshot = name
-
-    async def snapshot(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Deprecated alias for create_checkpoint()."""
-        await self.create_checkpoint(provider, workspace_root, name)
-
-    async def restore(self, provider: SandboxProvider, workspace_root: str, name: str) -> None:
-        """Deprecated alias for restore_checkpoint()."""
-        await self.restore_checkpoint(provider, workspace_root, name)
 
     async def create_pr(
         self,
@@ -473,8 +262,6 @@ class GitRepoConfig:
         return f"{workspace_root}/{self.clone_dir_name}" if self.clone_dir_name else workspace_root
 
     def _diff_ref(self) -> str:
-        if self._last_snapshot:
-            return f"harnessbox-snap-{self._last_snapshot}"
         if self._initial_sha:
             return self._initial_sha
         return "HEAD"
@@ -518,13 +305,3 @@ def _parse_shortstat(output: str) -> dict[str, int]:
         elif "deletion" in part:
             del_ = int(part.split()[0])
     return {"insertions": ins, "deletions": del_}
-
-
-class _CloneError(Exception):
-    def __init__(self, message: str, *, retryable: bool) -> None:
-        super().__init__(message)
-        self.retryable = retryable
-
-
-# Backward-compat alias (deprecated — use GitRepoConfig)
-GitWorkspace = GitRepoConfig

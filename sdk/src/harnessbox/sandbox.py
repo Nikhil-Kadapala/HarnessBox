@@ -83,6 +83,7 @@ class Sandbox:
         session_lock: asyncio.Lock | None = None,
         storage: Any = None,  # StorageBackend | None (TYPE_CHECKING import to avoid circular)
         session_id: str = "",
+        snapshot_id: str | None = None,
     ) -> None:
         """Create a sandbox for running AI coding agents.
 
@@ -138,6 +139,7 @@ class Sandbox:
         self._event_buffer = EventBuffer(storage=storage, session_id=session_id)
         self._session_timeout = session_timeout
         self._session_lock = session_lock
+        self._snapshot_id = snapshot_id
 
         # Workspace mount collaborator (resolvers + git facade)
         self._mount = WorkspaceMount(
@@ -261,7 +263,7 @@ class Sandbox:
         """
         return self._runtime.cost_metrics
 
-    # Backward-compatible attribute access for tests that poke internals
+    # Internal attribute delegation to collaborators
     @property
     def _state(self) -> RuntimeState:
         return self._session.state
@@ -315,14 +317,6 @@ class Sandbox:
         self._mount.cwd = value
 
     @property
-    def _plugin_dirs(self) -> list[str]:
-        return self._mount.plugin_dirs
-
-    @_plugin_dirs.setter
-    def _plugin_dirs(self, value: list[str]) -> None:
-        self._mount.plugin_dirs = value
-
-    @property
     def _workspace(self) -> Workspace | None:
         return self._mount.workspace
 
@@ -374,6 +368,7 @@ class Sandbox:
             provider=self._provider,
             security_policy=self._security_policy,
             timeout=self._timeout,
+            snapshot_id=self._snapshot_id,
         )
 
     def _build_pipeline(self) -> SetupPipeline:
@@ -624,22 +619,6 @@ class Sandbox:
     async def commit_count(self) -> int:
         """Return number of commits since clone."""
         return await self._mount.commit_count(self._provider)
-
-    async def create_workspace_checkpoint(self, name: str) -> None:
-        """Create a named git-backed workspace checkpoint."""
-        await self._mount.create_checkpoint(self._provider, name)
-
-    async def restore_workspace_checkpoint(self, name: str) -> None:
-        """Restore the workspace to a named checkpoint."""
-        await self._mount.restore_checkpoint(self._provider, name)
-
-    async def snapshot_workspace(self, name: str) -> None:
-        """Deprecated alias for create_workspace_checkpoint()."""
-        await self.create_workspace_checkpoint(name)
-
-    async def restore_workspace(self, name: str) -> None:
-        """Deprecated alias for restore_workspace_checkpoint()."""
-        await self.restore_workspace_checkpoint(name)
 
     # ------------------------------------------------------------------
     # Context manager

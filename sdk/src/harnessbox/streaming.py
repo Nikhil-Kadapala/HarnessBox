@@ -188,11 +188,6 @@ class UniversalEvent:
         return d
 
 
-# Backward-compatible aliases
-AgentStreamEvent = UniversalEvent
-StreamEventType = EventType
-
-
 # ---------------------------------------------------------------------------
 # Stream parser — Claude Code NDJSON → UniversalEvent
 # ---------------------------------------------------------------------------
@@ -809,16 +804,12 @@ class StreamParser:
         return self._state.session_id
 
     @property
-    def _tool_map(self) -> dict[str, _ToolInfo]:
-        """Backward-compatible access to tool_map for tests.
-
-        Returns a shallow copy to prevent accidental mutation of
-        ParserState internals. Use the setter to replace the entire map.
-        """
+    def tool_map(self) -> dict[str, _ToolInfo]:
+        """Current tool call state. Returns a shallow copy."""
         return dict(self._state.tool_map)
 
-    @_tool_map.setter
-    def _tool_map(self, value: dict[str, _ToolInfo]) -> None:
+    @tool_map.setter
+    def tool_map(self, value: dict[str, _ToolInfo]) -> None:
         self._state = replace(self._state, tool_map=value)
 
     def parse(self, line: str) -> UniversalEvent | None:

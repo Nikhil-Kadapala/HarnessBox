@@ -171,3 +171,27 @@ class TestOpenCodeConfig:
     def test_config_dir(self):
         config = get_harness_type("opencode")
         assert config.config_dir == ".opencode"
+
+
+class TestBuildSessionCommand:
+    def test_without_session_id(self) -> None:
+        cfg = get_harness_type("claude-code")
+        cmd = cfg.build_session_command(skip_permissions=True)
+        assert "--resume" not in cmd
+        assert "--input-format" in cmd
+        assert "--dangerously-skip-permissions" in cmd
+
+    def test_with_session_id_includes_resume_flag(self) -> None:
+        cfg = get_harness_type("claude-code")
+        cmd = cfg.build_session_command(skip_permissions=True, session_id="abc-123")
+        assert "--resume abc-123" in cmd
+        parts = cmd.split()
+        resume_idx = parts.index("--resume")
+        input_idx = parts.index("--input-format")
+        assert resume_idx < input_idx
+
+    def test_session_id_none_same_as_omitted(self) -> None:
+        cfg = get_harness_type("claude-code")
+        cmd_none = cfg.build_session_command(skip_permissions=True, session_id=None)
+        cmd_omit = cfg.build_session_command(skip_permissions=True)
+        assert cmd_none == cmd_omit
