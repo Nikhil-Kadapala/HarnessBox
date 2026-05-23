@@ -83,7 +83,7 @@ export async function refreshPRStatus(sessionId: string): Promise<SessionCard> {
     );
     return transformSessionCard(data);
   } catch {
-    return transformSessionCard({});
+    return transformSessionCard({ session_id: sessionId, status: "error" });
   }
 }
 

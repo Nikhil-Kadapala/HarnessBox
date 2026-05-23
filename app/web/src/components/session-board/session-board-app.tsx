@@ -432,7 +432,7 @@ function CIStatusDot({ status }: { status: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const n = status.toLowerCase()
+  const n = (status ?? "unknown").toLowerCase()
   const variant =
     n.includes("fail") || n.includes("error")
       ? "destructive"
