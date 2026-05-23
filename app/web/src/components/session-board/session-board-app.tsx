@@ -432,7 +432,8 @@ function CIStatusDot({ status }: { status: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const n = (status ?? "unknown").toLowerCase()
+  const s = status ?? "unknown"
+  const n = s.toLowerCase()
   const variant =
     n.includes("fail") || n.includes("error")
       ? "destructive"
@@ -442,7 +443,7 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <Badge variant={variant} className="shrink-0 text-[10px]">
-      {formatStatusLabel(status)}
+      {formatStatusLabel(s)}
     </Badge>
   )
 }
