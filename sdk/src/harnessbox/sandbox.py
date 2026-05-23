@@ -84,6 +84,7 @@ class Sandbox:
         storage: Any = None,  # StorageBackend | None (TYPE_CHECKING import to avoid circular)
         session_id: str = "",
         snapshot_id: str | None = None,
+        initial_sequence: int = 0,
     ) -> None:
         """Create a sandbox for running AI coding agents.
 
@@ -136,7 +137,9 @@ class Sandbox:
         self._timeout = timeout
         self._event_handler = event_handler
         self._skip_permissions = skip_permissions
-        self._event_buffer = EventBuffer(storage=storage, session_id=session_id)
+        self._event_buffer = EventBuffer(
+            storage=storage, session_id=session_id, initial_sequence=initial_sequence
+        )
         self._session_timeout = session_timeout
         self._session_lock = session_lock
         self._snapshot_id = snapshot_id

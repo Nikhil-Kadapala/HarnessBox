@@ -1,0 +1,421 @@
+openapi: 3.0.3
+info:
+  title: HarnessBox REST API
+  description: |
+    Formal OpenAPI specification for the HarnessBox server API.
+    This API provides primitives to create and manage secure agent sandboxes, execute prompts, and stream real-time execution events.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+paths:
+  /v1/workspaces:
+    post:
+      summary: Create session
+      description: Create a new sandbox workspace session and optionally clone a git repository.
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+
+    get:
+      summary: List sessions
+      description: Retrieve a list of all active and inactive workspace sessions.
+      operationId: listSessions
+      responses:
+        '200':
+          description: List of sessions retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionResponse'
+
+  /v1/workspaces/{session_id}:
+    get:
+      summary: Get session details
+      description: Retrieve metadata and state for a specific workspace session.
+      operationId: getSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: Unique identifier of the session.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+
+    delete:
+      summary: Destroy session
+      description: Terminate a workspace session, kill the sandbox container, and clean up resources.
+      operationId: destroySession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: Unique identifier of the session.
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Session destroyed successfully
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+
+  /v1/workspaces/{session_id}/prompt:
+    post:
+      summary: Send prompt to agent
+      description: |
+        Send a text prompt along with optional base64-encoded file attachments to the agent.
+        Returns a Server-Sent Events (SSE) stream of real-time events.
+      operationId: promptSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: Unique identifier of the session.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptRequest'
+      responses:
+        '200':
+          description: SSE stream of events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Event stream. Individual events are JSON-encoded strings matching the UniversalEvent schema, or `[DONE]` to signify end of stream.
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+
+components:
+  schemas:
+    WorkspaceRequest:
+      type: object
+      description: Configuration for git repository workspace injection.
+      required:
+        - remote
+      properties:
+        remote:
+          type: string
+          description: Git remote URL to clone.
+        branch:
+          type: string
+          default: main
+          description: Git branch name to check out or create.
+        auth_token:
+          type: string
+          nullable: true
+          description: Optional git authentication token (e.g. GitHub PAT).
+        clone_depth:
+          type: integer
+          default: 1
+          description: Clone history depth.
+        clone_dir_name:
+          type: string
+          nullable: true
+          description: Optional subdirectory name to clone into.
+
+    SecurityPolicyRequest:
+      type: object
+      description: Sandbox security policy settings.
+      properties:
+        denied_tools:
+          type: array
+          items:
+            type: string
+          description: List of tool names that the agent is blocked from running.
+        denied_bash_patterns:
+          type: array
+          items:
+            type: string
+          description: Regexp patterns of shell commands that will be blocked.
+        deny_network:
+          type: boolean
+          default: false
+          description: Whether to deny the agent network access.
+        credential_guards:
+          oneOf:
+            - type: boolean
+            - type: array
+              items:
+                type: string
+          default: true
+          description: Boolean to enable all guards, or list of credential categories to protect.
+
+    CreateSessionRequest:
+      type: object
+      description: Request body parameters for creating a new workspace session.
+      properties:
+        provider:
+          type: string
+          default: e2b
+          description: Sandbox provider (e.g., e2b, mock).
+        api_key:
+          type: string
+          nullable: true
+          description: Optional provider API key.
+        harness:
+          type: string
+          default: claude-code
+          description: Sandbox harness configuration.
+        model:
+          type: string
+          nullable: true
+          description: LLM model override for the agent.
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          description: Custom environment variables to inject into the sandbox.
+        setup_script:
+          type: string
+          nullable: true
+          description: Shell script to run immediately after setup.
+        cwd:
+          type: string
+          nullable: true
+          description: Working directory inside the sandbox.
+        sandbox_timeout:
+          type: integer
+          default: 1800
+          description: Maximum sandbox lifespan in seconds.
+        session_timeout:
+          type: integer
+          default: 900
+          description: Agent activity timeout in seconds.
+        skip_permissions:
+          type: boolean
+          default: false
+          description: Bypass terminal permissions verification.
+        template:
+          type: string
+          nullable: true
+          description: Sandbox VM template ID/alias.
+        session_id:
+          type: string
+          nullable: true
+          description: Explicitly requested session ID.
+        security_policy:
+          $ref: '#/components/schemas/SecurityPolicyRequest'
+        workspace:
+          $ref: '#/components/schemas/WorkspaceRequest'
+
+    SessionResponse:
+      type: object
+      description: Metadata and state details of a session.
+      required:
+        - session_id
+        - harness
+        - runtime_state
+        - workflow_state
+        - created_at
+        - total_cost_usd
+      properties:
+        session_id:
+          type: string
+        harness:
+          type: string
+        runtime_state:
+          type: string
+          description: Sandbox runtime state (e.g., active, paused, ended).
+        workflow_state:
+          type: string
+          description: Workspace workflow state (e.g., backlog, starting, streaming, failed).
+        created_at:
+          type: string
+          format: date-time
+        workspace_name:
+          type: string
+          nullable: true
+        branch:
+          type: string
+          nullable: true
+        base_branch:
+          type: string
+          nullable: true
+        remote:
+          type: string
+          nullable: true
+        pr_url:
+          type: string
+          nullable: true
+        pr_number:
+          type: integer
+          nullable: true
+        ci_status:
+          type: string
+          nullable: true
+        total_cost_usd:
+          type: number
+          format: float
+          default: 0.0
+
+    AttachmentPayload:
+      type: object
+      required:
+        - filename
+        - data_b64
+      properties:
+        filename:
+          type: string
+          description: Name of the file.
+        mime_type:
+          type: string
+          default: application/octet-stream
+          description: Mime type of the attachment.
+        data_b64:
+          type: string
+          maxLength: 14000000
+          description: Base64-encoded file content.
+
+    PromptRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Prompt string for the agent.
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentPayload'
+
+    ContentPart:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          description: Type of content block (e.g., text, tool_use).
+        text:
+          type: string
+        tool_name:
+          type: string
+        tool_input:
+          type: string
+        call_id:
+          type: string
+        file_path:
+          type: string
+        file_action:
+          type: string
+
+    UniversalEvent:
+      type: object
+      description: Universal event envelope structure aligning with OpenConductor format.
+      required:
+        - type
+        - timestamp
+        - message
+      properties:
+        type:
+          type: string
+          description: The event type identifier (e.g., system.init, item.delta, etc.).
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of event generation.
+        message:
+          type: object
+          description: Event-specific payload fields.
+          required:
+            - event_id
+            - sequence
+            - session_id
+          properties:
+            event_id:
+              type: string
+              description: Unique event identifier.
+            sequence:
+              type: integer
+              description: Cumulative sequence index of this event in the session.
+            session_id:
+              type: string
+              description: Identifier of the parent session.
+            item_id:
+              type: string
+              nullable: true
+            item_kind:
+              type: string
+              nullable: true
+            item_status:
+              type: string
+              nullable: true
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/ContentPart'
+            delta:
+              type: string
+              nullable: true
+            tool_kind:
+              type: string
+              nullable: true
+            cost_usd:
+              type: number
+              format: float
+              nullable: true
+            duration_ms:
+              type: integer
+              nullable: true
+            error_message:
+              type: string
+              nullable: true
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Extensible key-value metadata.
+
+    HTTPError:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error detail message.

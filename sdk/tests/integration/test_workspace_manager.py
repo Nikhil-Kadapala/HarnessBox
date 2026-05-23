@@ -379,9 +379,12 @@ class TestWorkspacePooling:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             instance = MockSandbox.return_value
             instance.resume = AsyncMock()
+            instance.event_buffer.hydrate = AsyncMock()
+            instance.sandbox_id = "storage-sandbox"
 
             # Pool hit from storage: should hydrate and resume
             result = await mgr.get_or_create_workspace(
@@ -524,6 +527,7 @@ class TestConnectSandbox:
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
             mock_sandbox.sandbox_id = "live-sandbox-42"
+            mock_sandbox.event_buffer.hydrate = AsyncMock()
 
             await mgr._connect_sandbox("w-revive")
 
@@ -590,6 +594,7 @@ class TestConnectSandbox:
             mock_provider._sandbox_id = "new-sandbox-99"
             mock_sandbox._provider = mock_provider
             mock_sandbox.sandbox_id = "new-sandbox-99"
+            mock_sandbox.event_buffer.hydrate = AsyncMock()
 
             await mgr._connect_sandbox("w-expired")
 
@@ -792,6 +797,7 @@ class TestConnectSandbox:
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
             mock_sandbox.sandbox_id = "sb-cfg"
+            mock_sandbox.event_buffer.hydrate = AsyncMock()
 
             await mgr._connect_sandbox("w-cfg")
 
@@ -871,6 +877,7 @@ class TestConnectSandbox:
             mock_sandbox.sandbox_id = "prompt-sandbox"
             mock_sandbox._event_buffer = None
             mock_sandbox._cwd = "/workspace"
+            mock_sandbox.event_buffer.hydrate = AsyncMock()
 
             mock_agent = MockAgentMgr.return_value
             mock_agent.send_message = mock_send_message

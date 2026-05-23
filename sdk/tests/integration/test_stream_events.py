@@ -27,10 +27,14 @@ class TestUniversalEvent:
             item_kind=ItemKind.MESSAGE,
         )
         d = e.to_dict()
-        assert d["event_type"] == "item.delta"
-        assert d["delta"] == "hello"
-        assert d["item_kind"] == "message"
-        assert "cost_usd" not in d
+        assert d["type"] == "item.delta"
+        assert d["timestamp"] == "2026-01-01T00:00:00Z"
+        assert d["message"]["event_id"] == "e-1"
+        assert d["message"]["sequence"] == 1
+        assert d["message"]["session_id"] == "s-1"
+        assert d["message"]["delta"] == "hello"
+        assert d["message"]["item_kind"] == "message"
+        assert "cost_usd" not in d["message"]
 
     def test_sequence_increments(self) -> None:
         p = StreamParser()

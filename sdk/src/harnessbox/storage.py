@@ -201,6 +201,22 @@ class StorageBackend(Protocol):
         ...
         yield {}  # Type hint for AsyncGenerator
 
+    # -- Sequence tracking --
+
+    async def get_max_sequence(self, workspace_id: str) -> int:
+        """Return the highest event sequence number for a workspace.
+
+        Used to seed EventBuffer.initial_sequence on reconnect so that new
+        events continue from the correct point without gaps or duplicates.
+
+        Args:
+            workspace_id: Workspace whose max sequence to retrieve.
+
+        Returns:
+            The maximum sequence number, or 0 if no events exist.
+        """
+        ...
+
     # -- Cost history --
 
     async def get_cost_history(
