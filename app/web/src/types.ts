@@ -1,21 +1,23 @@
 // --- Event types (from SDK streaming.py) ---
 
 export interface UniversalEvent {
-  event_id: string;
-  sequence: number;
+  type: string;
   timestamp: string;
-  session_id: string;
-  event_type: string;
-  item_id?: string;
-  item_kind?: string;
-  item_status?: string;
-  content?: ContentPart[];
-  delta?: string;
-  tool_kind?: string;
-  cost_usd?: number;
-  duration_ms?: number;
-  error_message?: string;
-  metadata?: Record<string, unknown>;
+  message: {
+    event_id: string;
+    sequence: number;
+    session_id: string;
+    item_id?: string;
+    item_kind?: string;
+    item_status?: string;
+    content?: ContentPart[];
+    delta?: string;
+    tool_kind?: string;
+    cost_usd?: number;
+    duration_ms?: number;
+    error_message?: string;
+    metadata?: Record<string, unknown>;
+  };
 }
 
 export interface ContentPart {

@@ -156,36 +156,38 @@ class UniversalEvent:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the event to a JSON-compatible dictionary."""
-        d: dict[str, Any] = {
+        msg: dict[str, Any] = {
             "event_id": self.event_id,
             "sequence": self.sequence,
-            "timestamp": self.timestamp,
             "session_id": self.session_id,
-            "event_type": self.event_type.value,
         }
         if self.item_id is not None:
-            d["item_id"] = self.item_id
+            msg["item_id"] = self.item_id
         if self.item_kind is not None:
-            d["item_kind"] = self.item_kind.value
+            msg["item_kind"] = self.item_kind.value
         if self.item_status is not None:
-            d["item_status"] = self.item_status.value
+            msg["item_status"] = self.item_status.value
         if self.content:
-            d["content"] = [
+            msg["content"] = [
                 {k: v for k, v in c.__dict__.items() if v is not None} for c in self.content
             ]
         if self.delta is not None:
-            d["delta"] = self.delta
+            msg["delta"] = self.delta
         if self.tool_kind is not None:
-            d["tool_kind"] = self.tool_kind.value
+            msg["tool_kind"] = self.tool_kind.value
         if self.cost_usd is not None:
-            d["cost_usd"] = self.cost_usd
+            msg["cost_usd"] = self.cost_usd
         if self.duration_ms is not None:
-            d["duration_ms"] = self.duration_ms
+            msg["duration_ms"] = self.duration_ms
         if self.error_message is not None:
-            d["error_message"] = self.error_message
+            msg["error_message"] = self.error_message
         if self.metadata:
-            d["metadata"] = self.metadata
-        return d
+            msg["metadata"] = self.metadata
+        return {
+            "type": self.event_type.value,
+            "timestamp": self.timestamp,
+            "message": msg,
+        }
 
 
 # ---------------------------------------------------------------------------
