@@ -138,6 +138,7 @@ class SandboxSession:
                 await self._stop_agent()
             except Exception:
                 pass
+        await self._event_buffer.close()
         await self.emit_event(EventType.SESSION_END, action="kill")
         try:
             await self._provider.kill()
@@ -145,10 +146,17 @@ class SandboxSession:
             self._state = RuntimeState.DEAD
 
     async def pause(self) -> str:
-        """Pause the sandbox, preserving state. Returns sandbox_id."""
+        """Pause the sandbox, preserving state. Returns sandbox_id.
+
+        Flushes the event buffer before pausing to guarantee no buffered
+        events are lost during the suspend cycle.
+        """
         self.transition(RuntimeState.PAUSED)
-        sandbox_id = await self._provider.pause()
-        self._paused_sandbox_id = sandbox_id
+        try:
+            await self._event_buffer.close()
+        finally:
+            sandbox_id = await self._provider.pause()
+            self._paused_sandbox_id = sandbox_id
         return sandbox_id
 
     async def resume(self, sandbox_id: str) -> None:

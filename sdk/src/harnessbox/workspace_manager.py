@@ -691,26 +691,13 @@ class WorkspaceManager:
         return await self.create_workspace(config, workspace_id=workspace_id)
 
     async def _hydrate_workspace(self, record: dict[str, Any]) -> WorkspaceInstance:
-        """Recreate WorkspaceInstance from storage record.
+        """Recreate WorkspaceInstance from storage record with lazy initialization.
 
-        Note: Does NOT call setup() — sandbox already exists, will resume on demand.
+        Returns a WorkspaceInstance with sandbox_conn=None and agent_manager=None.
+        The actual sandbox connection is deferred to _ensure_sandbox() → _connect_sandbox()
+        which is called on first use. This prevents invalid state transitions and avoids
+        eager instantiation of provider connections for workspaces that may never be resumed.
         """
-        # Parse config_json
-        config_dict = json.loads(record.get("config_json", "{}"))
-
-        sandbox = Sandbox(
-            client=record["provider"],
-            harness=record["harness"],
-            model=config_dict.get("model"),
-            timeout=config_dict.get("timeout", 300),
-            skip_permissions=config_dict.get("skip_permissions", False),
-            template=config_dict.get("template"),
-        )
-        # IMPORTANT: Do not call sandbox.setup() — sandbox already exists
-
-        # Create AgentManager
-        agent_mgr = AgentManager(sandbox)
-
         return WorkspaceInstance(
             workspace_id=record["workspace_id"],
             remote=record.get("remote", ""),
@@ -723,8 +710,8 @@ class WorkspaceManager:
             created_at=record["created_at"],
             last_active=record.get("last_active", record["created_at"]),
             harness=record["harness"],
-            sandbox_conn=sandbox,
-            agent_manager=agent_mgr,
+            sandbox_conn=None,
+            agent_manager=None,
             workspace_name=record.get("workspace_name"),
             base_branch=record.get("base_branch"),
             pr_url=record.get("pr_url"),
@@ -839,6 +826,8 @@ class WorkspaceManager:
                     "Set E2B_API_KEY env var or configure ~/.e2b/config.json."
                 )
 
+            initial_sequence = await self._storage.get_max_sequence(workspace_id)
+
             sandbox = Sandbox(
                 client=record["provider"],
                 api_key=api_key,
@@ -851,6 +840,7 @@ class WorkspaceManager:
                 session_lock=self._locks[workspace_id],
                 storage=self._storage,
                 session_id=workspace_id,
+                initial_sequence=initial_sequence,
             )
 
             provider_sandbox_id = info.provider_sandbox_id or record.get("provider_sandbox_id")
@@ -890,6 +880,8 @@ class WorkspaceManager:
                     f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
                     "Cannot reconnect without a way to reach the sandbox."
                 )
+
+            await sandbox.event_buffer.hydrate()
 
             agent_mgr = AgentManager(sandbox)
 

@@ -21,15 +21,52 @@ import logging
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator
-from dataclasses import asdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from harnessbox.streaming import UniversalEvent
+from harnessbox.streaming import (
+    ContentPart,
+    EventType,
+    ItemKind,
+    ItemStatus,
+    ToolKind,
+    UniversalEvent,
+)
 
 if TYPE_CHECKING:
     from harnessbox.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
+
+
+def deserialize_event(data: dict[str, Any]) -> UniversalEvent:
+    """Rebuild a UniversalEvent from a stored JSON dict.
+
+    The dict is expected to match the output of ``UniversalEvent.to_dict()``
+    (top-level keys: type, timestamp, message).
+    """
+    msg = data.get("message", {})
+    content_parts: tuple[ContentPart, ...] = ()
+    raw_content = msg.get("content")
+    if raw_content and isinstance(raw_content, list):
+        content_parts = tuple(ContentPart(**part) for part in raw_content)
+
+    return UniversalEvent(
+        event_id=msg.get("event_id", ""),
+        sequence=msg.get("sequence", 0),
+        timestamp=data.get("timestamp", ""),
+        session_id=msg.get("session_id", ""),
+        event_type=EventType(data["type"]),
+        item_id=msg.get("item_id"),
+        item_kind=ItemKind(msg["item_kind"]) if msg.get("item_kind") else None,
+        item_status=ItemStatus(msg["item_status"]) if msg.get("item_status") else None,
+        content=content_parts,
+        delta=msg.get("delta"),
+        tool_kind=ToolKind(msg["tool_kind"]) if msg.get("tool_kind") else None,
+        cost_usd=msg.get("cost_usd"),
+        duration_ms=msg.get("duration_ms"),
+        error_message=msg.get("error_message"),
+        metadata=msg.get("metadata", {}),
+    )
 
 
 class EventBuffer:
@@ -199,12 +236,7 @@ class EventBuffer:
             try:
                 event_records = []
                 for event in batch:
-                    event_dict = asdict(event)
-                    # asdict() recursively converts nested dataclasses (ContentPart)
-                    # into dicts and tuples into lists — no further conversion needed.
-                    if "content" in event_dict and event_dict["content"]:
-                        event_dict["content"] = list(event_dict["content"])
-
+                    event_dict = event.to_dict()
                     event_records.append(
                         {
                             "event_id": event.event_id,
@@ -255,3 +287,36 @@ class EventBuffer:
             except asyncio.QueueFull:
                 pass
         self._subscribers.clear()
+
+    async def hydrate(self) -> None:
+        """Load recent events from storage into the ring buffer.
+
+        Called on reconnect to fill the in-memory ring so that SSE clients
+        resuming with a Last-Event-ID can replay without gaps. Also updates
+        the internal sequence counter to the maximum stored sequence.
+
+        No-op if storage is not configured or session_id is empty.
+        """
+        if not self._storage or not self._session_id:
+            return
+
+        events_loaded = 0
+        async for record in self._storage.get_events(
+            self._session_id, after_sequence=0, limit=self.RING_SIZE
+        ):
+            event_json = record.get("event_json", "")
+            try:
+                event_data = json.loads(event_json) if isinstance(event_json, str) else event_json
+                event = deserialize_event(event_data)
+                self._ring.append(event)
+                if event.sequence > self._sequence:
+                    self._sequence = event.sequence
+                events_loaded += 1
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.warning(f"Skipping malformed event during hydration: {e}")
+
+        if events_loaded:
+            logger.info(
+                f"Hydrated {events_loaded} events for session {self._session_id}, "
+                f"sequence at {self._sequence}"
+            )

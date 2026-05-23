@@ -44,7 +44,7 @@ class SQLiteBackend:
         self.max_events = max_events_per_workspace
 
         self._conn: sqlite3.Connection | None = None
-        self._write_lock = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Create database file and run migrations. Idempotent."""
@@ -57,6 +57,8 @@ class SQLiteBackend:
         conn = sqlite3.connect(str(self.path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -70,7 +72,7 @@ class SQLiteBackend:
     # -- Workspace CRUD --
 
     async def save_workspace(self, workspace_record: dict[str, Any]) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._save_workspace_sync, workspace_record)
 
     def _save_workspace_sync(self, record: dict[str, Any]) -> None:
@@ -114,7 +116,8 @@ class SQLiteBackend:
             ) from e
 
     async def get_workspace(self, workspace_id: str) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._get_workspace_sync, workspace_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._get_workspace_sync, workspace_id)
 
     def _get_workspace_sync(self, workspace_id: str) -> dict[str, Any] | None:
         if self._conn is None:
@@ -135,9 +138,16 @@ class SQLiteBackend:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(
-            self._list_workspaces_sync, runtime_state, workflow_state, remote, branch, limit, offset
-        )
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._list_workspaces_sync,
+                runtime_state,
+                workflow_state,
+                remote,
+                branch,
+                limit,
+                offset,
+            )
 
     def _list_workspaces_sync(
         self,
@@ -176,7 +186,7 @@ class SQLiteBackend:
         return [dict(row) for row in cursor.fetchall()]
 
     async def update_workspace(self, workspace_id: str, **fields: Any) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._update_workspace_sync, workspace_id, fields)
 
     def _update_workspace_sync(self, workspace_id: str, fields: dict[str, Any]) -> None:
@@ -193,7 +203,7 @@ class SQLiteBackend:
             raise KeyError(f"Workspace {workspace_id} not found")
 
     async def delete_workspace(self, workspace_id: str) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._delete_workspace_sync, workspace_id)
 
     def _delete_workspace_sync(self, workspace_id: str) -> None:
@@ -205,7 +215,7 @@ class SQLiteBackend:
     # -- Conversation CRUD --
 
     async def save_conversation(self, conversation_record: dict[str, Any]) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._save_conversation_sync, conversation_record)
 
     def _save_conversation_sync(self, record: dict[str, Any]) -> None:
@@ -231,7 +241,8 @@ class SQLiteBackend:
             raise KeyError(f"Conversation {record['conversation_id']} already exists") from e
 
     async def get_conversations(self, workspace_id: str) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._get_conversations_sync, workspace_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._get_conversations_sync, workspace_id)
 
     def _get_conversations_sync(self, workspace_id: str) -> list[dict[str, Any]]:
         if self._conn is None:
@@ -243,7 +254,7 @@ class SQLiteBackend:
         return [dict(row) for row in cursor.fetchall()]
 
     async def update_conversation(self, conversation_id: str, **fields: Any) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._update_conversation_sync, conversation_id, fields)
 
     def _update_conversation_sync(self, conversation_id: str, fields: dict[str, Any]) -> None:
@@ -262,7 +273,7 @@ class SQLiteBackend:
     # -- Event persistence --
 
     async def append_events(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
-        async with self._write_lock:
+        async with self._lock:
             await asyncio.to_thread(self._write_events_sync, workspace_id, events)
 
     def _write_events_sync(self, workspace_id: str, events: list[dict[str, Any]]) -> None:
@@ -337,9 +348,10 @@ class SQLiteBackend:
         offset = 0
         fetch_size = 100
         while True:
-            batch = await asyncio.to_thread(
-                self._get_events_batch_sync, workspace_id, after_sequence, fetch_size, offset
-            )
+            async with self._lock:
+                batch = await asyncio.to_thread(
+                    self._get_events_batch_sync, workspace_id, after_sequence, fetch_size, offset
+                )
             if not batch:
                 break
             for event in batch:
@@ -368,12 +380,29 @@ class SQLiteBackend:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    # -- Sequence tracking --
+
+    async def get_max_sequence(self, workspace_id: str) -> int:
+        """Return the highest event sequence number for a workspace, or 0."""
+        async with self._lock:
+            return await asyncio.to_thread(self._get_max_sequence_sync, workspace_id)
+
+    def _get_max_sequence_sync(self, workspace_id: str) -> int:
+        if self._conn is None:
+            return 0
+        cursor = self._conn.execute(
+            "SELECT MAX(sequence) FROM events WHERE workspace_id = ?", (workspace_id,)
+        )
+        row = cursor.fetchone()
+        return row[0] or 0
+
     # -- Cost history (queries events table) --
 
     async def get_cost_history(
         self, workspace_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._get_cost_history_sync, workspace_id, limit)
+        async with self._lock:
+            return await asyncio.to_thread(self._get_cost_history_sync, workspace_id, limit)
 
     def _get_cost_history_sync(self, workspace_id: str, limit: int) -> list[dict[str, Any]]:
         if self._conn is None:

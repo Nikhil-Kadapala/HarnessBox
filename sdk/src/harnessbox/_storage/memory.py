@@ -161,6 +161,15 @@ class MemoryBackend:
         for event in events:
             yield event
 
+    # -- Sequence tracking --
+
+    async def get_max_sequence(self, workspace_id: str) -> int:
+        """Return the highest event sequence number for a workspace, or 0."""
+        events = self._events.get(workspace_id, [])
+        if not events:
+            return 0
+        return int(max(e.get("sequence", 0) for e in events))
+
     # -- Cost history --
 
     async def get_cost_history(
