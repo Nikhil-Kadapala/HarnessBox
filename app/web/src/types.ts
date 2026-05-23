@@ -1,4 +1,4 @@
-// --- Event types (from SDK streaming.py) ---
+// --- Event types (from SDK streaming.py UniversalEvent.to_dict()) ---
 
 export interface UniversalEvent {
   type: string;

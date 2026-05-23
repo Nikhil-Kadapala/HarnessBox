@@ -21,11 +21,12 @@ export function groupEvents(events: UniversalEvent[]): EventGroup[] {
   const openGroups = new Map<string, EventGroup>();
 
   for (const event of events) {
-    const itemId = event.item_id;
-    const kind = event.item_kind;
+    const msg = event.message;
+    const itemId = msg.item_id;
+    const kind = msg.item_kind;
 
     if (!itemId || !kind) {
-      if (STANDALONE_EVENT_TYPES.has(event.event_type)) {
+      if (STANDALONE_EVENT_TYPES.has(event.type)) {
         groups.push({ type: "single", event });
       }
       continue;
@@ -33,7 +34,7 @@ export function groupEvents(events: UniversalEvent[]): EventGroup[] {
 
     if (kind === "tool_call" || kind === "tool_result") {
       const groupKey =
-        kind === "tool_result" ? (event.content?.[0]?.call_id ?? itemId) : itemId;
+        kind === "tool_result" ? (msg.content?.[0]?.call_id ?? itemId) : itemId;
       const existing = openGroups.get(groupKey) ?? openGroups.get(itemId);
       if (existing && existing.type === "tool_call") {
         existing.events.push(event);

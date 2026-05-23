@@ -83,11 +83,11 @@ export function sessionsReducer(state: SessionMap, action: Action): SessionMap {
 }
 
 export function statusFromEvent(event: UniversalEvent): SessionStatus | null {
-  switch (event.event_type) {
+  switch (event.type) {
     case "session.started":
       return "active";
     case "session.ended":
-      return event.metadata?.is_error ? "error" : "ended";
+      return event.message.metadata?.is_error ? "error" : "ended";
     case "turn.started":
       return "streaming";
     case "turn.ended":

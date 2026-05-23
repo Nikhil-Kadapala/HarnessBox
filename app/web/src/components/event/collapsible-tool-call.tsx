@@ -24,20 +24,20 @@ export const CollapsibleToolCall = memo(function CollapsibleToolCall({
 }: CollapsibleToolCallProps) {
   const [open, setOpen] = useState(defaultOpen);
 
-  const startEvent = events.find((e) => e.event_type === "item.started");
-  const resultEvent = events.find((e) => e.item_kind === "tool_result");
-  const deltas = events.filter((e) => e.event_type === "item.delta");
+  const startEvent = events.find((e) => e.type === "item.started");
+  const resultEvent = events.find((e) => e.message.item_kind === "tool_result");
+  const deltas = events.filter((e) => e.type === "item.delta");
   const isCompleted = events.some(
-    (e) => e.event_type === "item.completed" || e.item_kind === "tool_result",
+    (e) => e.type === "item.completed" || e.message.item_kind === "tool_result",
   );
-  const isError = resultEvent?.item_status === "failed";
+  const isError = resultEvent?.message.item_status === "failed";
 
-  const toolName = startEvent?.content?.[0]?.tool_name ?? "Tool";
-  const toolKind = startEvent?.tool_kind ?? resultEvent?.tool_kind ?? "other";
+  const toolName = startEvent?.message.content?.[0]?.tool_name ?? "Tool";
+  const toolKind = startEvent?.message.tool_kind ?? resultEvent?.message.tool_kind ?? "other";
   const icon = toolIcons[toolKind] ?? "*";
 
-  const resultContent = resultEvent?.content?.[0];
-  const deltaText = deltas.map((d) => d.delta ?? "").join("");
+  const resultContent = resultEvent?.message.content?.[0];
+  const deltaText = deltas.map((d) => d.message.delta ?? "").join("");
 
   return (
     <div className="my-1">

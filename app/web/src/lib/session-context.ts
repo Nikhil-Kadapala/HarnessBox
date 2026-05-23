@@ -67,13 +67,14 @@ export function getLatestSessionContextStats(events: UniversalEvent[]): SessionC
   let latest: SessionContextStats | null = null;
 
   for (const event of events) {
-    if (!isRecord(event.metadata)) continue;
+    const metadata = event.message.metadata;
+    if (!isRecord(metadata)) continue;
 
-    if (event.event_type === "context.update") {
-      const parsed = parseContextFromMetadata(event.metadata);
+    if (event.type === "context.update") {
+      const parsed = parseContextFromMetadata(metadata);
       if (parsed) latest = parsed;
-    } else if (event.event_type === "status") {
-      const context = event.metadata.context;
+    } else if (event.type === "status") {
+      const context = metadata.context;
       if (isRecord(context)) {
         const parsed = parseContextFromMetadata(context);
         if (parsed) latest = parsed;
@@ -88,13 +89,14 @@ export function getLatestSessionCostStats(events: UniversalEvent[]): CostBreakdo
   let latest: CostBreakdown | null = null;
 
   for (const event of events) {
-    if (!isRecord(event.metadata)) continue;
+    const metadata = event.message.metadata;
+    if (!isRecord(metadata)) continue;
 
-    if (event.event_type === "cost.update") {
-      const parsed = parseCostFromMetadata(event.metadata);
+    if (event.type === "cost.update") {
+      const parsed = parseCostFromMetadata(metadata);
       if (parsed) latest = parsed;
-    } else if (event.event_type === "status") {
-      const costBreakdown = event.metadata.cost_breakdown;
+    } else if (event.type === "status") {
+      const costBreakdown = metadata.cost_breakdown;
       if (isRecord(costBreakdown)) {
         const parsed = parseCostFromMetadata(costBreakdown);
         if (parsed) latest = parsed;
@@ -108,11 +110,12 @@ export function getLatestSessionCostStats(events: UniversalEvent[]): CostBreakdo
 export function getLatestCacheStats(events: UniversalEvent[]): CacheStats | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    const metadata = event.message.metadata;
     if (
-      (event.event_type === "turn.ended" || event.event_type === "session.ended") &&
-      isRecord(event.metadata)
+      (event.type === "turn.ended" || event.type === "session.ended") &&
+      isRecord(metadata)
     ) {
-      const usage = event.metadata.usage;
+      const usage = metadata.usage;
       if (isRecord(usage)) {
         const cacheRead = readNumber(usage.cache_read_input_tokens);
         const cacheCreation = readNumber(usage.cache_creation_input_tokens);

@@ -59,7 +59,7 @@ export const EventFeed = memo(function EventFeed({ events, userPrompts = [], ses
               {/* Show assistant response groups that came after this prompt */}
               {groups.slice(idx * 10, (idx + 1) * 10).map((group) => (
                 <m.div
-                  key={group.type === "single" ? group.event.event_id : `${group.type}-${group.itemId}`}
+                  key={group.type === "single" ? group.event.message.event_id : `${group.type}-${group.itemId}`}
                   variants={cardVariants}
                   initial="hidden"
                   animate="visible"
@@ -77,7 +77,7 @@ export const EventFeed = memo(function EventFeed({ events, userPrompts = [], ses
           {/* Show remaining groups if any */}
           {groups.slice(userPrompts.length * 10).map((group) => (
             <m.div
-              key={group.type === "single" ? group.event.event_id : `${group.type}-${group.itemId}`}
+              key={group.type === "single" ? group.event.message.event_id : `${group.type}-${group.itemId}`}
               variants={cardVariants}
               initial="hidden"
               animate="visible"

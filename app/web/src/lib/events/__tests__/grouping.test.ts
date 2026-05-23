@@ -2,14 +2,33 @@ import { describe, it, expect } from "vitest";
 import { groupEvents } from "../grouping";
 import type { UniversalEvent } from "@/types";
 
-function evt(overrides: Partial<UniversalEvent>): UniversalEvent {
+function evt(overrides: {
+  type?: string;
+  item_id?: string;
+  item_kind?: string;
+  item_status?: string;
+  content?: { type: string; tool_name?: string; call_id?: string; text?: string; tool_input?: string }[];
+  delta?: string;
+  tool_kind?: string;
+  metadata?: Record<string, unknown>;
+  event_type?: string;
+} = {}): UniversalEvent {
+  const { type, event_type, item_id, item_kind, item_status, content, delta, tool_kind, metadata } = overrides;
   return {
-    event_id: `evt-${Math.random().toString(36).slice(2, 8)}`,
-    sequence: 1,
+    type: type ?? event_type ?? "item.delta",
     timestamp: "2026-01-01T00:00:00Z",
-    session_id: "sess-1",
-    event_type: "item.delta",
-    ...overrides,
+    message: {
+      event_id: `evt-${Math.random().toString(36).slice(2, 8)}`,
+      sequence: 1,
+      session_id: "sess-1",
+      item_id,
+      item_kind,
+      item_status,
+      content,
+      delta,
+      tool_kind,
+      metadata,
+    },
   };
 }
 
@@ -143,7 +162,7 @@ describe("groupEvents", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].type).toBe("single");
     if (groups[0].type === "single") {
-      expect(groups[0].event.event_type).toBe("api.retry");
+      expect(groups[0].event.type).toBe("api.retry");
     }
   });
 });

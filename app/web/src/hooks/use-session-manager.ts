@@ -81,7 +81,7 @@ export function useSessionManager() {
   const reconnectSession = useCallback(
     async (sessionId: string) => {
       const entry = sessions.get(sessionId);
-      const lastSeq = entry?.events.at(-1)?.sequence;
+      const lastSeq = entry?.events.at(-1)?.message.sequence;
       const conns = connectionsRef.current;
 
       try {
@@ -172,8 +172,8 @@ export function useSessionManager() {
 
         for await (const event of stream) {
           dispatch({ type: "append_event", sessionId, event });
-          if (event.event_type === "error" && event.error_message) {
-            dispatch({ type: "set_error", sessionId, error: event.error_message });
+          if (event.type === "error" && event.message.error_message) {
+            dispatch({ type: "set_error", sessionId, error: event.message.error_message });
             continue;
           }
           const newStatus = statusFromEvent(event);
