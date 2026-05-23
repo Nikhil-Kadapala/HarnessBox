@@ -379,10 +379,12 @@ class TestWorkspacePooling:
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
             patch("harnessbox.workspace_manager.AgentManager"),
+            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             instance = MockSandbox.return_value
             instance.resume = AsyncMock()
             instance.event_buffer.hydrate = AsyncMock()
+            instance.sandbox_id = "storage-sandbox"
 
             # Pool hit from storage: should hydrate and resume
             result = await mgr.get_or_create_workspace(
