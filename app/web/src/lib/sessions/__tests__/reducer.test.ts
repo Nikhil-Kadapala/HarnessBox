@@ -7,6 +7,7 @@ function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
     id: "sess-1",
     harness: "claude-code",
     status: "active",
+    runtimeState: "running",
     createdAt: "2026-01-01T00:00:00Z",
     events: [],
     error: null,
@@ -14,14 +15,21 @@ function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
   };
 }
 
-function makeEvent(overrides: Partial<UniversalEvent> = {}): UniversalEvent {
+function makeEvent(overrides: {
+  type?: string;
+  event_type?: string;
+  metadata?: Record<string, unknown>;
+} = {}): UniversalEvent {
+  const { type, event_type, metadata } = overrides;
   return {
-    event_id: "evt-1",
-    sequence: 1,
+    type: type ?? event_type ?? "text.delta",
     timestamp: "2026-01-01T00:00:00Z",
-    session_id: "sess-1",
-    event_type: "text.delta",
-    ...overrides,
+    message: {
+      event_id: "evt-1",
+      sequence: 1,
+      session_id: "sess-1",
+      metadata,
+    },
   };
 }
 

@@ -1,66 +1,64 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, LazyMotion, domAnimation, m } from "framer-motion";
-import useMeasure from "react-use-measure";
-import { DollarSign, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { DollarSign } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CostBreakdown, SessionContextStats } from "@/types";
 import { ContextTracker } from "./ContextTracker";
 import { CostTracker } from "./CostTracker";
-import { type MetricsTab, contentVariants, panelVariants } from "./shared";
 
 interface SessionMetricsMenuProps {
   contextStats: SessionContextStats | null;
   costStats: CostBreakdown | null;
 }
 
-export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMenuProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<MetricsTab>("context");
-  const [direction, setDirection] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [contentRef] = useMeasure();
+const panelVariants = {
+  hidden: { opacity: 0, y: 8, scale: 0.96 },
+  visible: { opacity: 1, y: 0, scale: 1 },
+  exit: { opacity: 0, y: 6, scale: 0.97 },
+};
 
-  // Computed values
+export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMenuProps) {
+  const [contextOpen, setContextOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
   const usedPercent = contextStats
     ? Math.min(Math.max(contextStats.percentUsed, 0), 100)
     : 0;
 
-  // Tab change handler
-  const handleTabChange = useCallback(
-    (newTab: MetricsTab) => {
-      const newDirection = newTab === "cost" ? 1 : -1;
-      setDirection(newDirection);
-      setActiveTab(newTab);
-      if (!isOpen) setIsOpen(true);
-    },
-    [isOpen],
-  );
+  const toggleContext = useCallback(() => {
+    setContextOpen((prev) => !prev);
+    setCostOpen(false);
+  }, []);
 
-  // Click-outside handler
+  const toggleCost = useCallback(() => {
+    setCostOpen((prev) => !prev);
+    setContextOpen(false);
+  }, []);
+
+  // Click-outside to close both
   useEffect(() => {
+    if (!contextOpen && !costOpen) return;
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
+        setContextOpen(false);
+        setCostOpen(false);
       }
     };
-    if (isOpen) {
-      document.addEventListener("mousedown", handler);
-      return () => document.removeEventListener("mousedown", handler);
-    }
-  }, [isOpen]);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [contextOpen, costOpen]);
 
-  // Gauge stroke color based on usage
+  // Gauge styling: green → blue → red
   const gaugeStroke = !contextStats
-    ? "stroke-muted-foreground/50"
-    : usedPercent >= 80
+    ? "stroke-accent"
+    : usedPercent >= 70
       ? "stroke-destructive"
-      : usedPercent >= 60
-        ? "stroke-warning"
+      : usedPercent >= 25
+        ? "stroke-blue-400"
         : "stroke-accent";
 
-  // Circle progress calculation (circumference = 2πr, r=10 → ~62.83)
   const radius = 10;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (usedPercent / 100) * circumference;
@@ -68,89 +66,54 @@ export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMe
   return (
     <LazyMotion features={domAnimation}>
       <div ref={containerRef} className="relative">
-        {/* Panel */}
+        {/* Context Panel */}
         <AnimatePresence>
-          {isOpen && (
+          {contextOpen && (
             <m.div
-              key="metrics-panel"
+              key="context-panel"
               variants={panelVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
-              transition={{ type: "spring", stiffness: 420, damping: 34, mass: 0.8 }}
-              className="absolute bottom-full right-0 mb-2 w-[360px] rounded-xl border border-border bg-card px-4 py-3 text-card-foreground shadow-2xl shadow-black/20"
+              transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.8 }}
+              className="absolute bottom-full right-0 mb-2 w-[320px] rounded-xl border border-border bg-card px-4 py-3 text-card-foreground shadow-2xl shadow-black/20"
             >
-              {/* Header */}
-              <div className="mb-4 flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-sm font-semibold leading-none">
-                    {activeTab === "context" ? "Context Usage" : "Cost Tracking"}
-                  </h2>
-                </div>
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  className="h-5 w-5 rounded-full text-muted-foreground hover:text-foreground"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <X className="h-3 w-3" />
-                  <span className="sr-only">Close</span>
-                </Button>
-              </div>
-
-              {/* Content Area with Measured Height */}
-              <m.div className="overflow-hidden">
-                <div ref={contentRef}>
-                  <AnimatePresence mode="popLayout" custom={direction}>
-                    {activeTab === "context" && (
-                      <m.div
-                        key="context-content"
-                        custom={direction}
-                        variants={contentVariants}
-                        initial="enter"
-                        animate="center"
-                        exit="exit"
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                      >
-                        <ContextTracker contextStats={contextStats} />
-                      </m.div>
-                    )}
-                    {activeTab === "cost" && (
-                      <m.div
-                        key="cost-content"
-                        custom={direction}
-                        variants={contentVariants}
-                        initial="enter"
-                        animate="center"
-                        exit="exit"
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                      >
-                        <CostTracker costStats={costStats} />
-                      </m.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </m.div>
+              <h2 className="mb-4 text-sm font-semibold">Context Usage</h2>
+              <ContextTracker contextStats={contextStats} />
             </m.div>
           )}
         </AnimatePresence>
 
-        {/* Button - Fixed Width with Icons Only */}
+        {/* Cost Panel */}
+        <AnimatePresence>
+          {costOpen && (
+            <m.div
+              key="cost-panel"
+              variants={panelVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.8 }}
+              className="absolute bottom-full right-0 mb-2 w-[320px] rounded-xl border border-border bg-card px-4 py-3 text-card-foreground shadow-2xl shadow-black/20"
+            >
+              <h2 className="mb-4 text-sm font-semibold">Cost Tracking</h2>
+              <CostTracker costStats={costStats} />
+            </m.div>
+          )}
+        </AnimatePresence>
+
+        {/* Trigger buttons */}
         <div className="flex items-center gap-2 rounded-full bg-muted/60 px-2 py-1">
-          {/* Circular Gauge */}
+          {/* Context gauge */}
           <Tooltip>
             <TooltipTrigger
               render={
                 <m.button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTabChange("context");
-                  }}
+                  onClick={toggleContext}
                   className={cn(
                     "relative flex h-6 w-6 items-center justify-center rounded-full transition-colors",
-                    activeTab === "context" && isOpen && "bg-accent/20",
+                    contextOpen && "bg-accent/20",
                   )}
                   whileTap={{ scale: 0.9 }}
                   transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -158,7 +121,6 @@ export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMe
               }
             >
               <svg className="h-6 w-6 -rotate-90" viewBox="0 0 24 24">
-                {/* Background circle */}
                 <circle
                   cx="12"
                   cy="12"
@@ -167,7 +129,6 @@ export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMe
                   strokeWidth="2"
                   fill="none"
                 />
-                {/* Progress circle */}
                 <circle
                   cx="12"
                   cy="12"
@@ -188,19 +149,16 @@ export function SessionMetricsMenu({ contextStats, costStats }: SessionMetricsMe
           {/* Divider */}
           <div className="h-4 w-px bg-border" />
 
-          {/* Dollar Icon */}
+          {/* Cost icon */}
           <Tooltip>
             <TooltipTrigger
               render={
                 <m.button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTabChange("cost");
-                  }}
+                  onClick={toggleCost}
                   className={cn(
                     "flex h-6 w-6 items-center justify-center rounded-full transition-colors",
-                    activeTab === "cost" && isOpen
+                    costOpen
                       ? "bg-accent/20 text-foreground"
                       : "text-muted-foreground hover:text-foreground",
                   )}

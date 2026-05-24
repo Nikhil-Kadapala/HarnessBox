@@ -13,11 +13,10 @@ export const UserMessage = memo(function UserMessage({ text, timestamp }: UserMe
         <div
           className={cn(
             "rounded-2xl rounded-tr-sm px-4 py-2.5",
-            "bg-primary text-primary-foreground",
-            "shadow-sm",
+            "bg-secondary text-secondary-foreground",
           )}
         >
-          <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
+          <p className="text-[15px] whitespace-pre-wrap break-words">{text}</p>
         </div>
         {timestamp && (
           <p className="text-xs text-muted-foreground mt-1 text-right">

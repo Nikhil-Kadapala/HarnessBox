@@ -17,9 +17,9 @@ export const PermissionCard = memo(function PermissionCard({
   const [resolved, setResolved] = useState(false);
   const [choice, setChoice] = useState<"allow" | "deny" | null>(null);
 
-  const requestId = event.metadata?.request_id as string | undefined;
-  const tool = (event.metadata?.tool as string) ?? "unknown";
-  const toolInput = event.content?.[0]?.tool_input;
+  const requestId = event.message.metadata?.request_id as string | undefined;
+  const tool = (event.message.metadata?.tool as string) ?? "unknown";
+  const toolInput = event.message.content?.[0]?.tool_input;
 
   const handleRespond = (behavior: "allow" | "deny") => {
     if (!requestId || resolved) return;

@@ -2,14 +2,9 @@ import { memo, useEffect, useMemo, useRef } from "react";
 import { LazyMotion, domAnimation, m } from "framer-motion";
 import { EventGroupCard } from "@/components/event-card";
 import { UserMessage } from "@/components/event/user-message";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { groupEvents } from "@/lib/events/grouping";
 import type { UniversalEvent } from "@/types";
-
-interface UserPrompt {
-  id: string;
-  text: string;
-  timestamp: string;
-}
 
 const cardVariants = {
   hidden: { opacity: 0, y: 8 },
@@ -18,20 +13,41 @@ const cardVariants = {
 
 interface EventFeedProps {
   events: UniversalEvent[];
-  userPrompts?: UserPrompt[];
   sessionId?: string;
+  isStreaming?: boolean;
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
 }
 
-export const EventFeed = memo(function EventFeed({ events, userPrompts = [], sessionId, onPermissionRespond }: EventFeedProps) {
+export const EventFeed = memo(function EventFeed({ events, sessionId, isStreaming = false, onPermissionRespond }: EventFeedProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const groups = useMemo(() => groupEvents(events), [events]);
+
+  // Split events into user prompts and agent events, preserving order
+  const segments = useMemo(() => {
+    const result: Array<{ type: "user"; event: UniversalEvent } | { type: "agent"; events: UniversalEvent[] }> = [];
+    let currentAgent: UniversalEvent[] = [];
+
+    for (const event of events) {
+      if (event.type === "user.prompt") {
+        if (currentAgent.length > 0) {
+          result.push({ type: "agent", events: currentAgent });
+          currentAgent = [];
+        }
+        result.push({ type: "user", event });
+      } else {
+        currentAgent.push(event);
+      }
+    }
+    if (currentAgent.length > 0) {
+      result.push({ type: "agent", events: currentAgent });
+    }
+    return result;
+  }, [events]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events.length, userPrompts.length]);
+  }, [events.length]);
 
-  if (events.length === 0 && userPrompts.length === 0) {
+  if (events.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-0">
         <span className="text-sm text-muted-foreground">
@@ -42,57 +58,46 @@ export const EventFeed = memo(function EventFeed({ events, userPrompts = [], ses
   }
 
   return (
-    <div className="flex-1 overflow-y-auto min-h-0">
+    <ScrollArea className="flex-1 min-h-0">
       <LazyMotion features={domAnimation}>
-        <div className="p-4 space-y-2">
-          {/* Interleave user prompts and assistant responses */}
-          {userPrompts.map((prompt, idx) => (
-            <div key={prompt.id}>
-              <m.div
-                variants={cardVariants}
-                initial="hidden"
-                animate="visible"
-              >
-                <UserMessage text={prompt.text} timestamp={prompt.timestamp} />
-              </m.div>
-
-              {/* Show assistant response groups that came after this prompt */}
-              {groups.slice(idx * 10, (idx + 1) * 10).map((group) => (
+        <div className="mx-auto max-w-4xl px-4 py-4 space-y-4">
+          {segments.map((segment) => {
+            if (segment.type === "user") {
+              const text = segment.event.message.content?.[0]?.text ?? "";
+              return (
                 <m.div
-                  key={group.type === "single" ? group.event.event_id : `${group.type}-${group.itemId}`}
+                  key={segment.event.message.event_id}
                   variants={cardVariants}
                   initial="hidden"
                   animate="visible"
                 >
-                  <EventGroupCard
-                    group={group}
-                    sessionId={sessionId}
-                    onPermissionRespond={onPermissionRespond}
-                  />
+                  <UserMessage text={text} timestamp={segment.event.timestamp} />
                 </m.div>
-              ))}
-            </div>
-          ))}
+              );
+            }
 
-          {/* Show remaining groups if any */}
-          {groups.slice(userPrompts.length * 10).map((group) => (
-            <m.div
-              key={group.type === "single" ? group.event.event_id : `${group.type}-${group.itemId}`}
-              variants={cardVariants}
-              initial="hidden"
-              animate="visible"
-            >
-              <EventGroupCard
-                group={group}
-                sessionId={sessionId}
-                onPermissionRespond={onPermissionRespond}
-              />
-            </m.div>
-          ))}
+            const groups = groupEvents(segment.events);
+            return groups.map((group) => (
+              <m.div
+                key={group.type === "single" ? group.event.message.event_id : group.type === "tool_calls_batch" ? `batch-${group.toolCalls[0].itemId}` : `${group.type}-${group.itemId}`}
+                variants={cardVariants}
+                initial="hidden"
+                animate="visible"
+                className="max-w-[85%]"
+              >
+                <EventGroupCard
+                  group={group}
+                  sessionId={sessionId}
+                  isStreaming={isStreaming}
+                  onPermissionRespond={onPermissionRespond}
+                />
+              </m.div>
+            ));
+          })}
 
           <div ref={bottomRef} />
         </div>
       </LazyMotion>
-    </div>
+    </ScrollArea>
   );
 });

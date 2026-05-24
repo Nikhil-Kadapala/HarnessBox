@@ -41,6 +41,7 @@ class EventType(str, Enum):
     CONTEXT_UPDATE = "context.update"
     COST_UPDATE = "cost.update"
     USER_PROMPT = "user.prompt"
+    RUNTIME_STATE = "runtime.state"
 
 
 class ItemKind(str, Enum):

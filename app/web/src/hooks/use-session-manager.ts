@@ -29,6 +29,7 @@ export function useSessionManager() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const connectionsRef = useRef(new SessionConnections());
   const polledRef = useRef(false);
+  const promptGenRef = useRef(0);
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
 
@@ -38,14 +39,16 @@ export function useSessionManager() {
 
     listSessions()
       .then((serverSessions) => {
+        const activeSessions: string[] = [];
         for (const s of serverSessions) {
-          if (s.status !== "ended") {
+          if (s.runtime_state !== "dead" && s.runtime_state !== "ended") {
             dispatch({
               type: "add_session",
               entry: {
                 id: s.session_id,
                 harness: s.harness,
-                status: (s.status as SessionStatus) || "active",
+                status: (s.runtime_state as SessionStatus) || "active",
+                runtimeState: s.runtime_state,
                 createdAt: s.created_at,
                 events: [],
                 error: null,
@@ -55,11 +58,49 @@ export function useSessionManager() {
                 remote: s.remote,
               },
             });
+            activeSessions.push(s.session_id);
           }
         }
         if (serverSessions.length > 0) {
-          const active = serverSessions.find((s) => s.status === "active");
+          const active = serverSessions.find((s) => s.runtime_state === "active");
           if (active) setActiveSessionId(active.session_id);
+        }
+
+        // Replay events for all active sessions.
+        // Try live /events first (ring buffer + subscription); fall back to
+        // /history (SQLite storage) if the sandbox isn't connected yet.
+        const conns = connectionsRef.current;
+        for (const sessionId of activeSessions) {
+          (async () => {
+            try {
+              const stream = conns.streamEvents({
+                key: `reconnect-${sessionId}`,
+                url: `/v1/workspaces/${sessionId}/events`,
+                method: "GET",
+              });
+              for await (const event of stream) {
+                dispatch({ type: "append_event", sessionId, event });
+                const newStatus = statusFromEvent(event);
+                if (newStatus) {
+                  dispatch({ type: "set_status", sessionId, status: newStatus });
+                }
+              }
+            } catch {
+              // Live stream unavailable — load from storage history
+              try {
+                const historyStream = conns.streamEvents({
+                  key: `history-${sessionId}`,
+                  url: `/v1/workspaces/${sessionId}/history`,
+                  method: "GET",
+                });
+                for await (const event of historyStream) {
+                  dispatch({ type: "append_event", sessionId, event });
+                }
+              } catch {
+                // No events available
+              }
+            }
+          })();
         }
       })
       .catch(() => {});
@@ -81,7 +122,7 @@ export function useSessionManager() {
   const reconnectSession = useCallback(
     async (sessionId: string) => {
       const entry = sessions.get(sessionId);
-      const lastSeq = entry?.events.at(-1)?.sequence;
+      const lastSeq = entry?.events.at(-1)?.message.sequence;
       const conns = connectionsRef.current;
 
       try {
@@ -110,6 +151,7 @@ export function useSessionManager() {
         id: sessionId,
         harness: config.harness,
         status: "creating",
+        runtimeState: "creating",
         createdAt: new Date().toISOString(),
         events: [],
         error: null,
@@ -136,8 +178,10 @@ export function useSessionManager() {
               branch: res.branch,
               baseBranch: res.base_branch,
               remote: res.remote,
+              runtimeState: res.runtime_state,
             },
           });
+          dispatch({ type: "set_status", sessionId, status: "active" });
 
           reconnectSession(sessionId);
         })
@@ -159,8 +203,14 @@ export function useSessionManager() {
 
   const sendPrompt = useCallback(
     async (sessionId: string, prompt: string) => {
+      const gen = ++promptGenRef.current;
       dispatch({ type: "set_status", sessionId, status: "streaming" });
       const conns = connectionsRef.current;
+
+      // Abort any active reconnect stream to prevent duplicate event delivery.
+      // The reconnect subscribes to the event buffer which broadcasts the same
+      // events that the prompt SSE response yields directly.
+      conns.abort(`reconnect-${sessionId}`);
 
       try {
         const stream = conns.streamEvents({
@@ -172,8 +222,8 @@ export function useSessionManager() {
 
         for await (const event of stream) {
           dispatch({ type: "append_event", sessionId, event });
-          if (event.event_type === "error" && event.error_message) {
-            dispatch({ type: "set_error", sessionId, error: event.error_message });
+          if (event.type === "error" && event.message.error_message) {
+            dispatch({ type: "set_error", sessionId, error: event.message.error_message });
             continue;
           }
           const newStatus = statusFromEvent(event);
@@ -182,16 +232,21 @@ export function useSessionManager() {
           }
         }
         dispatch({ type: "set_status", sessionId, status: "active" });
+        // Resubscribe to live events for inter-turn activity
+        reconnectSession(sessionId);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          dispatch({ type: "set_status", sessionId, status: "active" });
+          // Only reset to "active" if no newer prompt has taken over
+          if (gen === promptGenRef.current) {
+            dispatch({ type: "set_status", sessionId, status: "active" });
+          }
           return;
         }
         const message = err instanceof Error ? err.message : "Stream error";
         dispatch({ type: "set_error", sessionId, error: message });
       }
     },
-    [],
+    [reconnectSession],
   );
 
   const stopStreaming = useCallback((sessionId: string) => {

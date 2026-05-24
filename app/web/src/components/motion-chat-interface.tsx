@@ -2,22 +2,12 @@ import { useCallback, useRef, useState, memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Image as ImageIcon,
-  Mic,
-  Paperclip,
+  ArrowUp,
   Plus,
-  Send,
   Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  LazyMotion,
-  domAnimation,
-  m,
-  useMotionValue,
-  useSpring,
-  AnimatePresence,
-} from "framer-motion";
+import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import type { CostBreakdown, SessionContextStats } from "@/types";
 import { SessionMetricsMenu } from "@/components/metrics/SessionMetricsMenu";
 
@@ -30,14 +20,6 @@ interface MotionChatInterfaceProps {
   onStop: () => void;
 }
 
-// Hoist static attachment button configs outside component (rendering-hoist-jsx)
-const ATTACHMENT_BUTTONS = [
-  { icon: Paperclip, label: "Attach file" },
-  { icon: ImageIcon, label: "Image" },
-  { icon: Mic, label: "Voice" },
-] as const;
-
-// Memoize component to prevent unnecessary re-renders (rerender-memo)
 export const MotionChatInterface = memo(function MotionChatInterface({
   disabled,
   isStreaming,
@@ -48,39 +30,16 @@ export const MotionChatInterface = memo(function MotionChatInterface({
 }: MotionChatInterfaceProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState("");
-  const [isFocused, setIsFocused] = useState(false);
-  const [isMultiline, setIsMultiline] = useState(false);
-  const [showAurora, setShowAurora] = useState(false);
-
-  // Physics spring for input bar using motion
-  const y = useMotionValue(0);
-  const scale = useMotionValue(1);
-  const springY = useSpring(y, { stiffness: 300, damping: 20, mass: 0.5 });
-  const springScale = useSpring(scale, { stiffness: 300, damping: 15 });
 
   const handleSubmit = useCallback(() => {
     const trimmedValue = value.trim();
     if (!trimmedValue) return;
-
-    // Trigger aurora burst
-    setShowAurora(true);
-    setTimeout(() => setShowAurora(false), 600);
-
-    // Kick-up animation
-    y.set(-8);
-    scale.set(0.98);
-    setTimeout(() => {
-      y.set(0);
-      scale.set(1);
-    }, 200);
-
     onSubmit(trimmedValue);
     setValue("");
-    setIsMultiline(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, onSubmit, y, scale]);
+  }, [value, onSubmit]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -93,188 +52,100 @@ export const MotionChatInterface = memo(function MotionChatInterface({
   );
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value;
-    setValue(newValue);
-
-    // Auto-resize textarea
+    setValue(e.target.value);
     e.target.style.height = "auto";
-    const newHeight = e.target.scrollHeight;
-    e.target.style.height = `${newHeight}px`;
-
-    // Determine if multiline
-    const lineHeight = 24;
-    const lines = Math.floor(newHeight / lineHeight);
-    setIsMultiline(lines > 1);
-  }, []);
-
-  const handleFocus = useCallback(() => {
-    setIsFocused(true);
-    // Subtle bounce on focus
-    scale.set(1.01);
-    setTimeout(() => scale.set(1), 150);
-  }, [scale]);
-
-  const handleBlur = useCallback(() => {
-    setIsFocused(false);
-  }, []);
-
-  const toggleMultiline = useCallback(() => {
-    setIsMultiline((prev) => !prev);
+    e.target.style.height = `${e.target.scrollHeight}px`;
   }, []);
 
   return (
     <LazyMotion features={domAnimation}>
-      <div className="relative border-t bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
-        {/* Aurora burst effect */}
-        <AnimatePresence>
-          {showAurora && (
-            <m.div
-              initial={{ opacity: 0, y: "100%" }}
-              animate={{ opacity: [0, 1, 0], y: ["-100%"] }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.6, ease: "easeOut" }}
-              className="absolute inset-x-0 bottom-0 h-32 pointer-events-none overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-linear-to-t from-primary/20 via-primary/10 to-transparent" />
-            </m.div>
-          )}
-        </AnimatePresence>
+      <div className="pb-4 pt-2 px-4">
+        <div className="mx-auto max-w-4xl space-y-2">
+          {/* Input container */}
+          <div className="relative rounded-2xl border border-border/60 bg-secondary/50 transition-colors focus-within:border-border focus-within:bg-secondary/80">
+            {/* Textarea */}
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              className="min-h-[52px] max-h-[200px] resize-none border-0 bg-transparent px-4 pt-3.5 pb-12 text-[15px] shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/50"
+              placeholder={isStreaming ? "Send to interrupt..." : "Ask for follow-up changes"}
+              disabled={disabled}
+              rows={1}
+            />
 
-      <div className="container mx-auto max-w-4xl px-4 py-4 relative z-10">
-        <m.div
-          style={{
-            y: springY,
-            scale: springScale,
-          }}
-          className="space-y-2"
-        >
-          {/* Attachment buttons (multiline mode) */}
-          <AnimatePresence>
-            {isMultiline && (
-              <m.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <div className="flex items-center gap-2 px-2">
-                  {ATTACHMENT_BUTTONS.map(({ icon: Icon, label }, idx) => (
-                    <m.div
-                      key={label}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: idx * 0.05, duration: 0.2 }}
-                    >
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        <Icon className="h-3.5 w-3.5 mr-1.5" />
-                        {label}
-                      </Button>
-                    </m.div>
-                  ))}
-                </div>
-              </m.div>
-            )}
-          </AnimatePresence>
-
-          {/* Input area */}
-          <div className="relative flex items-end gap-2">
-            <div className="relative flex-1">
-              <Textarea
-                ref={textareaRef}
-                value={value}
-                onChange={handleChange}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                className={cn(
-                  "min-h-[52px] max-h-[200px] resize-none rounded-2xl border-border/50 pr-24 text-sm transition-all",
-                  "focus-visible:ring-1 focus-visible:ring-ring/50",
-                  "placeholder:text-muted-foreground/50",
-                  isFocused && "border-border shadow-sm",
-                )}
-                placeholder={isStreaming ? "Streaming..." : "Send a message..."}
-                disabled={disabled || isStreaming}
-                onKeyDown={handleKeyDown}
-                rows={1}
-              />
-              <div className="absolute bottom-2 right-2 flex items-center gap-1">
+            {/* Bottom toolbar inside the input */}
+            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
+              <div className="flex items-center gap-1">
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="h-8 w-8 rounded-full hover:bg-accent"
-                  onClick={toggleMultiline}
-                  title="Toggle attachments"
+                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
                 >
-                  <m.div
-                    animate={{ rotate: isMultiline ? 45 : 0 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </m.div>
+                  <Plus className="h-4 w-4" />
                 </Button>
-                {isStreaming ? (
-                  <m.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                  >
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 rounded-full hover:bg-destructive/10"
-                      onClick={onStop}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <SessionMetricsMenu contextStats={contextStats} costStats={costStats} />
+                <AnimatePresence mode="wait">
+                  {isStreaming && !value.trim() ? (
+                    <m.div
+                      key="stop"
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      transition={{ duration: 0.1 }}
                     >
-                      <Square className="h-4 w-4 fill-current text-destructive" />
-                      <span className="sr-only">Stop</span>
-                    </Button>
-                  </m.div>
-                ) : (
-                  <m.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                  >
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className={cn(
-                        "h-8 w-8 rounded-full transition-all",
-                        value.trim() && !disabled
-                          ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
-                          : "text-muted-foreground/50",
-                      )}
-                      onClick={handleSubmit}
-                      disabled={disabled || !value.trim()}
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 rounded-lg hover:bg-destructive/10"
+                        onClick={onStop}
+                      >
+                        <Square className="h-3.5 w-3.5 fill-current text-destructive" />
+                        <span className="sr-only">Stop</span>
+                      </Button>
+                    </m.div>
+                  ) : (
+                    <m.div
+                      key="send"
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      transition={{ duration: 0.1 }}
                     >
-                      <Send className="h-4 w-4" />
-                      <span className="sr-only">Send</span>
-                    </Button>
-                  </m.div>
-                )}
+                      <Button
+                        type="button"
+                        size="icon"
+                        className={cn(
+                          "h-7 w-7 rounded-lg transition-all",
+                          value.trim() && !disabled
+                            ? "bg-accent text-accent-foreground hover:bg-accent/90"
+                            : "bg-muted text-muted-foreground cursor-default",
+                        )}
+                        onClick={handleSubmit}
+                        disabled={disabled || !value.trim()}
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                        <span className="sr-only">Send</span>
+                      </Button>
+                    </m.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
           </div>
-        </m.div>
 
-        <m.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs text-muted-foreground/60"
-        >
-          <span />
-          <span className="text-center">Press Enter to send, Shift+Enter for new line</span>
-          <SessionMetricsMenu contextStats={contextStats} costStats={costStats} />
-        </m.div>
+          {/* Footer row */}
+          <div className="px-1 text-center text-xs text-muted-foreground/60">
+            <span>Press Enter to send, Shift+Enter for new line</span>
+          </div>
+        </div>
       </div>
-    </div>
     </LazyMotion>
   );
 });

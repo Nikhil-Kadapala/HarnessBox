@@ -1009,6 +1009,8 @@ class WorkspaceManager:
             if info.agent_manager:
                 await info.agent_manager.shutdown_all()
 
+            await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
+
             if info.sandbox_conn:
                 await info.sandbox_conn.kill()
 
@@ -1029,6 +1031,24 @@ class WorkspaceManager:
         self._workspace_configs.pop(workspace_id, None)
         self._idle_timers.pop(workspace_id, None)
         self._active_turns.pop(workspace_id, None)
+
+    async def _emit_runtime_state(self, workspace_id: str, state: str) -> None:
+        """Emit a runtime.state event to the session's event buffer (best-effort)."""
+        info = self._workspaces.get(workspace_id)
+        if not info or not info.sandbox_conn or not info.sandbox_conn._event_buffer:
+            return
+        try:
+            event = UniversalEvent(
+                event_id=str(uuid.uuid4()),
+                sequence=0,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                session_id=workspace_id,
+                event_type=StreamEventType.RUNTIME_STATE,
+                metadata={"runtime_state": state},
+            )
+            await info.sandbox_conn._event_buffer.push(event)
+        except Exception as e:
+            logger.debug(f"Failed to emit runtime state event for {workspace_id}: {e}")
 
     def _start_idle_timer(self, workspace_id: str) -> None:
         """Start (or restart) the per-workspace idle countdown task."""
@@ -1086,6 +1106,9 @@ class WorkspaceManager:
         info.provider_sandbox_id = provider_sandbox_id
         info.snapshot_id = snapshot_id
         info.runtime_state = RuntimeState.PAUSED.value
+
+        # Notify subscribers before closing buffer
+        await self._emit_runtime_state(workspace_id, RuntimeState.PAUSED.value)
 
         # Persist
         if self._storage:
@@ -1165,6 +1188,8 @@ class WorkspaceManager:
 
         info.runtime_state = RuntimeState.ACTIVE.value
         info.last_active = datetime.now(timezone.utc).isoformat()
+
+        await self._emit_runtime_state(workspace_id, RuntimeState.ACTIVE.value)
 
         if self._storage:
             await self._storage.update_workspace(

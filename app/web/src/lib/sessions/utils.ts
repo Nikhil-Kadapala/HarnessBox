@@ -13,7 +13,7 @@ export function transformSessionResponseToCard(session: SessionResponse): Sessio
   return {
     id: session.session_id,
     title: session.workspace_name || session.session_id.slice(0, 8),
-    status: session.status,
+    status: session.workflow_state,
     harness: session.harness,
     repository: extractRepoName(session.workspace_name),
     branch: session.branch,
