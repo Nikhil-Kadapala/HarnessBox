@@ -90,17 +90,24 @@ describe("groupEvents", () => {
 
   it("emits standalone events for known singleton types", () => {
     const events = [
-      evt({ event_type: "session.started" }),
-      evt({ event_type: "turn.ended" }),
       evt({ event_type: "error" }),
       evt({ event_type: "permission.requested" }),
-      evt({ event_type: "session.ended" }),
     ];
     const groups = groupEvents(events);
-    expect(groups).toHaveLength(5);
+    expect(groups).toHaveLength(2);
     for (const g of groups) {
       expect(g.type).toBe("single");
     }
+  });
+
+  it("skips session metadata events", () => {
+    const events = [
+      evt({ event_type: "session.started" }),
+      evt({ event_type: "turn.ended" }),
+      evt({ event_type: "session.ended" }),
+    ];
+    const groups = groupEvents(events);
+    expect(groups).toHaveLength(0);
   });
 
   it("skips events without itemId/kind that are not standalone types", () => {

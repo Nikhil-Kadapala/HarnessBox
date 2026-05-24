@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { CodeBlock } from "@/components/event/code-block";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { UniversalEvent } from "@/types";
 
 interface CollapsibleToolCallProps {
@@ -74,17 +74,19 @@ export const CollapsibleToolCall = memo(function CollapsibleToolCall({
           )}
 
           {deltaText && !resultContent?.text && (
-            <pre className="text-[11px] text-muted-foreground font-mono whitespace-pre-wrap max-h-[200px] overflow-auto">
-              {deltaText}
-            </pre>
+            <div className="max-h-[200px] overflow-y-auto rounded scrollbar-thin">
+              <pre className="text-[11px] text-muted-foreground font-mono whitespace-pre-wrap">
+                {deltaText}
+              </pre>
+            </div>
           )}
 
           {toolKind === "bash" && resultContent?.text && (
-            <CodeBlock
-              code={resultContent.text.slice(0, 3000)}
-              language="bash"
-              maxHeight={200}
-            />
+            <div className="max-h-[200px] overflow-y-auto rounded scrollbar-thin">
+              <pre className="text-[11px] text-muted-foreground font-mono whitespace-pre-wrap">
+                {resultContent.text.slice(0, 3000)}
+              </pre>
+            </div>
           )}
 
           {(toolKind === "file_change" || toolKind === "file_read") && resultContent && (
@@ -102,9 +104,11 @@ export const CollapsibleToolCall = memo(function CollapsibleToolCall({
             toolKind !== "file_change" &&
             toolKind !== "file_read" &&
             resultContent?.text && (
-              <pre className="text-[11px] text-muted-foreground font-mono whitespace-pre-wrap max-h-[200px] overflow-auto">
-                {resultContent.text.slice(0, 2000)}
-              </pre>
+              <ScrollArea className="max-h-[200px]">
+                <pre className="text-[11px] text-muted-foreground font-mono whitespace-pre-wrap">
+                  {resultContent.text.slice(0, 2000)}
+                </pre>
+              </ScrollArea>
             )}
         </div>
       )}

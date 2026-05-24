@@ -3,13 +3,11 @@ import type { UniversalEvent } from "@/types";
 export type EventGroup =
   | { type: "message"; itemId: string; deltas: UniversalEvent[] }
   | { type: "tool_call"; itemId: string; events: UniversalEvent[] }
+  | { type: "tool_calls_batch"; toolCalls: { itemId: string; events: UniversalEvent[] }[] }
   | { type: "reasoning"; itemId: string; events: UniversalEvent[] }
   | { type: "single"; event: UniversalEvent };
 
 const STANDALONE_EVENT_TYPES = new Set([
-  "turn.ended",
-  "session.started",
-  "session.ended",
   "error",
   "permission.requested",
   "input.requested",
@@ -74,5 +72,46 @@ export function groupEvents(events: UniversalEvent[]): EventGroup[] {
     groups.push({ type: "single", event });
   }
 
-  return groups;
+  return collapseToolCalls(groups);
+}
+
+function isToolCallCompleted(group: EventGroup): boolean {
+  if (group.type !== "tool_call") return false;
+  return group.events.some(
+    (e) => e.type === "item.completed" || e.message.item_kind === "tool_result",
+  );
+}
+
+function collapseToolCalls(groups: EventGroup[]): EventGroup[] {
+  const result: EventGroup[] = [];
+  let batch: { itemId: string; events: UniversalEvent[] }[] = [];
+
+  for (const group of groups) {
+    if (group.type === "tool_call" && isToolCallCompleted(group)) {
+      batch.push({ itemId: group.itemId, events: group.events });
+    } else {
+      if (batch.length > 1) {
+        result.push({ type: "tool_calls_batch", toolCalls: batch });
+      } else if (batch.length === 1) {
+        result.push({ type: "tool_call", ...batch[0] });
+      }
+      batch = [];
+
+      if (group.type === "tool_call") {
+        // Incomplete tool call — don't batch, render inline
+        result.push(group);
+      } else {
+        result.push(group);
+      }
+    }
+  }
+
+  // Flush remaining batch
+  if (batch.length > 1) {
+    result.push({ type: "tool_calls_batch", toolCalls: batch });
+  } else if (batch.length === 1) {
+    result.push({ type: "tool_call", ...batch[0] });
+  }
+
+  return result;
 }

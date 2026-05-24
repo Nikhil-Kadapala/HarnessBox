@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleToolCall } from "@/components/event/collapsible-tool-call";
 import { MarkdownMessage } from "@/components/event/markdown-message";
@@ -10,19 +10,23 @@ import type { UniversalEvent } from "@/types";
 interface EventGroupCardProps {
   group: EventGroup;
   sessionId?: string;
+  isStreaming?: boolean;
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
 }
 
 export const EventGroupCard = memo(function EventGroupCard({
   group,
   sessionId,
+  isStreaming = false,
   onPermissionRespond,
 }: EventGroupCardProps) {
   switch (group.type) {
     case "message":
-      return <MessageGroup deltas={group.deltas} />;
+      return <MessageGroup deltas={group.deltas} isStreaming={isStreaming} />;
     case "tool_call":
       return <CollapsibleToolCall events={group.events} />;
+    case "tool_calls_batch":
+      return <ToolCallsBatch toolCalls={group.toolCalls} />;
     case "reasoning":
       return <ReasoningGroup events={group.events} />;
     case "single":
@@ -36,10 +40,47 @@ export const EventGroupCard = memo(function EventGroupCard({
   }
 });
 
+const ToolCallsBatch = memo(function ToolCallsBatch({
+  toolCalls,
+}: {
+  toolCalls: { itemId: string; events: UniversalEvent[] }[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="my-1">
+      <button
+        className="flex items-center gap-2 py-1.5 px-2 -mx-1 w-full text-left hover:bg-secondary/50 rounded"
+        onClick={() => setOpen(!open)}
+      >
+        <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground">
+          {toolCalls.length} tool calls
+        </span>
+        {open ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground ml-auto" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground ml-auto" />
+        )}
+      </button>
+
+      {open && (
+        <div className="mt-1 pl-2 border-l border-border/50 space-y-0.5">
+          {toolCalls.map((tc) => (
+            <CollapsibleToolCall key={tc.itemId} events={tc.events} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 const MessageGroup = memo(function MessageGroup({
   deltas,
+  isStreaming = false,
 }: {
   deltas: UniversalEvent[];
+  isStreaming?: boolean;
 }) {
   const text = useMemo(
     () => deltas.map((d) => d.message.delta ?? "").join(""),
@@ -47,7 +88,7 @@ const MessageGroup = memo(function MessageGroup({
   );
 
   if (!text) return null;
-  return <MarkdownMessage text={text} />;
+  return <MarkdownMessage text={text} isStreaming={isStreaming} />;
 });
 
 const ReasoningGroup = memo(function ReasoningGroup({

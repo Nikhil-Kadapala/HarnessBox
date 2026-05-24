@@ -7,6 +7,7 @@ function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
     id: "sess-1",
     harness: "claude-code",
     status: "active",
+    runtimeState: "running",
     createdAt: "2026-01-01T00:00:00Z",
     events: [],
     error: null,

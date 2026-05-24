@@ -132,7 +132,8 @@ export interface CreateSessionRequest {
 export interface SessionResponse {
   session_id: string;
   harness: string;
-  status: string;
+  runtime_state: string;
+  workflow_state: string;
   created_at: string;
   workspace_name?: string;
   branch?: string;
@@ -183,6 +184,7 @@ export interface SessionEntry {
   id: string;
   harness: string;
   status: SessionStatus;
+  runtimeState: string;
   createdAt: string;
   events: UniversalEvent[];
   error: string | null;

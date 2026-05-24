@@ -14,7 +14,7 @@ export type Action =
       type: "update_metadata";
       sessionId: string;
       metadata: Partial<
-        Pick<SessionEntry, "workspaceName" | "branch" | "baseBranch" | "remote">
+        Pick<SessionEntry, "workspaceName" | "branch" | "baseBranch" | "remote" | "runtimeState">
       >;
     };
 
@@ -51,10 +51,19 @@ export function sessionsReducer(state: SessionMap, action: Action): SessionMap {
     case "append_event": {
       const entry = next.get(action.sessionId);
       if (entry) {
-        next.set(action.sessionId, {
-          ...entry,
-          events: [...entry.events, action.event],
-        });
+        const seq = action.event.message.sequence;
+        const lastSeq = entry.events.at(-1)?.message.sequence ?? 0;
+        if (seq > lastSeq) {
+          const runtimeState =
+            action.event.type === "runtime.state"
+              ? (action.event.message.metadata?.runtime_state as string) ?? entry.runtimeState
+              : entry.runtimeState;
+          next.set(action.sessionId, {
+            ...entry,
+            events: [...entry.events, action.event],
+            runtimeState,
+          });
+        }
       }
       return next;
     }
