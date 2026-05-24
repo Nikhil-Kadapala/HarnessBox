@@ -864,7 +864,7 @@ class TestConnectSandbox:
             duration_ms=100,
         )
 
-        async def mock_send_message(conv_id, prompt_text):
+        async def mock_send_message(conv_id, prompt_text, **kwargs):
             yield turn_end_event
 
         with (

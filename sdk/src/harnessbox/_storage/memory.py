@@ -95,19 +95,30 @@ class MemoryBackend:
     # -- Conversation CRUD --
 
     async def save_conversation(self, conversation_record: dict[str, Any]) -> None:
-        """Save conversation to memory dict."""
+        """Upsert conversation to memory dict."""
         conversation_id = conversation_record["conversation_id"]
         workspace_id = conversation_record["workspace_id"]
 
         if workspace_id not in self._conversations:
             self._conversations[workspace_id] = []
 
-        # Check for duplicate conversation_id
         for conv in self._conversations[workspace_id]:
             if conv["conversation_id"] == conversation_id:
-                raise KeyError(f"Conversation {conversation_id} already exists")
+                conv["last_active"] = conversation_record["last_active"]
+                if conversation_record.get("title"):
+                    conv["title"] = conversation_record["title"]
+                if conversation_record.get("agent_session_id"):
+                    conv["agent_session_id"] = conversation_record["agent_session_id"]
+                return
 
         self._conversations[workspace_id].append(conversation_record.copy())
+
+    async def get_active_conversation(self, workspace_id: str) -> dict[str, Any] | None:
+        """Get the most recent conversation for a workspace."""
+        conversations = self._conversations.get(workspace_id, [])
+        if not conversations:
+            return None
+        return max(conversations, key=lambda c: c.get("last_active", ""))
 
     async def get_conversations(self, workspace_id: str) -> list[dict[str, Any]]:
         """Retrieve all conversations for a workspace."""

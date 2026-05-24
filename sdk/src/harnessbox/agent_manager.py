@@ -1,11 +1,11 @@
 """Agent process management — lazy spawn and lifecycle control.
 
-AgentManager handles ephemeral agent processes within a workspace. Agents are
-spawned lazily when a prompt is sent to a conversation_id. Multiple agents can
-run concurrently (git conflicts are user's responsibility).
+AgentManager owns the persistent agent process for a workspace. A single
+long-lived process accepts prompts via stdin JSON lines and streams responses
+on stdout. The process stays alive across turns.
 
-Each agent is identified by conversation_id (Claude's session_id) and runs as
-a AgentProcess with --resume {conversation_id} for conversation continuity.
+On snapshot recovery (process died but session_id is known), the process is
+restarted with --resume <session_id> to restore Claude's conversation history.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class AgentManager:
-    """Manages ephemeral agent processes within a workspace.
+    """Owns the persistent agent process for a workspace.
 
-    Agents are spawned lazily when a prompt is sent to a conversation_id.
-    Multiple agents can run concurrently (user's responsibility to handle git conflicts).
+    A single process stays alive across turns. On recovery (process dead but
+    agent_session_id known), spawns with --resume to restore conversation.
     """
 
     def __init__(self, sandbox: Sandbox) -> None:
@@ -43,16 +43,19 @@ class AgentManager:
         conversation_id: str,
         prompt: str,
         harness: str = "claude-code",
+        *,
+        agent_session_id: str | None = None,
     ) -> AsyncGenerator[UniversalEvent, None]:
-        """Send prompt to conversation, spawn agent lazily if needed.
+        """Send prompt to the workspace's agent process, spawning if needed.
 
         Args:
-            conversation_id: Claude's session_id for --resume
+            conversation_id: Stable conversation identifier (reused across turns)
             prompt: User prompt
             harness: Agent type (claude-code, codex, etc.)
+            agent_session_id: Claude's session_id for --resume on recovery
         """
         if conversation_id not in self._agents:
-            await self._spawn_agent(conversation_id, harness)
+            await self._spawn_agent(conversation_id, harness, agent_session_id=agent_session_id)
 
         if conversation_id not in self._locks:
             self._locks[conversation_id] = asyncio.Lock()
@@ -61,33 +64,38 @@ class AgentManager:
             process = self._agents[conversation_id]
             await process.send_prompt(prompt)
 
-            agent_session_id = ""
+            captured_session_id = ""
             async for event in process.stream_turn():
                 if event.session_id:
-                    agent_session_id = event.session_id
+                    captured_session_id = event.session_id
                 if not event.session_id:
-                    event = replace(event, session_id=agent_session_id or conversation_id)
+                    event = replace(event, session_id=captured_session_id or conversation_id)
                 event = await self._sandbox.event_buffer.push(event)
                 yield event
 
-            sid = agent_session_id or conversation_id
+            sid = captured_session_id or conversation_id
             for status_event in await process.poll_status(session_id=sid, timeout=10):
                 status_event = await self._sandbox.event_buffer.push(status_event)
                 yield status_event
 
-    async def _spawn_agent(self, conversation_id: str, harness: str) -> None:
+    async def _spawn_agent(
+        self,
+        conversation_id: str,
+        harness: str,
+        *,
+        agent_session_id: str | None = None,
+    ) -> None:
         """Spawn agent process.
 
-        On first spawn, do NOT use --resume (let Claude create new session).
-        The conversation_id will be set from Claude's first response.
+        If agent_session_id is provided (recovery from snapshot), uses --resume
+        to restore Claude's conversation history. Otherwise starts fresh.
         """
         harness_config = get_harness_type(harness)
 
-        # Do NOT use --resume on first spawn - Claude will create a new session
         cmd = harness_config.build_session_command(
             skip_permissions=self._sandbox._skip_permissions,
             model=self._sandbox._model,
-            session_id=None,
+            session_id=agent_session_id,
         )
 
         parser = StreamParser(persistent=True)
@@ -98,7 +106,10 @@ class AgentManager:
         self._agents[conversation_id] = process
         self._locks[conversation_id] = asyncio.Lock()
 
-        logger.info(f"Spawned agent for conversation {conversation_id}")
+        logger.info(
+            f"Spawned agent for conversation {conversation_id}"
+            + (f" (resuming session {agent_session_id})" if agent_session_id else "")
+        )
 
     def list_conversations(self) -> list[str]:
         """Return list of active conversation IDs."""

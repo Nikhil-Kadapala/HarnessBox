@@ -221,24 +221,40 @@ class SQLiteBackend:
     def _save_conversation_sync(self, record: dict[str, Any]) -> None:
         if self._conn is None:
             raise RuntimeError("SQLiteBackend not initialized")
-        try:
-            self._conn.execute(
-                """
-                INSERT INTO conversations (
-                    conversation_id, workspace_id, agent_type, title, last_active
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    record["conversation_id"],
-                    record["workspace_id"],
-                    record["agent_type"],
-                    record.get("title"),
-                    record["last_active"],
-                ),
-            )
-            self._conn.commit()
-        except sqlite3.IntegrityError as e:
-            raise KeyError(f"Conversation {record['conversation_id']} already exists") from e
+        self._conn.execute(
+            """
+            INSERT INTO conversations (
+                conversation_id, workspace_id, agent_type, title, last_active, agent_session_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                last_active = excluded.last_active,
+                title = COALESCE(excluded.title, conversations.title),
+                agent_session_id = COALESCE(excluded.agent_session_id, conversations.agent_session_id)
+            """,
+            (
+                record["conversation_id"],
+                record["workspace_id"],
+                record["agent_type"],
+                record.get("title"),
+                record["last_active"],
+                record.get("agent_session_id"),
+            ),
+        )
+        self._conn.commit()
+
+    async def get_active_conversation(self, workspace_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            return await asyncio.to_thread(self._get_active_conversation_sync, workspace_id)
+
+    def _get_active_conversation_sync(self, workspace_id: str) -> dict[str, Any] | None:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        cursor = self._conn.execute(
+            "SELECT * FROM conversations WHERE workspace_id = ? ORDER BY last_active DESC LIMIT 1",
+            (workspace_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     async def get_conversations(self, workspace_id: str) -> list[dict[str, Any]]:
         async with self._lock:
