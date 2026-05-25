@@ -1,8 +1,9 @@
 """Agent process management — lazy spawn and lifecycle control.
 
-AgentManager owns the persistent agent process for a workspace. A single
-long-lived process accepts prompts via stdin JSON lines and streams responses
-on stdout. The process stays alive across turns.
+AgentManager maintains persistent agent processes per conversation_id within
+a workspace. Each process accepts prompts via stdin JSON lines and streams
+responses on stdout, staying alive across multiple turns for the same
+conversation.
 
 On snapshot recovery (process died but session_id is known), the process is
 restarted with --resume <session_id> to restore Claude's conversation history.
@@ -27,10 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 class AgentManager:
-    """Owns the persistent agent process for a workspace.
+    """Maintains persistent agent processes per conversation_id within a workspace.
 
-    A single process stays alive across turns. On recovery (process dead but
-    agent_session_id known), spawns with --resume to restore conversation.
+    Each conversation gets its own long-lived process, reused across turns.
+    On recovery (process dead but agent_session_id known), spawns with --resume
+    to restore conversation history.
     """
 
     def __init__(self, sandbox: Sandbox) -> None:

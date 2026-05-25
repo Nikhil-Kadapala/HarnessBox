@@ -103,7 +103,8 @@ class EventBuffer:
         self._flush_task: asyncio.Task[None] | None = None
 
         # Cross-batch delta accumulator for storage compaction
-        self._delta_acc: dict[str, str] = {}
+        # Keyed by (item_id, item_kind) to avoid tool_call/tool_result collisions
+        self._delta_acc: dict[tuple[str, str], str] = {}
 
         # Start flush task if storage enabled
         if storage:
@@ -232,13 +233,13 @@ class EventBuffer:
 
         for event in batch:
             if event.event_type == EventType.ITEM_DELTA and event.item_id:
-                self._delta_acc[event.item_id] = self._delta_acc.get(event.item_id, "") + (
-                    event.delta or ""
-                )
+                key = (event.item_id, event.item_kind.value if event.item_kind else "")
+                self._delta_acc[key] = self._delta_acc.get(key, "") + (event.delta or "")
                 continue
 
             if event.event_type == EventType.ITEM_COMPLETED and event.item_id:
-                full_text = self._delta_acc.pop(event.item_id, None)
+                key = (event.item_id, event.item_kind.value if event.item_kind else "")
+                full_text = self._delta_acc.pop(key, None)
                 if full_text:
                     event = UniversalEvent(
                         event_id=event.event_id,
@@ -332,7 +333,9 @@ class EventBuffer:
             from datetime import datetime, timezone
 
             now = datetime.now(timezone.utc).isoformat()
-            for item_id, text in self._delta_acc.items():
+            for (item_id, kind_value), text in self._delta_acc.items():
+                self._sequence += 1
+                item_kind = ItemKind(kind_value) if kind_value else ItemKind.MESSAGE
                 self._pending.append(
                     UniversalEvent(
                         event_id=str(uuid.uuid4()),
@@ -341,7 +344,7 @@ class EventBuffer:
                         session_id=self._session_id,
                         event_type=EventType.ITEM_COMPLETED,
                         item_id=item_id,
-                        item_kind=ItemKind.MESSAGE,
+                        item_kind=item_kind,
                         item_status=ItemStatus.COMPLETED,
                         content=(ContentPart(type="text", text=text),),
                     )

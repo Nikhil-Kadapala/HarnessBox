@@ -91,7 +91,7 @@ class TestMigrationRunner:
             with pytest.raises(RuntimeError, match="Intentional failure"):
                 runner.run_pending()
 
-            # Version should stay at 4 (v005 rolled back)
+            # Version should stay at 5 (fake v006 rolled back)
             assert runner.get_version() == 5
         finally:
             migrations.MIGRATIONS[:] = original
