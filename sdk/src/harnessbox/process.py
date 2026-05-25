@@ -106,7 +106,14 @@ class AgentProcess:
         """
         if not self._running or self._pid is None:
             raise RuntimeError("Agent process not running")
-        msg = json.dumps({"type": "user", "message": {"role": "user", "content": text}})
+        msg = json.dumps(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": text},
+                "session_id": "",
+                "parent_tool_use_id": None,
+            }
+        )
         _log.info("Sending prompt: %s", msg[:200])
 
         last_err: Exception | None = None
@@ -179,7 +186,14 @@ class AgentProcess:
         """
         if not self._running or self._pid is None:
             raise RuntimeError("Agent process not running")
-        msg = json.dumps({"type": "user", "message": {"role": "user", "content": command}})
+        msg = json.dumps(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": command},
+                "session_id": "",
+                "parent_tool_use_id": None,
+            }
+        )
         _log.info("Sending command: %s", command)
         await self._provider.send_stdin(self._pid, msg + "\n")
 

@@ -17,6 +17,7 @@ MIGRATIONS: list[str] = [
     "harnessbox._storage.migrations.v002_event_type_index",
     "harnessbox._storage.migrations.v003_split_state",
     "harnessbox._storage.migrations.v004_drop_legacy_status",
+    "harnessbox._storage.migrations.v005_conversation_session_id",
 ]
 
 

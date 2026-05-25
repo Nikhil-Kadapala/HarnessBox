@@ -223,6 +223,7 @@ class ParserState:
     turn_active: bool = False
     persistent: bool = False
     turn_count: int = 0
+    in_replay: bool = False
 
 
 def _make_event(
@@ -291,6 +292,11 @@ def _parse_system(
 
     if subtype != "init":
         return state, None
+
+    # Suppress duplicate init emitted after replay cycle completes
+    if state.in_replay:
+        sid = data.get("session_id", "") or state.session_id
+        return replace(state, session_id=sid, in_replay=False), None
 
     sid = data.get("session_id", "") or state.session_id
     turn_count = state.turn_count + 1
@@ -533,6 +539,9 @@ def _parse_assistant(
 def _parse_user(
     state: ParserState, data: dict[str, Any]
 ) -> tuple[ParserState, list[UniversalEvent]]:
+    if data.get("isReplay"):
+        return replace(state, in_replay=True), []
+
     message = data.get("message", {})
     content = message.get("content", [])
     if not isinstance(content, list):
@@ -632,6 +641,9 @@ def _parse_result(
     import logging
 
     logger = logging.getLogger("harnessbox.streaming")
+
+    if state.in_replay:
+        return state, []
 
     sid = state.session_id or data.get("session_id", "")
     is_error = data.get("is_error", False)

@@ -122,18 +122,28 @@ class StorageBackend(Protocol):
     # -- Conversation CRUD --
 
     async def save_conversation(self, conversation_record: dict[str, Any]) -> None:
-        """Save a new conversation record.
+        """Upsert a conversation record.
+
+        On first call for a conversation_id, inserts a new row.
+        On subsequent calls, updates last_active and title.
 
         Args:
             conversation_record: Conversation metadata dict with keys:
-                - conversation_id (str, required) — Claude's session_id
+                - conversation_id (str, required)
                 - workspace_id (str, required)
                 - agent_type (str, required)
                 - title (str | None)
                 - last_active (str ISO 8601, required)
+                - agent_session_id (str | None) — Claude's session_id for --resume
+        """
+        ...
 
-        Raises:
-            IntegrityError or equivalent if conversation_id already exists.
+    async def get_active_conversation(self, workspace_id: str) -> dict[str, Any] | None:
+        """Get the most recent conversation for a workspace.
+
+        Returns:
+            The conversation record with the latest last_active, or None
+            if no conversations exist for this workspace.
         """
         ...
 

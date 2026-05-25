@@ -1,12 +1,6 @@
 import type { ContextCategory, SessionContextStats } from "@/types";
 
 // ============================================================================
-// Types
-// ============================================================================
-
-export type MetricsTab = "context" | "cost";
-
-// ============================================================================
 // Constants
 // ============================================================================
 
@@ -26,7 +20,7 @@ export const CATEGORY_STYLES: Record<string, { color: string; label: string }> =
   used_context: { color: "#f29a8a", label: "Used context" },
 } as const;
 
-export const CATEGORY_ORDER = [
+const CATEGORY_ORDER = [
   "system_prompt",
   "system_tools",
   "memory_files",
@@ -40,28 +34,6 @@ export const CATEGORY_ORDER = [
   "free_space",
   "autocompact_buffer",
 ] as const;
-
-// ============================================================================
-// Animation Variants
-// ============================================================================
-
-export const panelVariants = {
-  hidden: { opacity: 0, y: 10, scale: 0.98 },
-  visible: { opacity: 1, y: 0, scale: 1 },
-  exit: { opacity: 0, y: 8, scale: 0.98 },
-};
-
-export const contentVariants = {
-  enter: (direction: number) => ({
-    x: direction > 0 ? 300 : -300,
-    opacity: 0,
-  }),
-  center: { x: 0, opacity: 1 },
-  exit: (direction: number) => ({
-    x: direction < 0 ? 300 : -300,
-    opacity: 0,
-  }),
-};
 
 // ============================================================================
 // Utilities

@@ -454,9 +454,17 @@ class WorkspaceManager:
         # Ensure sandbox is connected (lazy init for cold/paused workspaces)
         await self._ensure_sandbox(workspace_id)
 
-        # Generate conversation_id if not provided
+        # Reuse existing conversation or create one on first prompt.
+        # Also retrieve the stored agent_session_id for --resume on recovery.
+        stored_agent_session_id: str | None = None
         if conversation_id is None:
-            conversation_id = str(uuid.uuid4())
+            if self._storage:
+                active_conv = await self._storage.get_active_conversation(workspace_id)
+                if active_conv:
+                    conversation_id = active_conv["conversation_id"]
+                    stored_agent_session_id = active_conv.get("agent_session_id")
+            if conversation_id is None:
+                conversation_id = str(uuid.uuid4())
 
         # Turn starting — cancel idle countdown and bump the in-flight counter.
         # We only restart the timer once ALL concurrent turns have completed,
@@ -547,10 +555,13 @@ class WorkspaceManager:
                         f"{prompt}\n\n[Attached files written to sandbox:\n{file_list}]"
                     )
 
-                # Save conversation on first agent event
-                first_event = True
+                # Upsert conversation and capture Claude's session_id for recovery
+                conversation_saved = False
+                agent_session_id: str | None = None
                 async for event in info.agent_manager.send_message(
-                    conversation_id, augmented_prompt
+                    conversation_id,
+                    augmented_prompt,
+                    agent_session_id=stored_agent_session_id,
                 ):
                     if (
                         event.event_type == "error"
@@ -561,8 +572,11 @@ class WorkspaceManager:
                     if event.cost_usd is not None:
                         info.total_cost_usd = event.cost_usd
 
-                    if first_event and self._storage:
-                        first_event = False
+                    if event.session_id and not agent_session_id:
+                        agent_session_id = event.session_id
+
+                    if not conversation_saved and self._storage:
+                        conversation_saved = True
                         try:
                             await self._storage.save_conversation(
                                 {
@@ -571,6 +585,7 @@ class WorkspaceManager:
                                     "agent_type": info.harness,
                                     "title": prompt[:50],
                                     "last_active": datetime.now(timezone.utc).isoformat(),
+                                    "agent_session_id": agent_session_id,
                                 }
                             )
                         except Exception as e:
@@ -595,6 +610,16 @@ class WorkspaceManager:
                                 logger.error(
                                     f"Failed to persist last_active for {workspace_id}: {e}"
                                 )
+                            if agent_session_id:
+                                try:
+                                    await self._storage.update_conversation(
+                                        conversation_id,
+                                        agent_session_id=agent_session_id,
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to persist agent_session_id for {conversation_id}: {e}"
+                                    )
                         active = max(0, self._active_turns.get(workspace_id, 1) - 1)
                         self._active_turns[workspace_id] = active
                         if active == 0 and self._auto_pause:
