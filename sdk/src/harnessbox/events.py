@@ -232,8 +232,8 @@ class EventBuffer:
 
         for event in batch:
             if event.event_type == EventType.ITEM_DELTA and event.item_id:
-                self._delta_acc[event.item_id] = (
-                    self._delta_acc.get(event.item_id, "") + (event.delta or "")
+                self._delta_acc[event.item_id] = self._delta_acc.get(event.item_id, "") + (
+                    event.delta or ""
                 )
                 continue
 

@@ -68,7 +68,10 @@ class TestReplaySuppression:
     def _replay_user(self) -> str:
         return _line(
             type="user",
-            message={"role": "user", "content": "<local-command-stdout>cost info</local-command-stdout>"},
+            message={
+                "role": "user",
+                "content": "<local-command-stdout>cost info</local-command-stdout>",
+            },
             session_id="sess-1",
             parent_tool_use_id=None,
             isReplay=True,

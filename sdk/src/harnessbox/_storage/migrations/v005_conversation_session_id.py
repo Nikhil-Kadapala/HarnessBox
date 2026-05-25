@@ -6,6 +6,4 @@ import sqlite3
 
 
 def upgrade(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "ALTER TABLE conversations ADD COLUMN agent_session_id TEXT"
-    )
+    conn.execute("ALTER TABLE conversations ADD COLUMN agent_session_id TEXT")
