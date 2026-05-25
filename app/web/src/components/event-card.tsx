@@ -83,7 +83,10 @@ const MessageGroup = memo(function MessageGroup({
   isStreaming?: boolean;
 }) {
   const text = useMemo(
-    () => deltas.map((d) => d.message.delta ?? "").join(""),
+    () =>
+      deltas
+        .map((d) => d.message.delta ?? d.message.content?.[0]?.text ?? "")
+        .join(""),
     [deltas],
   );
 
@@ -100,8 +103,8 @@ const ReasoningGroup = memo(function ReasoningGroup({
   const text = useMemo(
     () =>
       events
-        .filter((e) => e.type === "item.delta")
-        .map((e) => e.message.delta ?? "")
+        .filter((e) => e.type === "item.delta" || e.type === "item.completed")
+        .map((e) => e.message.delta ?? e.message.content?.[0]?.text ?? "")
         .join(""),
     [events],
   );

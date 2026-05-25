@@ -222,6 +222,12 @@ class WorkspaceManager:
         # Count of in-flight turns per workspace (across all concurrent conversations).
         # The idle timer only restarts when this count drops to zero, ensuring we
         # never auto-pause a workspace that still has an active agent turn running.
+        #
+        # NOTE (shared mode evolution): In 1:1 mode this counter is always 0 or 1
+        # because prompt() holds the per-workspace lock. For shared mode (N sessions
+        # per workspace), the lock moves to per-conversation (AgentManager already has
+        # this), _active_turns tracks concurrent sessions, and the pause decision
+        # becomes: all sessions idle. EventBuffer also needs per-session partitioning.
         self._active_turns: dict[str, int] = {}
 
     def _ensure_lock(self, workspace_id: str) -> asyncio.Lock:
@@ -292,7 +298,7 @@ class WorkspaceManager:
             skip_permissions=config.skip_permissions,
             template=config.template,
             event_handler=event_handler,
-            session_timeout=config.session_timeout,
+            session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
             session_lock=lock,
             storage=self._storage,
             session_id=wid,
@@ -399,6 +405,13 @@ class WorkspaceManager:
                     logger.warning(f"Malformed config_json for workspace {wid}, skipping")
                     continue
 
+                # Workspaces loaded from storage have no live sandbox connection.
+                # If the stored state was "active", downgrade to "paused" — the sandbox
+                # is unreachable until _ensure_sandbox() reconnects it on first use.
+                stored_state = record["runtime_state"]
+                if stored_state == RuntimeState.ACTIVE.value:
+                    stored_state = RuntimeState.PAUSED.value
+
                 info = WorkspaceInstance(
                     workspace_id=wid,
                     remote=record.get("remote", ""),
@@ -406,7 +419,7 @@ class WorkspaceManager:
                     provider=record["provider"],
                     provider_sandbox_id=record.get("provider_sandbox_id"),
                     snapshot_id=record.get("snapshot_id"),
-                    runtime_state=record["runtime_state"],
+                    runtime_state=stored_state,
                     workflow_state=record.get("workflow_state", WorkflowState.BACKLOG.value),
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
@@ -861,7 +874,7 @@ class WorkspaceManager:
                 timeout=config_dict.get("timeout", 300),
                 skip_permissions=config_dict.get("skip_permissions", False),
                 template=config_dict.get("template"),
-                session_timeout=config_dict.get("session_timeout", 1800),
+                session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
                 session_lock=self._locks[workspace_id],
                 storage=self._storage,
                 session_id=workspace_id,
@@ -1110,14 +1123,12 @@ class WorkspaceManager:
             await self._pause_workspace_locked(workspace_id, info)
 
     async def _pause_workspace_locked(self, workspace_id: str, info: WorkspaceInstance) -> None:
-        """Pause workspace internals. Caller must hold self._locks[workspace_id]."""
-        # Stop all agents (best-effort: don't let agent stop failure block pause)
-        if info.agent_manager:
-            try:
-                await info.agent_manager.shutdown_all()
-            except Exception as e:
-                logger.warning(f"Agent shutdown failed for {workspace_id}: {e}")
+        """Pause workspace internals. Caller must hold self._locks[workspace_id].
 
+        Does NOT kill agent processes — E2B pause preserves all running processes
+        and memory. On resume the Claude process wakes exactly where it left off,
+        ready to accept the next stdin prompt without respawning.
+        """
         # Create snapshot (captures filesystem including ~/.claude/sessions/)
         try:
             snapshot_id = await info.sandbox_conn.create_snapshot()
@@ -1125,15 +1136,15 @@ class WorkspaceManager:
             logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
             snapshot_id = None
 
-        # Pause sandbox
+        # Notify SSE subscribers BEFORE pause (pause closes the event buffer)
+        await self._emit_runtime_state(workspace_id, RuntimeState.PAUSED.value)
+
+        # Pause sandbox — preserves running processes, env vars, and memory
         provider_sandbox_id = await info.sandbox_conn.pause()
 
         info.provider_sandbox_id = provider_sandbox_id
         info.snapshot_id = snapshot_id
         info.runtime_state = RuntimeState.PAUSED.value
-
-        # Notify subscribers before closing buffer
-        await self._emit_runtime_state(workspace_id, RuntimeState.PAUSED.value)
 
         # Persist
         if self._storage:
@@ -1322,8 +1333,41 @@ class WorkspaceManager:
             new_sandbox_id,
         )
 
+    async def graceful_shutdown(self) -> None:
+        """Pause all active workspaces with snapshots for later recovery.
+
+        Called during server shutdown to preserve sessions across restarts.
+        Workspaces that are already paused/dead are left as-is. Workspaces
+        without a live sandbox connection (loaded from storage but never used)
+        are skipped — their stored state is already correct.
+        """
+        for wid in list(self._idle_timers):
+            self._cancel_idle_timer(wid)
+
+        for wid in list(self._workspaces):
+            info = self._workspaces[wid]
+            if info.runtime_state != RuntimeState.ACTIVE.value:
+                continue
+            if info.sandbox_conn is None:
+                continue
+            try:
+                async with self._ensure_lock(wid):
+                    await asyncio.wait_for(
+                        self._pause_workspace_locked(wid, info),
+                        timeout=30.0,
+                    )
+                logger.info(f"Graceful shutdown: paused workspace {wid}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Graceful shutdown: timeout pausing {wid}, skipping")
+            except Exception as e:
+                logger.warning(f"Graceful shutdown: failed to pause {wid}: {e}")
+
     async def shutdown_all(self) -> None:
-        """Destroy all active workspaces and cancel per-workspace idle tasks."""
+        """Destroy all active workspaces and cancel per-workspace idle tasks.
+
+        Use graceful_shutdown() instead for server restarts where sessions
+        should be preserved.
+        """
         # Cancel all idle countdown tasks
         for wid in list(self._idle_timers):
             self._cancel_idle_timer(wid)

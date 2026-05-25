@@ -100,7 +100,9 @@ export function statusFromEvent(event: UniversalEvent): SessionStatus | null {
     case "turn.started":
       return "streaming";
     case "turn.ended":
-      return "active";
+      return event.message.metadata?.is_error ? "error" : "active";
+    case "runtime.state":
+      return (event.message.metadata?.runtime_state as SessionStatus) ?? null;
     case "error":
       return "error";
     default:
