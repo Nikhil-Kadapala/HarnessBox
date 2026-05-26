@@ -41,6 +41,9 @@ class SetupContext:
     plugin_dirs: list[str] = field(default_factory=list)
     setup_script: str | None = None
 
+    # Whether to allow .harnessbox.toml setup_script from cloned repos
+    allow_project_setup_script: bool = True
+
     # Snapshot-based creation (skips template)
     snapshot_id: str | None = None
 
@@ -141,11 +144,12 @@ def build_setup_pipeline(
     2. check_tools — diagnostic: which tools are pre-installed
     3. create_workspace_root — mkdir the workspace root directory
     4. inject_workspace — git clone or mount filesystem
-    5. build_manifest — compute files/dirs/env to inject (pure)
-    6. create_directories — mkdir all manifest directories
-    7. inject_files — write all manifest files
-    8. set_hook_permissions — chmod hook scripts
-    9. run_setup_script — user-provided setup command
+    5. load_project_config — read .harnessbox.toml and merge presets
+    6. build_manifest — compute files/dirs/env to inject (pure)
+    7. create_directories — mkdir all manifest directories
+    8. inject_files — write all manifest files
+    9. set_hook_permissions — chmod hook scripts
+    10. run_setup_script — user-provided setup command
 
     Extra steps are appended after the standard ones.
     """
@@ -161,6 +165,11 @@ def build_setup_pipeline(
             name="inject_workspace",
             execute=_step_inject_workspace,
             skip_if=lambda ctx: ctx.workspace is None,
+        ),
+        SetupStep(
+            name="load_project_config",
+            execute=_step_load_project_config,
+            skip_if=_is_mock_provider,
         ),
         SetupStep(name="build_manifest", execute=_step_build_manifest),
         SetupStep(name="create_directories", execute=_step_create_directories),
@@ -291,3 +300,59 @@ async def _step_run_setup_script(ctx: SetupContext) -> None:
     result = await ctx.provider.run_command(ctx.setup_script, cwd=ctx.manifest_target_dir)
     if result.exit_code != 0:
         raise RuntimeError(f"Setup script failed (exit {result.exit_code}): {result.stderr}")
+
+
+async def _step_load_project_config(ctx: SetupContext) -> None:
+    """Load .harnessbox.toml from the workspace and merge preset values."""
+    from harnessbox.config.project import (
+        ProjectConfigError,
+        load_project_config,
+        merge_preset_into_context,
+        register_custom_agents,
+    )
+
+    workspace_root = ctx.cwd if ctx.cwd else ctx.harness_config.workspace_root
+    toml_path = f"{workspace_root}/.harnessbox.toml"
+
+    try:
+        toml_content = await ctx.provider.read_file(toml_path)
+    except (FileNotFoundError, OSError):
+        return
+
+    try:
+        project_config = load_project_config(toml_content)
+    except ProjectConfigError as e:
+        _log.warning("Invalid .harnessbox.toml, skipping: %s", e)
+        return
+
+    try:
+        register_custom_agents(project_config)
+    except ProjectConfigError as e:
+        _log.warning("Failed to register custom agents: %s", e)
+
+    workspace_root_for_merge = ctx.cwd if ctx.cwd else ctx.harness_config.workspace_root
+    effective_preset_script = project_config.workspace.setup_script
+    if not ctx.allow_project_setup_script:
+        effective_preset_script = None
+
+    from harnessbox.config.project import WorkspacePreset
+
+    merge_preset = WorkspacePreset(
+        setup_script=effective_preset_script,
+        env=project_config.workspace.env,
+        files=project_config.workspace.files,
+        extra_dirs=project_config.workspace.extra_dirs,
+    )
+
+    env_vars, files, dirs, setup_script = merge_preset_into_context(
+        merge_preset,
+        ctx_env_vars=ctx.env_vars,
+        ctx_files=ctx.files,
+        ctx_dirs=ctx.dirs,
+        ctx_setup_script=ctx.setup_script,
+        workspace_root=workspace_root_for_merge,
+    )
+    ctx.env_vars = env_vars
+    ctx.files = files
+    ctx.dirs = dirs
+    ctx.setup_script = setup_script
