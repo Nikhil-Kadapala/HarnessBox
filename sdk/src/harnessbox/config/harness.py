@@ -37,6 +37,46 @@ class HarnessTypeConfig:
     build_settings: Callable[[SecurityPolicy], dict[str, Any]] | None = None
     build_hook_script: Callable[[SecurityPolicy], str] | None = None
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> HarnessTypeConfig:
+        """Create a HarnessTypeConfig from a dictionary (e.g., parsed TOML).
+
+        Lists are coerced to tuples for tuple-typed fields.
+        Unknown keys are silently ignored. Callable fields (build_settings,
+        build_hook_script) cannot be expressed in config and default to None.
+        """
+
+        def _to_tuple(val: Any, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+            if val is None:
+                return default
+            if isinstance(val, (list, tuple)):
+                return tuple(val)
+            return default
+
+        name = data.get("name", "")
+        cli_command = data.get("cli_command", "")
+
+        return cls(
+            name=name,
+            config_dir=data.get("config_dir", ""),
+            settings_file=data.get("settings_file"),
+            hooks_dir=data.get("hooks_dir"),
+            system_prompt_file=data.get("system_prompt_file", "AGENTS.md"),
+            default_dirs=_to_tuple(data.get("default_dirs"), ("/workspace",)),
+            cli_command=cli_command,
+            cli_base_flags=_to_tuple(data.get("cli_base_flags")),
+            cli_oneshot_flags=_to_tuple(data.get("cli_oneshot_flags")),
+            cli_interactive_flags=_to_tuple(data.get("cli_interactive_flags")),
+            cli_prompt_flag=data.get("cli_prompt_flag", "-p"),
+            skip_permissions_flag=data.get("skip_permissions_flag"),
+            cli_resume_flag=data.get("cli_resume_flag"),
+            default_template=data.get("default_template"),
+            skills_dir=data.get("skills_dir"),
+            plugin_flag=data.get("plugin_flag"),
+            cli_input_format_flag=data.get("cli_input_format_flag"),
+            workspace_root=data.get("workspace_root", "/workspace"),
+        )
+
     @property
     def supports_persistent(self) -> bool:
         """Return whether this harness supports persistent stdin/stdout mode."""

@@ -216,6 +216,7 @@ class TestBuildSetupPipeline:
             "check_tools",
             "create_workspace_root",
             "inject_workspace",
+            "load_project_config",
             "build_manifest",
             "create_directories",
             "inject_files",
