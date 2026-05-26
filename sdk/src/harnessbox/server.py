@@ -342,12 +342,12 @@ def create_app(
 
         yield
 
-        # Shutdown: close storage
+        # Shutdown: pause active workspaces (creates snapshots for recovery)
+        await mgr.graceful_shutdown()
+
         if mgr._storage:
             await mgr._storage.close()
             logger.info("Storage closed")
-
-        await mgr.shutdown_all()
 
     app = FastAPI(
         title="HarnessBox",

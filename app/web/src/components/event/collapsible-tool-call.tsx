@@ -37,7 +37,12 @@ export const CollapsibleToolCall = memo(function CollapsibleToolCall({
   const icon = toolIcons[toolKind] ?? "*";
 
   const resultContent = resultEvent?.message.content?.[0];
-  const deltaText = deltas.map((d) => d.message.delta ?? "").join("");
+  const completedEvent = events.find(
+    (e) => e.type === "item.completed" && e.message.item_kind === "tool_call",
+  );
+  const deltaText =
+    completedEvent?.message.content?.[0]?.text ??
+    deltas.map((d) => d.message.delta ?? "").join("");
 
   return (
     <div className="my-1">

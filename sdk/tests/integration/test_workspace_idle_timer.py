@@ -365,3 +365,160 @@ class TestSnapshotRecovery:
 
         records = await storage.list_workspaces()
         assert records[0]["provider_sandbox_id"] == "sb-new"
+
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown, load state correction, and timer disable
+# ---------------------------------------------------------------------------
+
+
+class TestGracefulShutdown:
+    @pytest.mark.asyncio
+    async def test_graceful_shutdown_pauses_active_workspaces(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+
+        sandbox_mock = MagicMock()
+        sandbox_mock.create_snapshot = AsyncMock(return_value="snap-1")
+        sandbox_mock.pause = AsyncMock(return_value="sb-1")
+        sandbox_mock._event_buffer = MagicMock()
+        sandbox_mock._event_buffer.close = AsyncMock()
+        sandbox_mock._event_buffer.push = AsyncMock()
+
+        info = WorkspaceInstance(
+            workspace_id="w-1",
+            remote="",
+            branch="",
+            provider="mock",
+            provider_sandbox_id="sb-1",
+            snapshot_id=None,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state="in_progress",
+            created_at="",
+            last_active="",
+            sandbox_conn=sandbox_mock,
+        )
+        mgr._workspaces["w-1"] = info
+        mgr._locks["w-1"] = asyncio.Lock()
+
+        await mgr.graceful_shutdown()
+
+        assert info.runtime_state == RuntimeState.PAUSED.value
+        assert info.snapshot_id == "snap-1"
+        sandbox_mock.create_snapshot.assert_awaited_once()
+        sandbox_mock.pause.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_graceful_shutdown_skips_paused_workspaces(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+
+        info = WorkspaceInstance(
+            workspace_id="w-1",
+            remote="",
+            branch="",
+            provider="mock",
+            provider_sandbox_id="sb-1",
+            snapshot_id="snap-old",
+            runtime_state=RuntimeState.PAUSED.value,
+            workflow_state="in_progress",
+            created_at="",
+            last_active="",
+            sandbox_conn=None,
+        )
+        mgr._workspaces["w-1"] = info
+
+        await mgr.graceful_shutdown()
+
+        assert info.runtime_state == RuntimeState.PAUSED.value
+
+    @pytest.mark.asyncio
+    async def test_graceful_shutdown_timeout_guard(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+
+        async def slow_snapshot() -> str:
+            await asyncio.sleep(60)
+            return "snap-never"
+
+        sandbox_mock = MagicMock()
+        sandbox_mock.create_snapshot = slow_snapshot
+        sandbox_mock.pause = AsyncMock(return_value="sb-1")
+        sandbox_mock._event_buffer = MagicMock()
+        sandbox_mock._event_buffer.close = AsyncMock()
+        sandbox_mock._event_buffer.push = AsyncMock()
+
+        info = WorkspaceInstance(
+            workspace_id="w-1",
+            remote="",
+            branch="",
+            provider="mock",
+            provider_sandbox_id="sb-1",
+            snapshot_id=None,
+            runtime_state=RuntimeState.ACTIVE.value,
+            workflow_state="in_progress",
+            created_at="",
+            last_active="",
+            sandbox_conn=sandbox_mock,
+        )
+        mgr._workspaces["w-1"] = info
+        mgr._locks["w-1"] = asyncio.Lock()
+
+        # Should not hang — timeout guard at 30s, but we patch wait_for
+        with patch(
+            "harnessbox.workspace_manager.asyncio.wait_for", side_effect=asyncio.TimeoutError
+        ):
+            await mgr.graceful_shutdown()
+
+        # Workspace was NOT paused (timed out)
+        assert info.runtime_state == RuntimeState.ACTIVE.value
+
+
+class TestLoadWorkspacesStateDowngrade:
+    @pytest.mark.asyncio
+    async def test_active_state_downgraded_to_paused_on_load(self) -> None:
+        from harnessbox._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        await storage.initialize()
+
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-1",
+                "remote": "https://github.com/test/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": "sb-old",
+                "snapshot_id": "snap-1",
+                "harness": "claude-code",
+                "runtime_state": RuntimeState.ACTIVE.value,
+                "workflow_state": "in_progress",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_active": "2026-01-01T00:00:00Z",
+                "config_json": "{}",
+            }
+        )
+
+        mgr = WorkspaceManager(storage=storage)
+        await mgr.load_workspaces()
+
+        info = mgr.get_workspace("w-1")
+        assert info.runtime_state == RuntimeState.PAUSED.value
+        assert info.sandbox_conn is None
+
+
+class TestSessionTimeoutDisabledForManagedSandbox:
+    @pytest.mark.asyncio
+    async def test_sandbox_created_with_session_timeout_zero(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager"),
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance._cwd = "/workspace"
+            await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
+
+            call_kwargs = MockSandbox.call_args[1]
+            assert call_kwargs["session_timeout"] == 0
+
+        mgr._cancel_idle_timer("w-1")
