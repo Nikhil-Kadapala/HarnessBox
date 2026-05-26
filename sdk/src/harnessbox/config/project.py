@@ -110,7 +110,10 @@ def _parse_workspace(raw: Any) -> WorkspacePreset:
     ):
         raise ProjectConfigError("[workspace].files must be a table of string key-value pairs")
 
-    extra_dirs = raw.get("dirs", {}).get("extra", []) if isinstance(raw.get("dirs"), dict) else []
+    dirs_raw = raw.get("dirs")
+    if dirs_raw is not None and not isinstance(dirs_raw, dict):
+        raise ProjectConfigError("[workspace].dirs must be a table (e.g., dirs.extra = [...])")
+    extra_dirs = dirs_raw.get("extra", []) if isinstance(dirs_raw, dict) else []
     if not isinstance(extra_dirs, list) or not all(isinstance(d, str) for d in extra_dirs):
         raise ProjectConfigError("[workspace].dirs.extra must be a list of strings")
 
@@ -170,6 +173,14 @@ def _agent_spec_from_dict(data: dict[str, Any], index: int) -> CustomAgentSpec:
             raise ProjectConfigError(f"[[agents]][{index}].{key} must be a string")
         return val
 
+    def _validated_str(d: dict[str, Any], key: str, default: str, idx: int) -> str:
+        val = d.get(key)
+        if val is None:
+            return default
+        if not isinstance(val, str):
+            raise ProjectConfigError(f"[[agents]][{idx}].{key} must be a string")
+        return val
+
     def _tuple_of_str(key: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
         val = data.get(key)
         if val is None:
@@ -181,7 +192,7 @@ def _agent_spec_from_dict(data: dict[str, Any], index: int) -> CustomAgentSpec:
     return CustomAgentSpec(
         name=name,
         cli_command=cli_command,
-        config_dir=data.get("config_dir", "") if isinstance(data.get("config_dir"), str) else "",
+        config_dir=_validated_str(data, "config_dir", "", index),
         system_prompt_file=_str_or_none("system_prompt_file") or "AGENTS.md",
         default_dirs=_tuple_of_str("default_dirs", ("/workspace",)),
         cli_base_flags=_tuple_of_str("cli_base_flags"),
@@ -193,26 +204,44 @@ def _agent_spec_from_dict(data: dict[str, Any], index: int) -> CustomAgentSpec:
         cli_input_format_flag=_str_or_none("cli_input_format_flag"),
         settings_file=_str_or_none("settings_file"),
         hooks_dir=_str_or_none("hooks_dir"),
-        workspace_root=data.get("workspace_root", "/workspace")
-        if isinstance(data.get("workspace_root"), str)
-        else "/workspace",
+        workspace_root=_validated_str(data, "workspace_root", "/workspace", index),
     )
+
+
+_BUILTIN_HARNESS_NAMES: frozenset[str] = frozenset()
+
+
+def _snapshot_builtins() -> None:
+    """Capture built-in harness names at import time for collision detection."""
+    global _BUILTIN_HARNESS_NAMES  # noqa: PLW0603
+    from harnessbox.config.harness import _HARNESS_REGISTRY
+
+    _BUILTIN_HARNESS_NAMES = frozenset(_HARNESS_REGISTRY.keys())
 
 
 def register_custom_agents(config: ProjectConfig) -> list[str]:
     """Register [[agents]] entries via existing register_harness_type().
 
     Returns the list of agent names that were registered.
-    Raises ProjectConfigError if a custom agent name collides with a built-in.
+    Raises ProjectConfigError if a custom agent name collides with a built-in
+    or an already-registered custom agent.
     """
     from harnessbox.config.harness import _HARNESS_REGISTRY
 
+    if not _BUILTIN_HARNESS_NAMES:
+        _snapshot_builtins()
+
     registered: list[str] = []
     for spec in config.custom_agents:
-        if spec.name in _HARNESS_REGISTRY:
+        if spec.name in _BUILTIN_HARNESS_NAMES:
             raise ProjectConfigError(
                 f"Custom agent {spec.name!r} conflicts with a built-in harness type. "
                 "Use a different name."
+            )
+        if spec.name in _HARNESS_REGISTRY:
+            raise ProjectConfigError(
+                f"Custom agent {spec.name!r} is already registered. "
+                "Duplicate agent names are not allowed."
             )
         harness_config = HarnessTypeConfig(
             name=spec.name,
@@ -243,20 +272,26 @@ def merge_preset_into_context(
     ctx_files: dict[str, str],
     ctx_dirs: list[str],
     ctx_setup_script: str | None,
+    workspace_root: str = "/workspace",
 ) -> tuple[dict[str, str], dict[str, str], list[str], str | None]:
     """Merge workspace preset into SetupContext values.
 
     Returns (env_vars, files, dirs, setup_script).
     TOML provides defaults; SDK/ctx values override.
     Setup scripts are concatenated: TOML first, then SDK.
+    File paths from TOML are treated as relative to workspace_root and
+    resolved to absolute sandbox paths.
     """
     merged_env = dict(preset.env)
     merged_env.update(ctx_env_vars)
 
     merged_files: dict[str, str] = {}
     for key, val in preset.files.items():
-        clean_key = key.lstrip("/")
-        merged_files[clean_key] = val
+        if key.startswith("/"):
+            abs_path = key
+        else:
+            abs_path = f"{workspace_root}/{key}"
+        merged_files[abs_path] = val
     merged_files.update(ctx_files)
 
     merged_dirs = list(preset.extra_dirs)

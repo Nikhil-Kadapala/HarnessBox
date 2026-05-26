@@ -41,6 +41,9 @@ class SetupContext:
     plugin_dirs: list[str] = field(default_factory=list)
     setup_script: str | None = None
 
+    # Whether to allow .harnessbox.toml setup_script from cloned repos
+    allow_project_setup_script: bool = True
+
     # Snapshot-based creation (skips template)
     snapshot_id: str | None = None
 
@@ -327,12 +330,27 @@ async def _step_load_project_config(ctx: SetupContext) -> None:
     except ProjectConfigError as e:
         _log.warning("Failed to register custom agents: %s", e)
 
+    workspace_root_for_merge = ctx.cwd if ctx.cwd else ctx.harness_config.workspace_root
+    effective_preset_script = project_config.workspace.setup_script
+    if not ctx.allow_project_setup_script:
+        effective_preset_script = None
+
+    from harnessbox.config.project import WorkspacePreset
+
+    merge_preset = WorkspacePreset(
+        setup_script=effective_preset_script,
+        env=project_config.workspace.env,
+        files=project_config.workspace.files,
+        extra_dirs=project_config.workspace.extra_dirs,
+    )
+
     env_vars, files, dirs, setup_script = merge_preset_into_context(
-        project_config.workspace,
+        merge_preset,
         ctx_env_vars=ctx.env_vars,
         ctx_files=ctx.files,
         ctx_dirs=ctx.dirs,
         ctx_setup_script=ctx.setup_script,
+        workspace_root=workspace_root_for_merge,
     )
     ctx.env_vars = env_vars
     ctx.files = files

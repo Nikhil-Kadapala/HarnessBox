@@ -44,17 +44,25 @@ class HarnessTypeConfig:
         Lists are coerced to tuples for tuple-typed fields.
         Unknown keys are silently ignored. Callable fields (build_settings,
         build_hook_script) cannot be expressed in config and default to None.
+
+        Raises ValueError for required fields that are missing or have wrong types.
         """
 
         def _to_tuple(val: Any, default: tuple[str, ...] = ()) -> tuple[str, ...]:
             if val is None:
                 return default
             if isinstance(val, (list, tuple)):
+                if not all(isinstance(s, str) for s in val):
+                    raise ValueError(f"All elements must be strings, got: {val!r}")
                 return tuple(val)
             return default
 
         name = data.get("name", "")
+        if not isinstance(name, str):
+            raise ValueError(f"'name' must be a string, got {type(name).__name__}")
         cli_command = data.get("cli_command", "")
+        if not isinstance(cli_command, str):
+            raise ValueError(f"'cli_command' must be a string, got {type(cli_command).__name__}")
 
         return cls(
             name=name,

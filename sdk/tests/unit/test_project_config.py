@@ -215,12 +215,13 @@ class TestMergePresetIntoContext:
         _, files, _, _ = merge_preset_into_context(
             preset,
             ctx_env_vars={},
-            ctx_files={"README.md": "sdk"},
+            ctx_files={"/workspace/README.md": "sdk"},
             ctx_dirs=[],
             ctx_setup_script=None,
+            workspace_root="/workspace",
         )
-        assert files["README.md"] == "sdk"
-        assert files["other.txt"] == "toml"
+        assert files["/workspace/README.md"] == "sdk"
+        assert files["/workspace/other.txt"] == "toml"
 
     def test_dirs_merged_union(self):
         preset = WorkspacePreset(extra_dirs=["/workspace/a", "/workspace/b"])
@@ -279,16 +280,29 @@ class TestMergePresetIntoContext:
         )
         assert script is None
 
-    def test_file_paths_strip_leading_slash(self):
-        preset = WorkspacePreset(files={"/leading/slash.txt": "content"})
+    def test_relative_file_paths_resolved_to_absolute(self):
+        preset = WorkspacePreset(files={"README.md": "content"})
         _, files, _, _ = merge_preset_into_context(
             preset,
             ctx_env_vars={},
             ctx_files={},
             ctx_dirs=[],
             ctx_setup_script=None,
+            workspace_root="/workspace",
         )
-        assert "leading/slash.txt" in files
+        assert "/workspace/README.md" in files
+
+    def test_absolute_file_paths_preserved(self):
+        preset = WorkspacePreset(files={"/workspace/CLAUDE.md": "content"})
+        _, files, _, _ = merge_preset_into_context(
+            preset,
+            ctx_env_vars={},
+            ctx_files={},
+            ctx_dirs=[],
+            ctx_setup_script=None,
+            workspace_root="/workspace",
+        )
+        assert "/workspace/CLAUDE.md" in files
 
 
 class TestHarnessTypeConfigFromDict:
