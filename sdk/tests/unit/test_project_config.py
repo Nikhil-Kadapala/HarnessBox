@@ -295,10 +295,12 @@ class TestHarnessTypeConfigFromDict:
     def test_minimal_dict(self):
         from harnessbox.config.harness import HarnessTypeConfig
 
-        config = HarnessTypeConfig.from_dict({
-            "name": "test-agent",
-            "cli_command": "test-cli",
-        })
+        config = HarnessTypeConfig.from_dict(
+            {
+                "name": "test-agent",
+                "cli_command": "test-cli",
+            }
+        )
         assert config.name == "test-agent"
         assert config.cli_command == "test-cli"
         assert config.default_dirs == ("/workspace",)
@@ -308,12 +310,14 @@ class TestHarnessTypeConfigFromDict:
     def test_list_to_tuple_coercion(self):
         from harnessbox.config.harness import HarnessTypeConfig
 
-        config = HarnessTypeConfig.from_dict({
-            "name": "coerce-test",
-            "cli_command": "ct",
-            "default_dirs": ["/a", "/b", "/c"],
-            "cli_base_flags": ["--verbose", "--json"],
-        })
+        config = HarnessTypeConfig.from_dict(
+            {
+                "name": "coerce-test",
+                "cli_command": "ct",
+                "default_dirs": ["/a", "/b", "/c"],
+                "cli_base_flags": ["--verbose", "--json"],
+            }
+        )
         assert isinstance(config.default_dirs, tuple)
         assert config.default_dirs == ("/a", "/b", "/c")
         assert config.cli_base_flags == ("--verbose", "--json")
@@ -321,9 +325,11 @@ class TestHarnessTypeConfigFromDict:
     def test_unknown_keys_ignored(self):
         from harnessbox.config.harness import HarnessTypeConfig
 
-        config = HarnessTypeConfig.from_dict({
-            "name": "ignore-test",
-            "cli_command": "ign",
-            "future_key": "future_value",
-        })
+        config = HarnessTypeConfig.from_dict(
+            {
+                "name": "ignore-test",
+                "cli_command": "ign",
+                "future_key": "future_value",
+            }
+        )
         assert config.name == "ignore-test"
