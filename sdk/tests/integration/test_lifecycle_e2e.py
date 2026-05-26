@@ -43,9 +43,7 @@ class TestLifecycleE2E:
         await storage.initialize()
 
         # Use a very short pause_timeout so the idle timer fires quickly
-        mgr = await WorkspaceManager.create(
-            storage=storage, auto_pause=True, pause_timeout=0
-        )
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         # --- Phase 1: Create workspace ---
         with (
@@ -131,9 +129,7 @@ class TestLifecycleE2E:
         storage = MemoryBackend()
         await storage.initialize()
 
-        mgr = await WorkspaceManager.create(
-            storage=storage, auto_pause=True, pause_timeout=0
-        )
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
@@ -183,9 +179,7 @@ class TestLifecycleE2E:
         storage = MemoryBackend()
         await storage.initialize()
 
-        mgr = await WorkspaceManager.create(
-            storage=storage, auto_pause=True, pause_timeout=0
-        )
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         pushed_events: list[UniversalEvent] = []
 
@@ -259,9 +253,7 @@ class TestLifecycleE2E:
         storage = MemoryBackend()
         await storage.initialize()
 
-        mgr = await WorkspaceManager.create(
-            storage=storage, auto_pause=True, pause_timeout=0
-        )
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
@@ -317,9 +309,7 @@ class TestLifecycleE2E:
         storage = MemoryBackend()
         await storage.initialize()
 
-        mgr = await WorkspaceManager.create(
-            storage=storage, auto_pause=True, pause_timeout=9999
-        )
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=9999)
 
         with (
             patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,

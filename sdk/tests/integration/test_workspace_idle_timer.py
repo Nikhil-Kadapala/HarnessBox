@@ -462,7 +462,9 @@ class TestGracefulShutdown:
         mgr._locks["w-1"] = asyncio.Lock()
 
         # Should not hang — timeout guard at 30s, but we patch wait_for
-        with patch("harnessbox.workspace_manager.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        with patch(
+            "harnessbox.workspace_manager.asyncio.wait_for", side_effect=asyncio.TimeoutError
+        ):
             await mgr.graceful_shutdown()
 
         # Workspace was NOT paused (timed out)
