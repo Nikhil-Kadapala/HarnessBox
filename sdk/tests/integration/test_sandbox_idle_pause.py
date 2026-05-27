@@ -44,15 +44,6 @@ class TestSandboxPause:
         assert sandbox_id == "mock-sandbox-123"
 
     @pytest.mark.asyncio
-    async def test_idle_pause_stops_running_agent_process(self, provider: MockProvider) -> None:
-        sb = _active_sandbox(provider)
-        mock_process = MagicMock()
-        mock_process.stop = AsyncMock()
-        sb._agent_process = mock_process
-        await sb._do_idle_pause()
-        mock_process.stop.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_pause_already_paused_raises_invalid_transition(
         self, provider: MockProvider
     ) -> None:

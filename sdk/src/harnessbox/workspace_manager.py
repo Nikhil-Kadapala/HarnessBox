@@ -29,9 +29,7 @@ from harnessbox.agent_manager import AgentManager
 from harnessbox.lifecycle import (
     InvalidTransitionError,
     RuntimeState,
-    WorkflowState,
     validate_runtime_transition,
-    validate_workflow_transition,
 )
 from harnessbox.providers import SandboxDeadError, SandboxProvider
 from harnessbox.sandbox import Sandbox
@@ -336,7 +334,7 @@ class WorkspaceManager:
             provider_sandbox_id=sandbox.sandbox_id,
             snapshot_id=None,
             runtime_state=RuntimeState.ACTIVE.value,
-            workflow_state=WorkflowState.IN_PROGRESS.value,
+            workflow_state="in_progress",
             created_at=datetime.now(timezone.utc).isoformat(),
             last_active=datetime.now(timezone.utc).isoformat(),
             harness=config.harness,
@@ -416,7 +414,7 @@ class WorkspaceManager:
                     provider_sandbox_id=record.get("provider_sandbox_id"),
                     snapshot_id=record.get("snapshot_id"),
                     runtime_state=stored_state,
-                    workflow_state=record.get("workflow_state", WorkflowState.BACKLOG.value),
+                    workflow_state=record.get("workflow_state", "backlog"),
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
                     harness=record["harness"],
@@ -757,7 +755,7 @@ class WorkspaceManager:
             provider_sandbox_id=record.get("provider_sandbox_id"),
             snapshot_id=record.get("snapshot_id"),
             runtime_state=record["runtime_state"],
-            workflow_state=record.get("workflow_state", WorkflowState.BACKLOG.value),
+            workflow_state=record.get("workflow_state", "backlog"),
             created_at=record["created_at"],
             last_active=record.get("last_active", record["created_at"]),
             harness=record["harness"],
@@ -1008,23 +1006,34 @@ class WorkspaceManager:
 
         return info
 
+    _VALID_WORKFLOW_TRANSITIONS: dict[str, frozenset[str]] = {
+        "backlog": frozenset({"in_progress", "archived"}),
+        "in_progress": frozenset({"in_review", "archived"}),
+        "in_review": frozenset({"in_progress", "merged", "archived"}),
+        "merged": frozenset({"archived"}),
+        "archived": frozenset(),
+    }
+
     def transition_workflow(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
         """Transition workspace workflow state with validation.
 
-        If storage is enabled, the state change is persisted.
+        Raises ValueError for unknown states, InvalidTransitionError for
+        disallowed transitions.
         """
         info = self.get_workspace(workspace_id)
-        current = WorkflowState(info.workflow_state)
-        target = WorkflowState(target_state)
-        if not validate_workflow_transition(current, target):
-            raise InvalidTransitionError(current, target)
-        info.workflow_state = target.value
+        current = info.workflow_state
+        if target_state not in self._VALID_WORKFLOW_TRANSITIONS:
+            raise ValueError(f"Unknown workflow state: {target_state!r}")
+        allowed = self._VALID_WORKFLOW_TRANSITIONS.get(current, frozenset())
+        if target_state not in allowed:
+            raise InvalidTransitionError(current, target_state)
+        info.workflow_state = target_state
 
         if self._storage:
             asyncio.create_task(
                 self._storage.update_workspace(
                     workspace_id,
-                    workflow_state=target.value,
+                    workflow_state=target_state,
                 )
             )
 

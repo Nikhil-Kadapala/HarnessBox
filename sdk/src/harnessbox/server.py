@@ -39,7 +39,7 @@ except ImportError as e:
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
-from harnessbox.lifecycle import InvalidTransitionError, RuntimeState, WorkflowState
+from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.sandbox import Sandbox
 from harnessbox.storage import StorageBackend
 from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
@@ -816,7 +816,6 @@ def create_app(
                 RuntimeState(req.target_state)
                 info = mgr.transition_runtime(session_id, req.target_state)
             elif req.dimension == "workflow":
-                WorkflowState(req.target_state)
                 info = mgr.transition_workflow(session_id, req.target_state)
             else:
                 raise HTTPException(
@@ -828,10 +827,7 @@ def create_app(
                 status_code=400, detail=f"Unknown state: {req.target_state}"
             ) from exc
         except InvalidTransitionError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Invalid transition: {exc.current.value} → {exc.target.value}",
-            ) from exc
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         return _session_response(info)
 

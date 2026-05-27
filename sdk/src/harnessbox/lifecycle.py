@@ -1,11 +1,6 @@
 """Workspace lifecycle state machine for sandboxed workspaces.
 
-Two independent state dimensions:
-- RuntimeState: sandbox infrastructure (is the VM running?)
-- WorkflowState: project/PR lifecycle (what stage is the branch work in?)
-
-These are independent. ARCHIVED is terminal for WorkflowState and takes precedence
-(once archived, the workspace is done regardless of runtime state).
+RuntimeState tracks sandbox infrastructure (is the VM running?).
 """
 
 from __future__ import annotations
@@ -58,16 +53,6 @@ def to_session_status(state: RuntimeState) -> SessionStatus:
     return _RUNTIME_TO_STATUS[state]
 
 
-class WorkflowState(str, Enum):
-    """Project/PR lifecycle states — managed by the app/server layer."""
-
-    BACKLOG = "backlog"
-    IN_PROGRESS = "in_progress"
-    IN_REVIEW = "in_review"
-    MERGED = "merged"
-    ARCHIVED = "archived"
-
-
 VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
     RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.DEAD}),
     RuntimeState.ACTIVE: frozenset({RuntimeState.PAUSED, RuntimeState.DYING, RuntimeState.DEAD}),
@@ -77,33 +62,18 @@ VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
     RuntimeState.DEAD: frozenset(),
 }
 
-VALID_WORKFLOW_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
-    WorkflowState.BACKLOG: frozenset({WorkflowState.IN_PROGRESS, WorkflowState.ARCHIVED}),
-    WorkflowState.IN_PROGRESS: frozenset({WorkflowState.IN_REVIEW, WorkflowState.ARCHIVED}),
-    WorkflowState.IN_REVIEW: frozenset(
-        {WorkflowState.IN_PROGRESS, WorkflowState.MERGED, WorkflowState.ARCHIVED}
-    ),
-    WorkflowState.MERGED: frozenset({WorkflowState.ARCHIVED}),
-    WorkflowState.ARCHIVED: frozenset(),
-}
-
 
 class InvalidTransitionError(Exception):
     """Raised when a state transition is not allowed."""
 
-    def __init__(
-        self, current: RuntimeState | WorkflowState, target: RuntimeState | WorkflowState
-    ) -> None:
+    def __init__(self, current: RuntimeState | str, target: RuntimeState | str) -> None:
         self.current = current
         self.target = target
-        super().__init__(f"Invalid transition: {current.value!r} → {target.value!r}")
+        current_val = current.value if isinstance(current, RuntimeState) else current
+        target_val = target.value if isinstance(target, RuntimeState) else target
+        super().__init__(f"Invalid transition: {current_val!r} → {target_val!r}")
 
 
 def validate_runtime_transition(current: RuntimeState, target: RuntimeState) -> bool:
     """Return True if the runtime transition from *current* to *target* is allowed."""
     return target in VALID_RUNTIME_TRANSITIONS.get(current, frozenset())
-
-
-def validate_workflow_transition(current: WorkflowState, target: WorkflowState) -> bool:
-    """Return True if the workflow transition from *current* to *target* is allowed."""
-    return target in VALID_WORKFLOW_TRANSITIONS.get(current, frozenset())

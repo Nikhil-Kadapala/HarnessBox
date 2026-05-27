@@ -33,17 +33,15 @@ class SandboxSession:
         provider: SandboxProvider,
         event_handler: EventHandler | None,
         event_buffer: EventBuffer,
-        session_timeout: int,
-        session_lock: asyncio.Lock | None,
+        session_timeout: int = 0,
+        session_lock: asyncio.Lock | None = None,
     ) -> None:
         self._provider = provider
         self._event_handler = event_handler
         self._event_buffer = event_buffer
-        self._session_timeout = session_timeout
         self._session_lock = session_lock
 
         self._state = RuntimeState.STARTING
-        self._idle_timer_task: asyncio.Task[None] | None = None
         self._paused_sandbox_id: str | None = None
         self._stop_agent: StopAgentFn | None = None
         self._get_agent_session_id: Callable[[], str | None] | None = None
@@ -197,39 +195,6 @@ class SandboxSession:
         await self.emit_event(EventType.SESSION_END, action="end")
         await self.push_lifecycle_event(StreamEventType.SESSION_ENDED)
         await self._event_buffer.close()
-
-    # ------------------------------------------------------------------
-    # Idle timer
-    # ------------------------------------------------------------------
-
-    def start_idle_timer(self) -> None:
-        self.cancel_idle_timer()
-        if self._session_timeout > 0:
-            self._idle_timer_task = asyncio.create_task(self._on_idle_timeout())
-
-    def cancel_idle_timer(self) -> None:
-        if self._idle_timer_task and not self._idle_timer_task.done():
-            self._idle_timer_task.cancel()
-        self._idle_timer_task = None
-
-    async def _on_idle_timeout(self) -> None:
-        await asyncio.sleep(self._session_timeout)
-        if self._session_lock:
-            async with self._session_lock:
-                await self._do_idle_pause()
-        else:
-            await self._do_idle_pause()
-
-    async def _do_idle_pause(self) -> None:
-        if self._state != RuntimeState.ACTIVE:
-            return
-        _log.info("Idle timeout (%ds), pausing sandbox", self._session_timeout)
-        if self._stop_agent:
-            try:
-                await self._stop_agent()
-            except Exception:
-                pass
-        await self.pause()
 
     # ------------------------------------------------------------------
     # SandboxDeadError callback (used by AgentRuntime)
