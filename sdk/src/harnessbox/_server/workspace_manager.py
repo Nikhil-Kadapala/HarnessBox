@@ -1199,6 +1199,7 @@ class WorkspaceManager:
         sandbox_id = info.provider_sandbox_id
 
         if TENACITY_AVAILABLE:
+
             @retry(  # type: ignore[untyped-decorator]  # tenacity lacks py.typed stubs
                 stop=stop_after_attempt(3),
                 wait=wait_exponential(multiplier=1, min=2, max=10),
