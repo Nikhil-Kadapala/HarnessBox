@@ -131,9 +131,7 @@ class HarnessTypeConfig:
         parts.append(f"{self.cli_prompt_flag} {prompt}")
         return " ".join(parts)
 
-    def build_interactive_command(
-        self, *, skip_permissions: bool
-    ) -> str:
+    def build_interactive_command(self, *, skip_permissions: bool) -> str:
         """Build the full CLI command for interactive mode."""
         parts = [self.cli_command]
         if skip_permissions and self.skip_permissions_flag:
