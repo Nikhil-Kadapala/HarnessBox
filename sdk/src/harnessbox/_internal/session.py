@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
@@ -33,13 +32,10 @@ class SandboxSession:
         provider: SandboxProvider,
         event_handler: EventHandler | None,
         event_buffer: EventBuffer,
-        session_timeout: int = 0,
-        session_lock: asyncio.Lock | None = None,
     ) -> None:
         self._provider = provider
         self._event_handler = event_handler
         self._event_buffer = event_buffer
-        self._session_lock = session_lock
 
         self._state = RuntimeState.STARTING
         self._paused_sandbox_id: str | None = None

@@ -133,8 +133,6 @@ class Sandbox:
         self._event_buffer = EventBuffer(
             storage=storage, session_id=session_id, initial_sequence=initial_sequence
         )
-        self._session_timeout = session_timeout
-        self._session_lock = session_lock
         self._snapshot_id = snapshot_id
 
         # Workspace mount collaborator (resolvers + git facade)
@@ -154,8 +152,6 @@ class Sandbox:
             provider=self._provider,
             event_handler=event_handler,
             event_buffer=self._event_buffer,
-            session_timeout=session_timeout,
-            session_lock=session_lock,
         )
 
         # Agent execution collaborator
