@@ -503,6 +503,7 @@ class WorkspaceManager:
 
         try:
             async with self._locks[workspace_id]:
+                assert info.sandbox_conn is not None  # guaranteed by _ensure_sandbox above
                 # Write attachments to sandbox and build metadata
                 resolved_attachments: list[Attachment] = []
                 if attachments:
@@ -924,8 +925,6 @@ class WorkspaceManager:
                     "Cannot reconnect without a way to reach the sandbox."
                 )
 
-            await sandbox.event_buffer.hydrate()
-
             agent_mgr = AgentManager(sandbox)
 
             self._workspace_configs[workspace_id] = WorkspaceConfig(
@@ -1145,6 +1144,7 @@ class WorkspaceManager:
         and memory. On resume the Claude process wakes exactly where it left off,
         ready to accept the next stdin prompt without respawning.
         """
+        assert info.sandbox_conn is not None  # only called for active workspaces
         # Create snapshot (captures filesystem including ~/.claude/sessions/)
         try:
             snapshot_id = await info.sandbox_conn.create_snapshot()
@@ -1194,22 +1194,25 @@ class WorkspaceManager:
         if not info.sandbox_conn or not info.provider_sandbox_id:
             raise ValueError("Cannot resume: sandbox or provider_sandbox_id is None")
 
+        # Narrowed locals so mypy (and inner closures) see non-optional types.
+        sandbox = info.sandbox_conn
+        sandbox_id = info.provider_sandbox_id
+
         if TENACITY_AVAILABLE:
-            # Use tenacity retry decorator
-            @retry(
+            @retry(  # type: ignore[untyped-decorator]  # tenacity lacks py.typed stubs
                 stop=stop_after_attempt(3),
                 wait=wait_exponential(multiplier=1, min=2, max=10),
                 retry=retry_if_exception_type((TimeoutException, ConnectException)),
             )
             async def _resume_with_retry() -> None:
-                await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
+                await sandbox.resume(sandbox_id)
 
             await _resume_with_retry()
         else:
             # Fallback: simple retry without tenacity
             for attempt in range(3):
                 try:
-                    await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
+                    await sandbox.resume(sandbox_id)
                     return
                 except (TimeoutException, ConnectException) as e:
                     if attempt == 2:  # Last attempt

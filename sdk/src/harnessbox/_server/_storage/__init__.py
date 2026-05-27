@@ -7,7 +7,7 @@ Backends are registered by name and loaded lazily when requested.
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import Any, cast
 
 # Registry maps backend name → (module_path, class_name)
 _STORAGE_REGISTRY: dict[str, tuple[str, str]] = {
@@ -39,7 +39,7 @@ def get_storage_backend(name: str) -> type[Any]:
 
     module_path, class_name = _STORAGE_REGISTRY[name]
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)
+    return cast(type[Any], getattr(module, class_name))
 
 
 def register_storage_backend(name: str, module_path: str, class_name: str) -> None:
