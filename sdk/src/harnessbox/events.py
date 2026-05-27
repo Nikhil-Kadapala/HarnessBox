@@ -18,7 +18,6 @@ from collections import deque
 from collections.abc import AsyncGenerator
 
 from harnessbox.streaming import (
-    EventType,
     UniversalEvent,
 )
 

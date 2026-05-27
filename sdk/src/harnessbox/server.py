@@ -39,10 +39,14 @@ except ImportError as e:
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
+from harnessbox._server.storage import StorageBackend
+from harnessbox._server.workspace_manager import (
+    WorkspaceConfig,
+    WorkspaceManager,
+    WorkspaceNotFoundError,
+)
 from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.sandbox import Sandbox
-from harnessbox._server.storage import StorageBackend
-from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
 logger = logging.getLogger("harnessbox.server")

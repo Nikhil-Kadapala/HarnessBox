@@ -12,8 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from harnessbox._server.workspace_manager import (
+    WorkspaceConfig,
+    WorkspaceInstance,
+    WorkspaceManager,
+)
 from harnessbox.lifecycle import RuntimeState
-from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceInstance, WorkspaceManager
 from tests.conftest import MockProvider
 
 # ---------------------------------------------------------------------------

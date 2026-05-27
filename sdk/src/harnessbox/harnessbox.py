@@ -228,7 +228,6 @@ class HarnessBox:
                 auth_token=git_token,
             )
 
-        from harnessbox.workspace import Workspace
 
         sandbox = Sandbox(
             client=self._provider,

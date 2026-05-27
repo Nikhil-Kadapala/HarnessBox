@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from harnessbox.server import create_app
 from harnessbox._server.workspace_manager import WorkspaceManager
+from harnessbox.server import create_app
 
 
 @pytest.fixture

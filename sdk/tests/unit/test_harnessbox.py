@@ -1,6 +1,5 @@
 """Tests for HarnessBox — the public API wrapper."""
 
-import pytest
 
 from harnessbox.harnessbox import (
     HarnessBox,
@@ -231,7 +230,6 @@ class TestSession:
 
     async def test_sandbox_lock_does_not_wrap_send_message(self, mock_provider):
         """Lifecycle lock must not deadlock send_message during streaming."""
-        import asyncio
 
         hb = HarnessBox(
             provider=mock_provider,

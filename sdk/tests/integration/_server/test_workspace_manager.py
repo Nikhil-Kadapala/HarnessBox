@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from harnessbox._server.workspace_manager import (
+    WorkspaceConfig,
+    WorkspaceManager,
+    WorkspaceNotFoundError,
+)
 from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
-from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 from tests.conftest import MockProvider
 
 
@@ -632,8 +636,8 @@ class TestConnectSandbox:
     async def test_connect_falls_back_to_snapshot_when_sandbox_expired(self):
         """Should recover from snapshot when provider_sandbox_id is stale."""
         from harnessbox._server._storage.memory import MemoryBackend
-        from harnessbox.providers import SandboxDeadError
         from harnessbox._server.workspace_manager import WorkspaceInstance
+        from harnessbox.providers import SandboxDeadError
 
         storage = MemoryBackend()
         await storage.initialize()
@@ -903,9 +907,9 @@ class TestConnectSandbox:
     async def test_prompt_connects_sandbox_lazily(self):
         """prompt() should connect sandbox and forward message end-to-end."""
         from harnessbox._server._storage.memory import MemoryBackend
+        from harnessbox._server.workspace_manager import WorkspaceInstance
         from harnessbox.streaming import EventType as StreamEventType
         from harnessbox.streaming import UniversalEvent
-        from harnessbox._server.workspace_manager import WorkspaceInstance
 
         storage = MemoryBackend()
         await storage.initialize()

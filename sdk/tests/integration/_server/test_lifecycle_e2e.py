@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from harnessbox._server._storage.memory import MemoryBackend
+from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.streaming import EventType, UniversalEvent
-from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager
 
 
 def _make_turn_event(session_id: str, event_type: EventType, **kwargs: Any) -> UniversalEvent:
