@@ -198,7 +198,7 @@ class CreateSessionRequest(BaseModel):
     cwd: str | None = None
     sandbox_timeout: int = 1800
     session_timeout: int = 900
-    skip_permissions: bool = True
+    skip_permissions: bool = False
     template: str | None = None
     session_id: str | None = None
     security_policy: SecurityPolicyRequest | None = None

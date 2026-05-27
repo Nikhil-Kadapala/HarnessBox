@@ -484,6 +484,15 @@ class WorkspaceManager:
                         harness = stored_harness
             if conversation_id is None:
                 conversation_id = str(uuid.uuid4())
+        elif self._storage:
+            convs = await self._storage.get_conversations(workspace_id)
+            for conv in convs:
+                if conv["conversation_id"] == conversation_id:
+                    stored_agent_session_id = conv.get("agent_session_id")
+                    stored_harness = conv.get("agent_type")
+                    if stored_harness:
+                        harness = stored_harness
+                    break
 
         # Turn starting — cancel idle countdown and bump the in-flight counter.
         # We only restart the timer once ALL concurrent turns have completed,
