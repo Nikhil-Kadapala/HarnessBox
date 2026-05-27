@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class WorkspaceMount:
     """Combines setup-time file resolution with runtime git operations.
 
-    Setup-time: resolves local files/skills/plugins/prompt into sandbox paths.
+    Setup-time: resolves local files and system prompt into sandbox paths.
     Runtime: delegates git operations to the underlying GitRepoConfig workspace.
     """
 
