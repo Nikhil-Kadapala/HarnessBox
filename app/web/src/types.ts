@@ -118,7 +118,6 @@ export interface WorkspaceConfig {
 export interface CreateSessionRequest {
   session_id?: string;
   provider: string;
-  harness: string;
   model?: string;
   env_vars: Record<string, string>;
   skip_permissions: boolean;
@@ -127,6 +126,12 @@ export interface CreateSessionRequest {
   template?: string;
   security_policy?: SecurityPolicyConfig;
   workspace?: WorkspaceConfig;
+}
+
+export interface PromptBody {
+  prompt: string;
+  harness: string;
+  conversation_id?: string;
 }
 
 export interface SessionResponse {

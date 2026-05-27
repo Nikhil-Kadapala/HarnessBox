@@ -444,6 +444,7 @@ class WorkspaceManager:
         workspace_id: str,
         prompt: str,
         *,
+        harness: str = "claude-code",
         conversation_id: str | None = None,
         attachments: list[Attachment] | None = None,
     ) -> AsyncGenerator[UniversalEvent, None]:
@@ -457,6 +458,7 @@ class WorkspaceManager:
         Args:
             workspace_id: Target workspace
             prompt: Prompt text
+            harness: Agent harness to use for this conversation
             conversation_id: Specific conversation (generates UUID if None)
             attachments: Files/images to write to sandbox and reference in prompt
         """
@@ -468,7 +470,8 @@ class WorkspaceManager:
         await self._ensure_sandbox(workspace_id)
 
         # Reuse existing conversation or create one on first prompt.
-        # Also retrieve the stored agent_session_id for --resume on recovery.
+        # Also retrieve the stored agent_session_id for --resume on recovery,
+        # and agent_type to ensure the right harness is used.
         stored_agent_session_id: str | None = None
         if conversation_id is None:
             if self._storage:
@@ -476,6 +479,9 @@ class WorkspaceManager:
                 if active_conv:
                     conversation_id = active_conv["conversation_id"]
                     stored_agent_session_id = active_conv.get("agent_session_id")
+                    stored_harness = active_conv.get("agent_type")
+                    if stored_harness:
+                        harness = stored_harness
             if conversation_id is None:
                 conversation_id = str(uuid.uuid4())
 
@@ -574,6 +580,7 @@ class WorkspaceManager:
                 async for event in info.agent_manager.send_message(
                     conversation_id,
                     augmented_prompt,
+                    harness,
                     agent_session_id=stored_agent_session_id,
                 ):
                     if (
@@ -585,8 +592,9 @@ class WorkspaceManager:
                     if event.cost_usd is not None:
                         info.total_cost_usd = event.cost_usd
 
-                    if event.session_id and not agent_session_id:
-                        agent_session_id = event.session_id
+                    _asi = event.metadata.get("_agent_session_id")
+                    if _asi and not agent_session_id:
+                        agent_session_id = _asi
 
                     if not conversation_saved and self._storage:
                         conversation_saved = True
@@ -595,7 +603,7 @@ class WorkspaceManager:
                                 {
                                     "conversation_id": conversation_id,
                                     "workspace_id": workspace_id,
-                                    "agent_type": info.harness,
+                                    "agent_type": harness,
                                     "title": prompt[:50],
                                     "last_active": datetime.now(timezone.utc).isoformat(),
                                     "agent_session_id": agent_session_id,

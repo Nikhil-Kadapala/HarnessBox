@@ -68,10 +68,12 @@ class AgentManager:
 
             captured_session_id = ""
             async for event in process.stream_turn():
-                if event.session_id:
+                if event.session_id and event.session_id != conversation_id:
                     captured_session_id = event.session_id
-                if not event.session_id:
-                    event = replace(event, session_id=captured_session_id or conversation_id)
+                meta = {**event.metadata}
+                if captured_session_id:
+                    meta["_agent_session_id"] = captured_session_id
+                event = replace(event, session_id=conversation_id, metadata=meta)
                 event = await self._sandbox.event_buffer.push(event)
                 yield event
 
