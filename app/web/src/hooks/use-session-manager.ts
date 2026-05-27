@@ -149,7 +149,7 @@ export function useSessionManager() {
 
       const entry: SessionEntry = {
         id: sessionId,
-        harness: config.harness,
+        harness: "claude-code",
         status: "creating",
         runtimeState: "creating",
         createdAt: new Date().toISOString(),
@@ -202,7 +202,7 @@ export function useSessionManager() {
   }, []);
 
   const sendPrompt = useCallback(
-    async (sessionId: string, prompt: string) => {
+    async (sessionId: string, prompt: string, harness: string) => {
       const gen = ++promptGenRef.current;
       dispatch({ type: "set_status", sessionId, status: "streaming" });
       const conns = connectionsRef.current;
@@ -217,7 +217,7 @@ export function useSessionManager() {
           key: sessionId,
           url: `/v1/workspaces/${sessionId}/prompt`,
           method: "POST",
-          body: { prompt },
+          body: { prompt, harness },
         });
 
         for await (const event of stream) {

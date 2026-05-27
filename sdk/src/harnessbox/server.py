@@ -183,11 +183,15 @@ class WorkspaceRequest(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    """Request body for creating a new sandbox workspace session."""
+    """Request body for creating a new sandbox workspace session.
+
+    Note: harness is no longer specified at session creation. The sandbox
+    is universal (all agent CLIs pre-installed). Harness is chosen per-
+    conversation when sending a prompt.
+    """
 
     provider: str = "e2b"
     api_key: str | None = None
-    harness: str = "claude-code"
     model: str | None = None
     env_vars: dict[str, str] = {}
     setup_script: str | None = None
@@ -252,6 +256,8 @@ class PromptRequest(BaseModel):
     """Request body for sending a prompt to the agent."""
 
     prompt: str
+    harness: str
+    conversation_id: str | None = None
     attachments: list[AttachmentPayload] = []
 
 
@@ -608,7 +614,7 @@ def create_app(
         config = WorkspaceConfig(
             provider=req.provider,
             api_key=api_key,
-            harness=req.harness,
+            harness="claude-code",
             model=req.model,
             env_vars=env_vars,
             files=credential_files or None,
@@ -859,12 +865,20 @@ def create_app(
         import base64
         import uuid as _uuid
 
+        from harnessbox.config.harness import list_harness_types
         from harnessbox.streaming import Attachment
 
         try:
             info = mgr.get_workspace(session_id)
         except WorkspaceNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Session not found") from exc
+
+        available = list_harness_types()
+        if req.harness not in available:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown harness: {req.harness!r}. Available: {available}",
+            )
 
         if info.runtime_state in _NON_PROMPTABLE_RUNTIME:
             raise HTTPException(
@@ -919,7 +933,11 @@ def create_app(
             event_count = 0
             try:
                 async for event in mgr.prompt(
-                    session_id, req.prompt, attachments=attachments or None
+                    session_id,
+                    req.prompt,
+                    harness=req.harness,
+                    conversation_id=req.conversation_id,
+                    attachments=attachments or None,
                 ):
                     event_count += 1
                     logger.info(

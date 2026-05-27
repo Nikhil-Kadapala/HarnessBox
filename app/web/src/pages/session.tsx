@@ -11,10 +11,10 @@ export function SessionPage() {
   const session = manager.sessions.get(sessionId) ?? null;
 
   const handleSendPrompt = useCallback(
-    (prompt: string) => {
-      manager.sendPrompt(sessionId, prompt);
+    (prompt: string, harness?: string) => {
+      manager.sendPrompt(sessionId, prompt, harness ?? session?.harness ?? "claude-code");
     },
-    [manager, sessionId],
+    [manager, sessionId, session],
   );
 
   const handleStop = useCallback(() => {

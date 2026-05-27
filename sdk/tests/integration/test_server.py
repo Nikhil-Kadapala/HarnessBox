@@ -230,7 +230,7 @@ class TestPromptSession:
     def test_prompt_not_found(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/workspaces/nonexistent/prompt",
-            json={"prompt": "hello"},
+            json={"prompt": "hello", "harness": "claude-code"},
         )
         assert resp.status_code == 404
 

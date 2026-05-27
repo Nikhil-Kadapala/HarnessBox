@@ -65,7 +65,9 @@ class TestLifecycleE2E:
             # Agent: yields a TURN_ENDED event on each prompt
             turn_count = [0]
 
-            async def mock_send_message(conv_id: str, prompt: str, **kwargs: Any):
+            async def mock_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
                 turn_count[0] += 1
                 yield _make_turn_event(
                     conv_id,
@@ -147,7 +149,9 @@ class TestLifecycleE2E:
             sandbox_instance.event_buffer = sandbox_instance._event_buffer
 
             # Agent takes a while to respond (simulates a long turn)
-            async def slow_send_message(conv_id: str, prompt: str, **kwargs: Any):
+            async def slow_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
                 await asyncio.sleep(0.1)  # Simulate processing
                 yield _make_turn_event(conv_id, EventType.TURN_ENDED, duration_ms=500)
 
@@ -203,7 +207,9 @@ class TestLifecycleE2E:
             sandbox_instance.resume = AsyncMock()
             sandbox_instance.event_buffer = sandbox_instance._event_buffer
 
-            async def mock_send_message(conv_id: str, prompt: str, **kwargs: Any):
+            async def mock_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
                 yield _make_turn_event(conv_id, EventType.TURN_ENDED, duration_ms=50)
 
             agent_instance = MockAgentMgr.return_value
@@ -271,7 +277,9 @@ class TestLifecycleE2E:
             sandbox_instance.resume = AsyncMock()
             sandbox_instance.event_buffer = sandbox_instance._event_buffer
 
-            async def mock_send_message(conv_id: str, prompt: str, **kwargs: Any):
+            async def mock_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
                 yield _make_turn_event(conv_id, EventType.TURN_ENDED, duration_ms=50)
 
             agent_instance = MockAgentMgr.return_value
@@ -326,7 +334,9 @@ class TestLifecycleE2E:
             sandbox_instance.pause = AsyncMock(return_value="sb-shutdown")
             sandbox_instance.event_buffer = sandbox_instance._event_buffer
 
-            async def mock_send_message(conv_id: str, prompt: str, **kwargs: Any):
+            async def mock_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
                 yield _make_turn_event(conv_id, EventType.TURN_ENDED, duration_ms=50)
 
             agent_instance = MockAgentMgr.return_value

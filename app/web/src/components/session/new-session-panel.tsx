@@ -13,7 +13,6 @@ import { Switch } from "@/components/ui/switch";
 import type { CreateSessionRequest } from "@/types";
 
 const PROVIDERS = ["e2b"] as const;
-const HARNESSES = ["claude-code", "codex", "opencode"] as const;
 
 interface NewSessionPanelProps {
   onSubmit: (config: CreateSessionRequest) => void;
@@ -23,7 +22,6 @@ interface NewSessionPanelProps {
 
 export function NewSessionPanel({ onSubmit, onCancel, disabled }: NewSessionPanelProps) {
   const [provider, setProvider] = useState("e2b");
-  const [harness, setHarness] = useState("claude-code");
   const [skipPermissions, setSkipPermissions] = useState(true);
   const [secrets, setSecrets] = useState<{ key: string; value: string }[]>([
     { key: "ANTHROPIC_API_KEY", value: "" },
@@ -40,8 +38,8 @@ export function NewSessionPanel({ onSubmit, onCancel, disabled }: NewSessionPane
     for (const s of secrets) {
       if (s.key && s.value) env_vars[s.key] = s.value;
     }
-    onSubmit({ provider, harness, env_vars, skip_permissions: skipPermissions });
-  }, [provider, harness, skipPermissions, secrets, onSubmit]);
+    onSubmit({ provider, env_vars, skip_permissions: skipPermissions });
+  }, [provider, skipPermissions, secrets, onSubmit]);
 
   return (
     <div className="flex flex-1 items-center justify-center p-8">
@@ -64,20 +62,6 @@ export function NewSessionPanel({ onSubmit, onCancel, disabled }: NewSessionPane
                 <SelectContent>
                   {PROVIDERS.map((p) => (
                     <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Harness</Label>
-              <Select value={harness} onValueChange={(v) => v && setHarness(v)} disabled={disabled}>
-                <SelectTrigger className="w-[160px] h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {HARNESSES.map((h) => (
-                    <SelectItem key={h} value={h}>{h}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

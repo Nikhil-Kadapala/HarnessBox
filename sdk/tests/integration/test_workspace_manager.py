@@ -864,7 +864,7 @@ class TestConnectSandbox:
             duration_ms=100,
         )
 
-        async def mock_send_message(conv_id, prompt_text, **kwargs):
+        async def mock_send_message(conv_id, prompt_text, harness="claude-code", **kwargs):
             yield turn_end_event
 
         with (
@@ -894,3 +894,116 @@ class TestConnectSandbox:
         assert events[0].event_type == StreamEventType.USER_PROMPT
         assert events[-1].event_type == StreamEventType.TURN_ENDED
         mock_sandbox.resume.assert_called_once_with("prompt-sandbox")
+
+
+class TestPerConversationHarness:
+    """Per-conversation harness: workspace_manager.prompt() passes harness to agent_manager."""
+
+    @pytest.mark.asyncio
+    async def test_prompt_passes_harness_to_agent_manager(self) -> None:
+        """The harness kwarg in prompt() reaches agent_manager.send_message()."""
+
+        from harnessbox.events import EventBuffer
+        from harnessbox.streaming import EventType, UniversalEvent
+
+        mgr = WorkspaceManager()
+        config = WorkspaceConfig()
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+        ):
+            sandbox_instance = MockSandbox.return_value
+            sandbox_instance.setup = AsyncMock()
+            sandbox_instance.sandbox_id = "sb-1"
+            sandbox_instance._skip_permissions = False
+            sandbox_instance._cwd = "/workspace"
+            sandbox_instance._event_buffer = EventBuffer()
+
+            agent_mgr_instance = MockAgentMgr.return_value
+
+            turn_event = UniversalEvent(
+                event_id="e1",
+                sequence=1,
+                timestamp="2026-01-01T00:00:00Z",
+                session_id="conv-1",
+                event_type=EventType.TURN_ENDED,
+            )
+
+            received_harness = []
+
+            async def fake_send_message(conv_id, prompt, harness="claude-code", **kwargs):
+                received_harness.append(harness)
+                yield turn_event
+
+            agent_mgr_instance.send_message = fake_send_message
+
+            info = await mgr.create_workspace(config, workspace_id="ws-1")
+            info.runtime_state = RuntimeState.ACTIVE.value
+
+            events = []
+            async for event in mgr.prompt("ws-1", "hello", harness="codex"):
+                events.append(event)
+
+        assert received_harness == ["codex"]
+
+    @pytest.mark.asyncio
+    async def test_resume_loads_stored_harness(self) -> None:
+        """When resuming a conversation from storage, agent_type is read and used."""
+        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox.events import EventBuffer
+        from harnessbox.streaming import EventType, UniversalEvent
+
+        storage = MemoryBackend()
+        await storage.initialize()
+
+        mgr = WorkspaceManager(storage=storage)
+        config = WorkspaceConfig()
+
+        with (
+            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+        ):
+            sandbox_instance = MockSandbox.return_value
+            sandbox_instance.setup = AsyncMock()
+            sandbox_instance.sandbox_id = "sb-1"
+            sandbox_instance._skip_permissions = False
+            sandbox_instance._cwd = "/workspace"
+            sandbox_instance._event_buffer = EventBuffer()
+
+            agent_mgr_instance = MockAgentMgr.return_value
+
+            turn_event = UniversalEvent(
+                event_id="e1",
+                sequence=1,
+                timestamp="2026-01-01T00:00:00Z",
+                session_id="conv-stored",
+                event_type=EventType.TURN_ENDED,
+            )
+
+            received_harness = []
+
+            async def capture_send_message(conv_id, prompt, harness="claude-code", **kwargs):
+                received_harness.append(harness)
+                yield turn_event
+
+            agent_mgr_instance.send_message = capture_send_message
+
+            info = await mgr.create_workspace(config, workspace_id="ws-1")
+            info.runtime_state = RuntimeState.ACTIVE.value
+
+            await storage.save_conversation(
+                {
+                    "conversation_id": "conv-stored",
+                    "workspace_id": "ws-1",
+                    "agent_type": "codex",
+                    "title": "test",
+                    "last_active": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+            events = []
+            async for event in mgr.prompt("ws-1", "hello", harness="claude-code"):
+                events.append(event)
+
+        assert received_harness == ["codex"]

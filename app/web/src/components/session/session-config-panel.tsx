@@ -106,7 +106,6 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
 
     const config: CreateSessionRequest = {
       provider,
-      harness,
       env_vars: env,
       skip_permissions: skipPermissions,
       sandbox_timeout: sandboxTimeout * 60,
@@ -137,7 +136,7 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
 
     onSubmit(config);
   }, [
-    provider, harness, skipPermissions, sandboxTimeout, sessionTimeout, template, envVars,
+    provider, skipPermissions, sandboxTimeout, sessionTimeout, template, envVars,
     securityOpen, denyNetwork, allGuards, selectedGuards, deniedTools,
     workspaceOpen, repoUrl, branch, authToken, cloneDepth, workspaceName, onSubmit,
   ]);
