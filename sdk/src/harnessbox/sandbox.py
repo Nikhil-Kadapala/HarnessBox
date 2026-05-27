@@ -66,8 +66,6 @@ class Sandbox:
         model: str | None = None,
         one_shot: bool = False,
         system_prompt: str | Path | None = None,
-        skills: list[str | Path] | None = None,
-        plugins: list[str | Path] | None = None,
         env_vars: dict[str, str] | None = None,
         dirs: list[str] | None = None,
         files: dict[str, str | Path] | list[str | Path] | None = None,
@@ -95,11 +93,6 @@ class Sandbox:
             system_prompt: Agent system prompt. ``str`` = raw content,
                 ``Path`` = read from local file. Placed at the harness's
                 system prompt location (e.g., ``/workspace/CLAUDE.md``).
-            skills: Local skill files or directories to inject. Single ``.md``
-                files become ``{skills_dir}/{stem}/SKILL.md``. Directories
-                are copied as-is into the skills directory.
-            plugins: Local plugin directories to inject and load via
-                the harness's plugin flag (e.g., ``--plugin-dir``).
             env_vars: Environment variables for the sandbox.
             dirs: Additional directories to create in the sandbox.
             files: Generic files to inject. ``list[Path]`` = read and place
@@ -149,8 +142,6 @@ class Sandbox:
             harness_config=self._harness_config,
             workspace=workspace,
             system_prompt=system_prompt,
-            skills=skills,
-            plugins=plugins,
             files=files,
             env_vars=env_vars,
             dirs=dirs,
@@ -186,7 +177,6 @@ class Sandbox:
         self._runtime._cancel_idle_timer = self._session.cancel_idle_timer
         self._runtime._get_state = lambda: self._session.state
         self._runtime._get_cwd = lambda: self._mount.cwd
-        self._runtime._get_plugin_dirs = lambda: self._mount.plugin_dirs
         self._runtime._get_paused_sandbox_id = lambda: self._session.paused_sandbox_id
         self._runtime._resume_sandbox = self.resume
         self._runtime._clear_paused_id = lambda: setattr(self._session, "paused_sandbox_id", None)

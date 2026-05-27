@@ -84,8 +84,6 @@ class WorkspaceConfig:
     harness: str = "claude-code"
     model: str | None = None
     system_prompt: str | Path | None = None
-    skills: list[str | Path] = field(default_factory=list)
-    plugins: list[str | Path] = field(default_factory=list)
     security_policy: SecurityPolicy | None = None
     workspace: Workspace | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
@@ -285,8 +283,6 @@ class WorkspaceManager:
             harness=config.harness,
             model=config.model,
             system_prompt=config.system_prompt,
-            skills=config.skills or None,
-            plugins=config.plugins or None,
             security_policy=config.security_policy,
             workspace=config.workspace,
             env_vars=config.env_vars or None,

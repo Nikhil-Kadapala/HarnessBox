@@ -91,7 +91,6 @@ class AgentRuntime:
         self._cancel_idle_timer: Callable[[], None] | None = None
         self._get_state: Callable[[], RuntimeState] | None = None
         self._get_cwd: Callable[[], str] | None = None
-        self._get_plugin_dirs: Callable[[], list[str]] | None = None
         self._get_paused_sandbox_id: Callable[[], str | None] | None = None
         self._resume_sandbox: Callable[[str], Coroutine[Any, Any, None]] | None = None
         self._clear_paused_id: Callable[[], None] | None = None
@@ -156,7 +155,6 @@ class AgentRuntime:
         self._require_active("run prompt")
 
         cwd = self._get_cwd() if self._get_cwd else self._harness_config.workspace_root
-        plugin_dirs = self._get_plugin_dirs() if self._get_plugin_dirs else []
 
         escaped_prompt = json.dumps(prompt)
         cmd = self._harness_config.build_oneshot_command(
@@ -164,7 +162,6 @@ class AgentRuntime:
             skip_permissions=self._skip_permissions,
             model=self._model,
             session_id=self._agent_session_id,
-            plugin_dirs=plugin_dirs or None,
         )
         _log.info("Running command: %s", cmd[:300])
 
@@ -189,13 +186,11 @@ class AgentRuntime:
                 self._clear_paused_id()
 
         cwd = self._get_cwd() if self._get_cwd else self._harness_config.workspace_root
-        plugin_dirs = self._get_plugin_dirs() if self._get_plugin_dirs else []
 
         if not self._agent_process or not self._agent_process.is_running:
             cmd = self._harness_config.build_session_command(
                 skip_permissions=self._skip_permissions,
                 model=self._model,
-                plugin_dirs=plugin_dirs or None,
                 session_id=self._agent_session_id,
             )
             self._agent_process = AgentProcess(self._provider, StreamParser(persistent=True))
@@ -358,7 +353,6 @@ class AgentRuntime:
             )
 
         cwd = self._get_cwd() if self._get_cwd else self._harness_config.workspace_root
-        plugin_dirs = self._get_plugin_dirs() if self._get_plugin_dirs else []
 
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -368,7 +362,6 @@ class AgentRuntime:
 
         cmd = self._harness_config.build_interactive_command(
             skip_permissions=self._skip_permissions,
-            plugin_dirs=plugin_dirs or None,
         )
         pid = await self._provider.pty_create(
             on_data,
