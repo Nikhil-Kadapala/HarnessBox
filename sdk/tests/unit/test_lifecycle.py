@@ -1,15 +1,12 @@
-"""Tests for harnessbox.lifecycle — runtime and workflow state machines."""
+"""Tests for harnessbox.lifecycle — runtime state machine."""
 
 import pytest
 
 from harnessbox.lifecycle import (
     VALID_RUNTIME_TRANSITIONS,
-    VALID_WORKFLOW_TRANSITIONS,
     InvalidTransitionError,
     RuntimeState,
-    WorkflowState,
     validate_runtime_transition,
-    validate_workflow_transition,
 )
 
 
@@ -30,24 +27,6 @@ class TestRuntimeState:
     def test_all_states_in_transitions_map(self) -> None:
         for state in RuntimeState:
             assert state in VALID_RUNTIME_TRANSITIONS
-
-
-class TestWorkflowState:
-    def test_enum_values_match_strings(self) -> None:
-        assert WorkflowState.BACKLOG.value == "backlog"
-        assert WorkflowState.IN_PROGRESS.value == "in_progress"
-        assert WorkflowState.IN_REVIEW.value == "in_review"
-        assert WorkflowState.MERGED.value == "merged"
-        assert WorkflowState.ARCHIVED.value == "archived"
-
-    def test_enum_from_string(self) -> None:
-        assert WorkflowState("backlog") is WorkflowState.BACKLOG
-        assert WorkflowState("in_review") is WorkflowState.IN_REVIEW
-        assert WorkflowState("archived") is WorkflowState.ARCHIVED
-
-    def test_all_states_in_transitions_map(self) -> None:
-        for state in WorkflowState:
-            assert state in VALID_WORKFLOW_TRANSITIONS
 
 
 class TestRuntimeTransitions:
@@ -96,48 +75,6 @@ class TestRuntimeTransitions:
         assert VALID_RUNTIME_TRANSITIONS[RuntimeState.DEAD] == frozenset()
 
 
-class TestWorkflowTransitions:
-    @pytest.mark.parametrize(
-        "current,target",
-        [
-            (WorkflowState.BACKLOG, WorkflowState.IN_PROGRESS),
-            (WorkflowState.BACKLOG, WorkflowState.ARCHIVED),
-            (WorkflowState.IN_PROGRESS, WorkflowState.IN_REVIEW),
-            (WorkflowState.IN_PROGRESS, WorkflowState.ARCHIVED),
-            (WorkflowState.IN_REVIEW, WorkflowState.IN_PROGRESS),
-            (WorkflowState.IN_REVIEW, WorkflowState.MERGED),
-            (WorkflowState.IN_REVIEW, WorkflowState.ARCHIVED),
-            (WorkflowState.MERGED, WorkflowState.ARCHIVED),
-        ],
-    )
-    def test_valid_transitions_return_true(
-        self, current: WorkflowState, target: WorkflowState
-    ) -> None:
-        assert validate_workflow_transition(current, target) is True
-
-    @pytest.mark.parametrize(
-        "current,target",
-        [
-            (WorkflowState.BACKLOG, WorkflowState.MERGED),
-            (WorkflowState.BACKLOG, WorkflowState.IN_REVIEW),
-            (WorkflowState.IN_PROGRESS, WorkflowState.MERGED),
-            (WorkflowState.IN_PROGRESS, WorkflowState.BACKLOG),
-            (WorkflowState.IN_REVIEW, WorkflowState.BACKLOG),
-            (WorkflowState.MERGED, WorkflowState.IN_PROGRESS),
-            (WorkflowState.MERGED, WorkflowState.IN_REVIEW),
-            (WorkflowState.ARCHIVED, WorkflowState.IN_PROGRESS),
-            (WorkflowState.ARCHIVED, WorkflowState.MERGED),
-        ],
-    )
-    def test_invalid_transitions_return_false(
-        self, current: WorkflowState, target: WorkflowState
-    ) -> None:
-        assert validate_workflow_transition(current, target) is False
-
-    def test_archived_is_terminal(self) -> None:
-        assert VALID_WORKFLOW_TRANSITIONS[WorkflowState.ARCHIVED] == frozenset()
-
-
 class TestInvalidTransitionError:
     def test_message_includes_states(self) -> None:
         err = InvalidTransitionError(RuntimeState.STARTING, RuntimeState.DYING)
@@ -148,8 +85,3 @@ class TestInvalidTransitionError:
         err = InvalidTransitionError(RuntimeState.ACTIVE, RuntimeState.STARTING)
         assert err.current is RuntimeState.ACTIVE
         assert err.target is RuntimeState.STARTING
-
-    def test_workflow_error(self) -> None:
-        err = InvalidTransitionError(WorkflowState.BACKLOG, WorkflowState.MERGED)
-        assert "backlog" in str(err)
-        assert "merged" in str(err)

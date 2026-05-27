@@ -87,8 +87,6 @@ class AgentRuntime:
 
         # Callbacks set by Sandbox to coordinate with SandboxSession
         self._on_sandbox_dead: Callable[[], None] | None = None
-        self._start_idle_timer: Callable[[], None] | None = None
-        self._cancel_idle_timer: Callable[[], None] | None = None
         self._get_state: Callable[[], RuntimeState] | None = None
         self._get_cwd: Callable[[], str] | None = None
         self._get_paused_sandbox_id: Callable[[], str | None] | None = None
@@ -243,9 +241,6 @@ class AgentRuntime:
     async def _stream_events(self, prompt: str) -> AsyncGenerator[UniversalEvent, None]:
         """Stream typed events from the agent for a single turn."""
         try:
-            if self._cancel_idle_timer:
-                self._cancel_idle_timer()
-
             use_persistent = self._harness_config.supports_persistent and not self._one_shot
             if use_persistent:
                 await self._ensure_agent_ready()
@@ -301,9 +296,6 @@ class AgentRuntime:
                 ):
                     status_event = await self._event_buffer.push(status_event)
                     yield status_event
-
-                if self._start_idle_timer:
-                    self._start_idle_timer()
             else:
                 parser = StreamParser(session_id=self._agent_session_id or "")
                 async for line in self._stream_oneshot(prompt):

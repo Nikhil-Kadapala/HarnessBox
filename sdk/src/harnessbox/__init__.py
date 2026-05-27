@@ -34,14 +34,11 @@ from harnessbox.harnessbox import (
 )
 from harnessbox.lifecycle import (
     VALID_RUNTIME_TRANSITIONS,
-    VALID_WORKFLOW_TRANSITIONS,
     InvalidTransitionError,
     RuntimeState,
     SessionStatus,
-    WorkflowState,
     to_session_status,
     validate_runtime_transition,
-    validate_workflow_transition,
 )
 from harnessbox.process import AgentProcess
 from harnessbox.providers import CommandResult, SandboxDeadError, SandboxProvider
@@ -91,14 +88,11 @@ __all__ = [
     "SecurityPolicy",
     "RuntimeState",
     "SessionStatus",
-    "WorkflowState",
     "VALID_RUNTIME_TRANSITIONS",
-    "VALID_WORKFLOW_TRANSITIONS",
     "build_settings",
     "merge_guard_sets",
     "to_session_status",
     "validate_runtime_transition",
-    "validate_workflow_transition",
     # Streaming
     "Attachment",
     "ContentPart",

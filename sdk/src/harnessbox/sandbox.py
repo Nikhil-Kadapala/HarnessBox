@@ -133,8 +133,6 @@ class Sandbox:
         self._event_buffer = EventBuffer(
             storage=storage, session_id=session_id, initial_sequence=initial_sequence
         )
-        self._session_timeout = session_timeout
-        self._session_lock = session_lock
         self._snapshot_id = snapshot_id
 
         # Workspace mount collaborator (resolvers + git facade)
@@ -154,8 +152,6 @@ class Sandbox:
             provider=self._provider,
             event_handler=event_handler,
             event_buffer=self._event_buffer,
-            session_timeout=session_timeout,
-            session_lock=session_lock,
         )
 
         # Agent execution collaborator
@@ -173,8 +169,6 @@ class Sandbox:
     def _wire_runtime_callbacks(self) -> None:
         """Connect AgentRuntime to SandboxSession and WorkspaceMount via callbacks."""
         self._runtime._on_sandbox_dead = self._session.mark_dead
-        self._runtime._start_idle_timer = self._session.start_idle_timer
-        self._runtime._cancel_idle_timer = self._session.cancel_idle_timer
         self._runtime._get_state = lambda: self._session.state
         self._runtime._get_cwd = lambda: self._mount.cwd
         self._runtime._get_paused_sandbox_id = lambda: self._session.paused_sandbox_id
@@ -284,14 +278,6 @@ class Sandbox:
     @_agent_process.deleter
     def _agent_process(self) -> None:
         self._runtime.agent_process = None
-
-    @property
-    def _idle_timer_task(self) -> asyncio.Task[None] | None:
-        return self._session._idle_timer_task
-
-    @_idle_timer_task.setter
-    def _idle_timer_task(self, value: asyncio.Task[None] | None) -> None:
-        self._session._idle_timer_task = value
 
     @property
     def _paused_sandbox_id(self) -> str | None:
@@ -441,20 +427,6 @@ class Sandbox:
     async def create_vm_snapshot(self) -> str:
         """Create a VM snapshot of the sandbox filesystem state."""
         return await self._session.create_vm_snapshot()
-
-    # -- Idle timer --
-
-    def _start_idle_timer(self) -> None:
-        self._session.start_idle_timer()
-
-    def _cancel_idle_timer(self) -> None:
-        self._session.cancel_idle_timer()
-
-    async def _on_idle_timeout(self) -> None:
-        await self._session._on_idle_timeout()
-
-    async def _do_idle_pause(self) -> None:
-        await self._session._do_idle_pause()
 
     async def end(self) -> None:
         """Gracefully end the session."""
