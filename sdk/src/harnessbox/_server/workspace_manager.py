@@ -566,6 +566,13 @@ class WorkspaceManager:
                         user_prompt_event
                     )
                 yield user_prompt_event
+                if self._storage:
+                    try:
+                        await self._storage.append_events(
+                            workspace_id, [user_prompt_event.to_dict()]
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to persist user_prompt event: {e}")
 
                 # Augment prompt with file references for the agent
                 augmented_prompt = prompt
@@ -614,6 +621,13 @@ class WorkspaceManager:
                             logger.error(f"Failed to save conversation {conversation_id}: {e}")
 
                     yield event
+
+                    # Persist event to storage for /history endpoint and sequence continuity
+                    if self._storage:
+                        try:
+                            await self._storage.append_events(workspace_id, [event.to_dict()])
+                        except Exception as e:
+                            logger.error(f"Failed to persist event {event.event_id}: {e}")
 
                     # Turn completed — decrement active-turn counter and restart
                     # idle countdown only when all concurrent turns are done.
