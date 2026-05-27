@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from harnessbox._storage.memory import MemoryBackend
+from harnessbox._server._storage.memory import MemoryBackend
 from harnessbox.lifecycle import RuntimeState
 
 

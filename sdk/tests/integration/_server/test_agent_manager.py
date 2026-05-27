@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from harnessbox.agent_manager import AgentManager
+from harnessbox._server.agent_manager import AgentManager
 from harnessbox.streaming import EventType, UniversalEvent
 
 
@@ -51,8 +51,8 @@ class TestAgentManagerLazySpawn:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
@@ -75,8 +75,8 @@ class TestAgentManagerLazySpawn:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
@@ -104,8 +104,8 @@ class TestAgentManagerConcurrent:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
@@ -142,8 +142,8 @@ class TestAgentManagerTermination:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
@@ -167,8 +167,8 @@ class TestAgentManagerTermination:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
@@ -227,8 +227,8 @@ class TestAgentManagerSessionIdStamping:
         conversation_id = "401ac3bc-user-conversation"
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
@@ -260,8 +260,8 @@ class TestAgentManagerSessionIdStamping:
         conversation_id = "conv-no-session"
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type"),
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()
@@ -289,8 +289,8 @@ class TestAgentManagerPerConversationHarness:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type") as mock_get_harness,
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type") as mock_get_harness,
         ):
             mock_process1 = MagicMock()
             mock_process1.start = AsyncMock()
@@ -331,8 +331,8 @@ class TestAgentManagerPerConversationHarness:
         mgr = AgentManager(mock_sandbox)
 
         with (
-            patch("harnessbox.agent_manager.AgentProcess") as MockAgentProcess,
-            patch("harnessbox.agent_manager.get_harness_type") as mock_get_harness,
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type") as mock_get_harness,
         ):
             mock_process = MockAgentProcess.return_value
             mock_process.start = AsyncMock()

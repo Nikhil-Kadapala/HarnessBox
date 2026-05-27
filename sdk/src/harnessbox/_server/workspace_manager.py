@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from harnessbox.agent_manager import AgentManager
+from harnessbox._server.agent_manager import AgentManager
 from harnessbox.lifecycle import (
     InvalidTransitionError,
     RuntimeState,
@@ -39,7 +39,7 @@ from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.workspace import Workspace
 
 if TYPE_CHECKING:
-    from harnessbox.storage import StorageBackend
+    from harnessbox._server.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +293,6 @@ class WorkspaceManager:
             template=config.template,
             event_handler=event_handler,
             session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
-            session_lock=lock,
-            storage=self._storage,
-            session_id=wid,
             snapshot_id=config.snapshot_id,
         )
         await sandbox.setup()
@@ -506,6 +503,7 @@ class WorkspaceManager:
 
         try:
             async with self._locks[workspace_id]:
+                assert info.sandbox_conn is not None  # guaranteed by _ensure_sandbox above
                 # Write attachments to sandbox and build metadata
                 resolved_attachments: list[Attachment] = []
                 if attachments:
@@ -568,6 +566,13 @@ class WorkspaceManager:
                         user_prompt_event
                     )
                 yield user_prompt_event
+                if self._storage:
+                    try:
+                        await self._storage.append_events(
+                            workspace_id, [user_prompt_event.to_dict()]
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to persist user_prompt event: {e}")
 
                 # Augment prompt with file references for the agent
                 augmented_prompt = prompt
@@ -616,6 +621,13 @@ class WorkspaceManager:
                             logger.error(f"Failed to save conversation {conversation_id}: {e}")
 
                     yield event
+
+                    # Persist event to storage for /history endpoint and sequence continuity
+                    if self._storage:
+                        try:
+                            await self._storage.append_events(workspace_id, [event.to_dict()])
+                        except Exception as e:
+                            logger.error(f"Failed to persist event {event.event_id}: {e}")
 
                     # Turn completed — decrement active-turn counter and restart
                     # idle countdown only when all concurrent turns are done.
@@ -886,9 +898,6 @@ class WorkspaceManager:
                 skip_permissions=config_dict.get("skip_permissions", False),
                 template=config_dict.get("template"),
                 session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
-                session_lock=self._locks[workspace_id],
-                storage=self._storage,
-                session_id=workspace_id,
                 initial_sequence=initial_sequence,
             )
 
@@ -929,8 +938,6 @@ class WorkspaceManager:
                     f"Workspace {workspace_id} has no provider_sandbox_id or snapshot_id. "
                     "Cannot reconnect without a way to reach the sandbox."
                 )
-
-            await sandbox.event_buffer.hydrate()
 
             agent_mgr = AgentManager(sandbox)
 
@@ -1151,6 +1158,7 @@ class WorkspaceManager:
         and memory. On resume the Claude process wakes exactly where it left off,
         ready to accept the next stdin prompt without respawning.
         """
+        assert info.sandbox_conn is not None  # only called for active workspaces
         # Create snapshot (captures filesystem including ~/.claude/sessions/)
         try:
             snapshot_id = await info.sandbox_conn.create_snapshot()
@@ -1200,22 +1208,26 @@ class WorkspaceManager:
         if not info.sandbox_conn or not info.provider_sandbox_id:
             raise ValueError("Cannot resume: sandbox or provider_sandbox_id is None")
 
+        # Narrowed locals so mypy (and inner closures) see non-optional types.
+        sandbox = info.sandbox_conn
+        sandbox_id = info.provider_sandbox_id
+
         if TENACITY_AVAILABLE:
-            # Use tenacity retry decorator
-            @retry(
+
+            @retry(  # type: ignore[untyped-decorator]  # tenacity lacks py.typed stubs
                 stop=stop_after_attempt(3),
                 wait=wait_exponential(multiplier=1, min=2, max=10),
                 retry=retry_if_exception_type((TimeoutException, ConnectException)),
             )
             async def _resume_with_retry() -> None:
-                await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
+                await sandbox.resume(sandbox_id)
 
             await _resume_with_retry()
         else:
             # Fallback: simple retry without tenacity
             for attempt in range(3):
                 try:
-                    await info.sandbox_conn.resume(info.provider_sandbox_id)  # type: ignore
+                    await sandbox.resume(sandbox_id)
                     return
                 except (TimeoutException, ConnectException) as e:
                     if attempt == 2:  # Last attempt

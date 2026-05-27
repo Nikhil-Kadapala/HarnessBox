@@ -16,10 +16,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from harnessbox._storage.memory import MemoryBackend
+from harnessbox._server._storage.memory import MemoryBackend
+from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.streaming import EventType, UniversalEvent
-from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager
 
 
 def _make_turn_event(session_id: str, event_type: EventType, **kwargs: Any) -> UniversalEvent:
@@ -47,8 +47,8 @@ class TestLifecycleE2E:
 
         # --- Phase 1: Create workspace ---
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
@@ -134,8 +134,8 @@ class TestLifecycleE2E:
         mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
@@ -192,8 +192,8 @@ class TestLifecycleE2E:
             return event
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
@@ -262,8 +262,8 @@ class TestLifecycleE2E:
         mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=0)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
@@ -320,8 +320,8 @@ class TestLifecycleE2E:
         mgr = await WorkspaceManager.create(storage=storage, auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()

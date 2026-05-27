@@ -13,11 +13,11 @@ import sqlite3
 logger = logging.getLogger(__name__)
 
 MIGRATIONS: list[str] = [
-    "harnessbox._storage.migrations.v001_initial",
-    "harnessbox._storage.migrations.v002_event_type_index",
-    "harnessbox._storage.migrations.v003_split_state",
-    "harnessbox._storage.migrations.v004_drop_legacy_status",
-    "harnessbox._storage.migrations.v005_conversation_session_id",
+    "harnessbox._server._storage.migrations.v001_initial",
+    "harnessbox._server._storage.migrations.v002_event_type_index",
+    "harnessbox._server._storage.migrations.v003_split_state",
+    "harnessbox._server._storage.migrations.v004_drop_legacy_status",
+    "harnessbox._server._storage.migrations.v005_conversation_session_id",
 ]
 
 

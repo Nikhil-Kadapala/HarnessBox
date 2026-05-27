@@ -96,10 +96,7 @@ ignore_missing_imports = true
 module = [
     "harnessbox.server",
     "harnessbox.sandbox",
-    "harnessbox.workspace_manager",
-    "harnessbox.agent_manager",
     "harnessbox._providers.e2b",
-    "harnessbox._storage",
     "harnessbox._utils.timing",
 ]
 warn_return_any = false
