@@ -36,9 +36,6 @@ class SetupContext:
     dirs: list[str] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
     system_prompt: str | None = None
-    resolved_skills: dict[str, str] | None = None
-    resolved_plugins: dict[str, str] | None = None
-    plugin_dirs: list[str] = field(default_factory=list)
     setup_script: str | None = None
 
     # Whether to allow .harnessbox.toml setup_script from cloned repos
@@ -266,8 +263,6 @@ async def _step_build_manifest(ctx: SetupContext) -> None:
         dirs=ctx.dirs or None,
         files=ctx.files or None,
         system_prompt=ctx.system_prompt,
-        skills=ctx.resolved_skills,
-        plugins=ctx.resolved_plugins,
     )
 
 

@@ -30,8 +30,6 @@ class HarnessTypeConfig:
     skip_permissions_flag: str | None = None
     cli_resume_flag: str | None = None
     default_template: str | None = None
-    skills_dir: str | None = None
-    plugin_flag: str | None = None
     cli_input_format_flag: str | None = None
     workspace_root: str = "/workspace"
     build_settings: Callable[[SecurityPolicy], dict[str, Any]] | None = None
@@ -79,8 +77,6 @@ class HarnessTypeConfig:
             skip_permissions_flag=data.get("skip_permissions_flag"),
             cli_resume_flag=data.get("cli_resume_flag"),
             default_template=data.get("default_template"),
-            skills_dir=data.get("skills_dir"),
-            plugin_flag=data.get("plugin_flag"),
             cli_input_format_flag=data.get("cli_input_format_flag"),
             workspace_root=data.get("workspace_root", "/workspace"),
         )
@@ -95,7 +91,6 @@ class HarnessTypeConfig:
         *,
         skip_permissions: bool,
         model: str | None = None,
-        plugin_dirs: list[str] | None = None,
         session_id: str | None = None,
     ) -> str:
         """Build the CLI command that starts a persistent agent session.
@@ -113,9 +108,6 @@ class HarnessTypeConfig:
             parts.extend([self.cli_resume_flag, session_id])
         if self.cli_input_format_flag:
             parts.extend([self.cli_input_format_flag, "stream-json"])
-        if plugin_dirs and self.plugin_flag:
-            for d in plugin_dirs:
-                parts.extend([self.plugin_flag, d])
         return " ".join(parts)
 
     def build_oneshot_command(
@@ -125,7 +117,6 @@ class HarnessTypeConfig:
         skip_permissions: bool,
         model: str | None = None,
         session_id: str | None = None,
-        plugin_dirs: list[str] | None = None,
     ) -> str:
         """Build the full CLI command for a one-shot prompt run."""
         parts = [self.cli_command]
@@ -136,24 +127,16 @@ class HarnessTypeConfig:
             parts.extend(["--model", model])
         if session_id and self.cli_resume_flag:
             parts.extend([self.cli_resume_flag, session_id])
-        if plugin_dirs and self.plugin_flag:
-            for d in plugin_dirs:
-                parts.extend([self.plugin_flag, d])
         parts.extend(self.cli_oneshot_flags)
         parts.append(f"{self.cli_prompt_flag} {prompt}")
         return " ".join(parts)
 
-    def build_interactive_command(
-        self, *, skip_permissions: bool, plugin_dirs: list[str] | None = None
-    ) -> str:
+    def build_interactive_command(self, *, skip_permissions: bool) -> str:
         """Build the full CLI command for interactive mode."""
         parts = [self.cli_command]
         if skip_permissions and self.skip_permissions_flag:
             parts.append(self.skip_permissions_flag)
         parts.extend(self.cli_base_flags)
-        if plugin_dirs and self.plugin_flag:
-            for d in plugin_dirs:
-                parts.extend([self.plugin_flag, d])
         parts.extend(self.cli_interactive_flags)
         return " ".join(parts)
 
@@ -217,8 +200,6 @@ register_harness_type(
         skip_permissions_flag="--dangerously-skip-permissions",
         cli_resume_flag="--resume",
         default_template="claude",
-        skills_dir=".claude/skills",
-        plugin_flag="--plugin-dir",
         cli_input_format_flag="--input-format",
         build_settings=_claude_code_build_settings,
         build_hook_script=_claude_code_build_hook,

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class WorkspaceMount:
     """Combines setup-time file resolution with runtime git operations.
 
-    Setup-time: resolves local files/skills/plugins/prompt into sandbox paths.
+    Setup-time: resolves local files and system prompt into sandbox paths.
     Runtime: delegates git operations to the underlying GitRepoConfig workspace.
     """
 
@@ -28,8 +28,6 @@ class WorkspaceMount:
         workspace: Workspace | None,
         *,
         system_prompt: str | Path | None = None,
-        skills: list[str | Path] | None = None,
-        plugins: list[str | Path] | None = None,
         files: dict[str, str | Path] | list[str | Path] | None = None,
         env_vars: dict[str, str] | None = None,
         dirs: list[str] | None = None,
@@ -39,14 +37,11 @@ class WorkspaceMount:
         self._harness_config = harness_config
         self._workspace = workspace
         self._system_prompt_content = self._resolve_prompt(system_prompt)
-        self._skills = skills or []
-        self._plugins = plugins or []
         self._files = self._resolve_files(files, harness_config.workspace_root)
         self._env_vars = dict(env_vars) if env_vars else {}
         self._dirs = list(dirs) if dirs else []
         self._setup_script = setup_script
         self._cwd = cwd or harness_config.workspace_root
-        self._plugin_dirs: list[str] = []
 
     # ------------------------------------------------------------------
     # Properties
@@ -59,14 +54,6 @@ class WorkspaceMount:
     @cwd.setter
     def cwd(self, value: str) -> None:
         self._cwd = value
-
-    @property
-    def plugin_dirs(self) -> list[str]:
-        return self._plugin_dirs
-
-    @plugin_dirs.setter
-    def plugin_dirs(self, value: list[str]) -> None:
-        self._plugin_dirs = value
 
     @property
     def workspace(self) -> Workspace | None:
@@ -121,53 +108,6 @@ class WorkspaceMount:
             return prompt.read_text(encoding="utf-8")
         return prompt
 
-    def _resolve_skills(self) -> dict[str, str] | None:
-        if not self._skills:
-            return None
-        if not self._harness_config.skills_dir:
-            return None
-        resolved: dict[str, str] = {}
-        skills_base = f"{self._harness_config.workspace_root}/{self._harness_config.skills_dir}"
-        for entry in self._skills:
-            p = Path(entry)
-            if p.is_dir():
-                for file in p.rglob("*"):
-                    if file.is_file():
-                        try:
-                            content = file.read_text(encoding="utf-8")
-                        except UnicodeDecodeError:
-                            continue
-                        rel = file.relative_to(p)
-                        resolved[f"{skills_base}/{p.name}/{rel}"] = content
-            elif p.is_file():
-                resolved[f"{skills_base}/{p.stem}/SKILL.md"] = p.read_text(encoding="utf-8")
-            else:
-                raise FileNotFoundError(f"Skill not found: {p}")
-        return resolved
-
-    def _resolve_plugins(self) -> tuple[dict[str, str] | None, list[str]]:
-        if not self._plugins:
-            return None, []
-        plugin_dirs: list[str] = []
-        resolved: dict[str, str] = {}
-        for plugin_path in self._plugins:
-            p = Path(plugin_path)
-            if not p.is_dir():
-                raise FileNotFoundError(f"Plugin directory not found: {p}")
-            plugin_sandbox_dir = (
-                f"{self._harness_config.workspace_root}/.harnessbox/plugins/{p.name}"
-            )
-            plugin_dirs.append(plugin_sandbox_dir)
-            for file in p.rglob("*"):
-                if file.is_file():
-                    try:
-                        content = file.read_text(encoding="utf-8")
-                    except UnicodeDecodeError:
-                        continue
-                    rel = file.relative_to(p)
-                    resolved[f"{plugin_sandbox_dir}/{rel}"] = content
-        return resolved, plugin_dirs
-
     # ------------------------------------------------------------------
     # Setup context building
     # ------------------------------------------------------------------
@@ -179,9 +119,6 @@ class WorkspaceMount:
         timeout: int,
         snapshot_id: str | None = None,
     ) -> SetupContext:
-        resolved_skills = self._resolve_skills()
-        resolved_plugins, plugin_dirs = self._resolve_plugins()
-
         return SetupContext(
             provider=provider,
             harness_config=self._harness_config,
@@ -192,9 +129,6 @@ class WorkspaceMount:
             dirs=self._dirs,
             files=self._files,
             system_prompt=self._system_prompt_content,
-            resolved_skills=resolved_skills,
-            resolved_plugins=resolved_plugins,
-            plugin_dirs=plugin_dirs,
             setup_script=self._setup_script,
             cwd=self._cwd,
             snapshot_id=snapshot_id,
@@ -204,8 +138,6 @@ class WorkspaceMount:
         """Sync back state that setup pipeline may have changed."""
         if ctx.cwd:
             self._cwd = ctx.cwd
-        if ctx.plugin_dirs:
-            self._plugin_dirs = ctx.plugin_dirs
 
     # ------------------------------------------------------------------
     # Git facade (runtime)

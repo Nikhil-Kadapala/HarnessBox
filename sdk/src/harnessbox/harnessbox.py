@@ -215,8 +215,6 @@ class HarnessBox:
         secrets: dict[str, Any] | HarnessBoxSecrets | None = None,
         model: str | None = None,
         system_prompt: str | Path | None = None,
-        skills: list[str | Path] | None = None,
-        plugins: list[str | Path] | None = None,
         env_vars: dict[str, str] | None = None,
         files: dict[str, str | Path] | list[str | Path] | None = None,
         setup_script: str | None = None,
@@ -232,8 +230,6 @@ class HarnessBox:
         self._api_key = api_key
         self._model = model
         self._system_prompt = system_prompt
-        self._skills = skills
-        self._plugins = plugins
         self._env_vars = dict(env_vars) if env_vars else {}
         self._files = files
         self._setup_script = setup_script
@@ -345,8 +341,6 @@ class HarnessBox:
             harness=self._harness,
             model=self._model,
             system_prompt=self._system_prompt,
-            skills=self._skills or [],
-            plugins=self._plugins or [],
             security_policy=self._security_policy,
             workspace=workspace,
             env_vars=merged_env,

@@ -29,16 +29,11 @@ def build_manifest(
     dirs: list[str] | None,
     files: dict[str, str] | None,
     system_prompt: str | None,
-    skills: dict[str, str] | None = None,
-    plugins: dict[str, str] | None = None,
 ) -> SandboxManifest:
     """Compute the full file/directory manifest for sandbox setup.
 
     Merges harness-type defaults with user-provided overrides.
     User-specified files override any generated files at the same path.
-
-    Agent behavior files (system_prompt, skills, plugins) are written
-    after workspace injection so they take precedence over repo contents.
     """
     all_dirs: list[str] = []
     all_files: dict[str, str] = {}
@@ -82,23 +77,7 @@ def build_manifest(
         prompt_path = f"{workspace_root}/{harness_config.system_prompt_file}"
         all_files[prompt_path] = system_prompt
 
-    # 6. Skill files (already resolved to full sandbox paths)
-    if skills:
-        for sandbox_path, content in skills.items():
-            all_files[sandbox_path] = content
-            parent = sandbox_path.rsplit("/", 1)[0]
-            if parent and parent not in all_dirs:
-                all_dirs.append(parent)
-
-    # 7. Plugin files (already resolved to full sandbox paths)
-    if plugins:
-        for sandbox_path, content in plugins.items():
-            all_files[sandbox_path] = content
-            parent = sandbox_path.rsplit("/", 1)[0]
-            if parent and parent not in all_dirs:
-                all_dirs.append(parent)
-
-    # 8. User-specified files (override anything above)
+    # 6. User-specified files (override anything above)
     if files:
         for path, content in files.items():
             all_files[path] = content
@@ -106,7 +85,7 @@ def build_manifest(
             if parent and parent not in all_dirs:
                 all_dirs.append(parent)
 
-    # 9. Environment variables
+    # 7. Environment variables
     all_env_vars = dict(env_vars) if env_vars else {}
 
     return SandboxManifest(
