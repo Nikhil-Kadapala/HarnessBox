@@ -78,9 +78,6 @@ class Sandbox:
         skip_permissions: bool = False,
         cwd: str | None = None,
         session_timeout: int = 900,
-        session_lock: asyncio.Lock | None = None,
-        storage: Any = None,  # StorageBackend | None (TYPE_CHECKING import to avoid circular)
-        session_id: str = "",
         snapshot_id: str | None = None,
         initial_sequence: int = 0,
     ) -> None:
@@ -130,9 +127,8 @@ class Sandbox:
         self._timeout = timeout
         self._event_handler = event_handler
         self._skip_permissions = skip_permissions
-        self._event_buffer = EventBuffer(
-            storage=storage, session_id=session_id, initial_sequence=initial_sequence
-        )
+        self._event_buffer = EventBuffer(initial_sequence=initial_sequence)
+        self._lock = asyncio.Lock()
         self._snapshot_id = snapshot_id
 
         # Workspace mount collaborator (resolvers + git facade)
@@ -395,26 +391,31 @@ class Sandbox:
 
     async def kill(self) -> None:
         """Destroy the sandbox. Idempotent from terminal states."""
-        await self._session.kill()
+        async with self._lock:
+            await self._session.kill()
 
     async def pause(self) -> str:
         """Pause the sandbox, preserving state. Returns sandbox_id."""
-        return await self._session.pause()
+        async with self._lock:
+            return await self._session.pause()
 
     async def resume(self, sandbox_id: str) -> None:
         """Resume a paused sandbox."""
-        await self._session.resume(sandbox_id)
+        async with self._lock:
+            await self._session.resume(sandbox_id)
 
     async def hibernate(self) -> str:
         """Pause the sandbox using VM-style lifecycle terminology."""
-        return await self._session.hibernate()
+        async with self._lock:
+            return await self._session.hibernate()
 
     async def wake(self, sandbox_id: str | None = None) -> None:
         """Resume a hibernated sandbox.
 
         If *sandbox_id* is omitted, resumes the most recently paused sandbox.
         """
-        await self._session.wake(sandbox_id)
+        async with self._lock:
+            await self._session.wake(sandbox_id)
 
     async def create_snapshot(self) -> str:
         """Create a snapshot of the sandbox's current filesystem state.

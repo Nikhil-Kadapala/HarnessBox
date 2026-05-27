@@ -24,13 +24,11 @@ from harnessbox.credentials import (
 )
 from harnessbox.events import EventBuffer
 from harnessbox.harnessbox import (
-    FileSystemConfig,
     HarnessBox,
     HarnessBoxSecrets,
     Session,
     Snapshot,
     WorkspaceConfig,
-    WorkspaceMode,
 )
 from harnessbox.lifecycle import (
     VALID_RUNTIME_TRANSITIONS,
@@ -117,13 +115,11 @@ __all__ = [
     "detect_claude_auth_mode",
     "detect_credentials",
     # HarnessBox (public API)
-    "FileSystemConfig",
     "HarnessBox",
     "HarnessBoxSecrets",
     "Session",
     "Snapshot",
     "WorkspaceConfig",
-    "WorkspaceMode",
     # Sandbox (internal orchestration)
     "AgentResponse",
     "CommandResult",

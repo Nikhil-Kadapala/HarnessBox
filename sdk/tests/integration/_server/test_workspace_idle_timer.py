@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from harnessbox.lifecycle import RuntimeState
-from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceInstance, WorkspaceManager
+from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceInstance, WorkspaceManager
 from tests.conftest import MockProvider
 
 # ---------------------------------------------------------------------------
@@ -27,8 +27,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager"),
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -117,8 +117,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=False)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager"),
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -138,8 +138,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -324,7 +324,7 @@ class TestSnapshotRecovery:
 
     @pytest.mark.asyncio
     async def test_recovery_updates_storage(self) -> None:
-        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox._server._storage.memory import MemoryBackend
         from harnessbox.providers import SandboxDeadError
 
         storage = MemoryBackend()
@@ -463,7 +463,7 @@ class TestGracefulShutdown:
 
         # Should not hang — timeout guard at 30s, but we patch wait_for
         with patch(
-            "harnessbox.workspace_manager.asyncio.wait_for", side_effect=asyncio.TimeoutError
+            "harnessbox._server.workspace_manager.asyncio.wait_for", side_effect=asyncio.TimeoutError
         ):
             await mgr.graceful_shutdown()
 
@@ -474,7 +474,7 @@ class TestGracefulShutdown:
 class TestLoadWorkspacesStateDowngrade:
     @pytest.mark.asyncio
     async def test_active_state_downgraded_to_paused_on_load(self) -> None:
-        from harnessbox._storage.memory import MemoryBackend
+        from harnessbox._server._storage.memory import MemoryBackend
 
         storage = MemoryBackend()
         await storage.initialize()
@@ -510,8 +510,8 @@ class TestSessionTimeoutDisabledForManagedSandbox:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox.workspace_manager.AgentManager"),
+            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
+            patch("harnessbox._server.workspace_manager.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()

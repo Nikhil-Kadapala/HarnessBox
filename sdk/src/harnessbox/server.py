@@ -41,8 +41,8 @@ except ImportError as e:
 
 from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
 from harnessbox.sandbox import Sandbox
-from harnessbox.storage import StorageBackend
-from harnessbox.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
+from harnessbox._server.storage import StorageBackend
+from harnessbox._server.workspace_manager import WorkspaceConfig, WorkspaceManager, WorkspaceNotFoundError
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
 logger = logging.getLogger("harnessbox.server")
@@ -319,7 +319,7 @@ def create_app(
     # Resolve storage backend by name if string
     resolved_storage: StorageBackend | None = None
     if isinstance(storage, str):
-        from harnessbox._storage import get_storage_backend
+        from harnessbox._server._storage import get_storage_backend
 
         backend_cls = get_storage_backend(storage)
         kwargs: dict[str, Any] = {}

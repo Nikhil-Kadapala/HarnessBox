@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
-from harnessbox._storage.migrations import MigrationRunner
+from harnessbox._server._storage.migrations import MigrationRunner
 
 logger = logging.getLogger(__name__)
 

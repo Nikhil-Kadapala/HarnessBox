@@ -11,8 +11,8 @@ from typing import Any
 
 # Registry maps backend name → (module_path, class_name)
 _STORAGE_REGISTRY: dict[str, tuple[str, str]] = {
-    "memory": ("harnessbox._storage.memory", "MemoryBackend"),
-    "sqlite": ("harnessbox._storage.sqlite", "SQLiteBackend"),
+    "memory": ("harnessbox._server._storage.memory", "MemoryBackend"),
+    "sqlite": ("harnessbox._server._storage.sqlite", "SQLiteBackend"),
 }
 
 

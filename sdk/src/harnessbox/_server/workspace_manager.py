@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from harnessbox.agent_manager import AgentManager
+from harnessbox._server.agent_manager import AgentManager
 from harnessbox.lifecycle import (
     InvalidTransitionError,
     RuntimeState,
@@ -39,7 +39,7 @@ from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.workspace import Workspace
 
 if TYPE_CHECKING:
-    from harnessbox.storage import StorageBackend
+    from harnessbox._server.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +293,6 @@ class WorkspaceManager:
             template=config.template,
             event_handler=event_handler,
             session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
-            session_lock=lock,
-            storage=self._storage,
-            session_id=wid,
             snapshot_id=config.snapshot_id,
         )
         await sandbox.setup()
@@ -886,9 +883,6 @@ class WorkspaceManager:
                 skip_permissions=config_dict.get("skip_permissions", False),
                 template=config_dict.get("template"),
                 session_timeout=0,  # WorkspaceManager owns idle-pause; disable SandboxSession timer
-                session_lock=self._locks[workspace_id],
-                storage=self._storage,
-                session_id=workspace_id,
                 initial_sequence=initial_sequence,
             )
 

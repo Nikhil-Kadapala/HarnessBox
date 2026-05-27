@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from harnessbox._storage.migrations import MigrationRunner
+from harnessbox._server._storage.migrations import MigrationRunner
 
 
 @pytest.fixture
@@ -70,22 +70,22 @@ class TestMigrationRunner:
         assert runner.get_version() == 5
 
         # Monkey-patch MIGRATIONS to add a failing migration
-        from harnessbox._storage import migrations
+        from harnessbox._server._storage import migrations
 
         original = migrations.MIGRATIONS[:]
-        migrations.MIGRATIONS.append("harnessbox._storage.migrations._fake_broken")
+        migrations.MIGRATIONS.append("harnessbox._server._storage.migrations._fake_broken")
 
         # Create a fake module that raises during upgrade
         import sys
         import types
 
-        fake_module = types.ModuleType("harnessbox._storage.migrations._fake_broken")
+        fake_module = types.ModuleType("harnessbox._server._storage.migrations._fake_broken")
 
         def _failing_upgrade(conn):
             raise RuntimeError("Intentional failure")
 
         fake_module.upgrade = _failing_upgrade
-        sys.modules["harnessbox._storage.migrations._fake_broken"] = fake_module
+        sys.modules["harnessbox._server._storage.migrations._fake_broken"] = fake_module
 
         try:
             with pytest.raises(RuntimeError, match="Intentional failure"):
@@ -95,14 +95,14 @@ class TestMigrationRunner:
             assert runner.get_version() == 5
         finally:
             migrations.MIGRATIONS[:] = original
-            del sys.modules["harnessbox._storage.migrations._fake_broken"]
+            del sys.modules["harnessbox._server._storage.migrations._fake_broken"]
 
     def test_sequential_execution_order(self, conn):
         """Migrations run in order: v001 creates tables, v002 adds index."""
         runner = MigrationRunner(conn)
 
         # Run only v001
-        from harnessbox._storage import migrations
+        from harnessbox._server._storage import migrations
 
         original = migrations.MIGRATIONS[:]
         migrations.MIGRATIONS[:] = [original[0]]
@@ -136,7 +136,7 @@ class TestSQLiteBackendIntegration:
 
     @pytest.fixture
     async def backend(self, tmp_path):
-        from harnessbox._storage.sqlite import SQLiteBackend
+        from harnessbox._server._storage.sqlite import SQLiteBackend
 
         db_path = tmp_path / "test.db"
         backend = SQLiteBackend(path=db_path, max_events_per_workspace=100)
