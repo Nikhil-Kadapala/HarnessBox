@@ -1,6 +1,5 @@
 """Tests for HarnessBox — the public API wrapper."""
 
-
 from harnessbox.harnessbox import (
     HarnessBox,
     HarnessBoxSecrets,

@@ -228,7 +228,6 @@ class HarnessBox:
                 auth_token=git_token,
             )
 
-
         sandbox = Sandbox(
             client=self._provider,
             api_key=self._secrets.provider_api_key,
@@ -267,11 +266,7 @@ class HarnessBox:
         if session is not None:
             target = session
         else:
-            active = [
-                s
-                for s in self._sessions.values()
-                if s.sandbox.state == RuntimeState.ACTIVE
-            ]
+            active = [s for s in self._sessions.values() if s.sandbox.state == RuntimeState.ACTIVE]
             if not active:
                 raise RuntimeError("No active sessions — nothing to snapshot.")
             target = active[-1]

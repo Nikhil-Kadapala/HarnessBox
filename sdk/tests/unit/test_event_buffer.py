@@ -177,7 +177,6 @@ class TestEventBufferStream:
         assert len(collected) == 1
 
 
-
 class TestEventBufferInSandbox:
     @pytest.mark.asyncio
     async def test_sandbox_pushes_to_buffer(self) -> None:
