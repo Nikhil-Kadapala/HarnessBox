@@ -420,7 +420,7 @@ class TestWorkspacePooling:
             info = await mgr.create_workspace(config, workspace_id="w-1")
 
             # Pause it
-            await mgr._pause_workspace("w-1")
+            await mgr.pause_workspace("w-1")
             assert info.runtime_state == RuntimeState.PAUSED.value
 
             # Pool hit: get_or_create should resume
@@ -528,7 +528,7 @@ class TestResumeWorkspaceRaceCondition:
 
             config = WorkspaceConfig(workspace=workspace)
             await mgr.create_workspace(config, workspace_id="w-race")
-            await mgr._pause_workspace("w-race")
+            await mgr.pause_workspace("w-race")
 
             assert mgr.get_workspace("w-race").runtime_state == RuntimeState.PAUSED.value
 
@@ -544,8 +544,8 @@ class TestResumeWorkspaceRaceCondition:
         assert len(errors) == 1
 
     @pytest.mark.asyncio
-    async def test_internal_resume_skips_when_already_active(self) -> None:
-        """_resume_workspace (internal) silently returns if not paused."""
+    async def test_resume_raises_when_already_active(self) -> None:
+        """resume_workspace raises InvalidTransitionError if workspace is active."""
         mgr = WorkspaceManager()
 
         with (
@@ -563,8 +563,8 @@ class TestResumeWorkspaceRaceCondition:
             await mgr.create_workspace(config, workspace_id="w-active")
 
         assert mgr.get_workspace("w-active").runtime_state == RuntimeState.ACTIVE.value
-        await mgr._resume_workspace("w-active")
-        assert mgr.get_workspace("w-active").runtime_state == RuntimeState.ACTIVE.value
+        with pytest.raises(InvalidTransitionError):
+            await mgr.resume_workspace("w-active")
 
 
 class TestConnectSandbox:
@@ -614,7 +614,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-revive"] = info
+        mgr.registry._workspaces["w-revive"] = info
 
         with (
             patch("harnessbox._server.registry.Sandbox") as MockSandbox,
@@ -626,7 +626,7 @@ class TestConnectSandbox:
             mock_sandbox.sandbox_id = "live-sandbox-42"
             mock_sandbox.event_buffer.hydrate = AsyncMock()
 
-            await mgr._connect_sandbox("w-revive")
+            await mgr.registry._connect_sandbox("w-revive")
 
         assert info.sandbox_conn is not None
         assert info.agent_manager is not None
@@ -677,7 +677,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-expired"] = info
+        mgr.registry._workspaces["w-expired"] = info
 
         with (
             patch("harnessbox._server.registry.Sandbox") as MockSandbox,
@@ -693,7 +693,7 @@ class TestConnectSandbox:
             mock_sandbox.sandbox_id = "new-sandbox-99"
             mock_sandbox.event_buffer.hydrate = AsyncMock()
 
-            await mgr._connect_sandbox("w-expired")
+            await mgr.registry._connect_sandbox("w-expired")
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
         assert info.sandbox_conn is not None
@@ -746,7 +746,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-dead"] = info
+        mgr.registry._workspaces["w-dead"] = info
 
         with pytest.raises(ValueError, match="no provider_sandbox_id or snapshot_id"):
             with (
@@ -756,7 +756,7 @@ class TestConnectSandbox:
                     WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"
                 ),
             ):
-                await mgr._connect_sandbox("w-dead")
+                await mgr.registry._connect_sandbox("w-dead")
 
     @pytest.mark.asyncio
     async def test_connect_raises_without_storage(self):
@@ -781,10 +781,10 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-orphan"] = info
+        mgr.registry._workspaces["w-orphan"] = info
 
         with pytest.raises(ValueError, match="no storage backend"):
-            await mgr._connect_sandbox("w-orphan")
+            await mgr.registry._connect_sandbox("w-orphan")
 
     @pytest.mark.asyncio
     async def test_connect_raises_when_api_key_missing(self):
@@ -829,7 +829,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-nokey"] = info
+        mgr.registry._workspaces["w-nokey"] = info
 
         with (
             patch.dict("os.environ", {}, clear=True),
@@ -838,7 +838,7 @@ class TestConnectSandbox:
             patch("harnessbox._server.registry.AgentManager"),
         ):
             with pytest.raises(ValueError, match="E2B API key not found"):
-                await mgr._connect_sandbox("w-nokey")
+                await mgr.registry._connect_sandbox("w-nokey")
 
     @pytest.mark.asyncio
     async def test_connect_populates_workspace_configs(self):
@@ -883,7 +883,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-cfg"] = info
+        mgr.registry._workspaces["w-cfg"] = info
 
         with (
             patch("harnessbox._server.registry.Sandbox") as MockSandbox,
@@ -896,9 +896,9 @@ class TestConnectSandbox:
             mock_sandbox.sandbox_id = "sb-cfg"
             mock_sandbox.event_buffer.hydrate = AsyncMock()
 
-            await mgr._connect_sandbox("w-cfg")
+            await mgr.registry._connect_sandbox("w-cfg")
 
-        config = mgr._workspace_configs.get("w-cfg")
+        config = mgr.registry._workspace_configs.get("w-cfg")
         assert config is not None
         assert config.timeout == 600
         assert config.session_timeout == 3600
@@ -949,7 +949,7 @@ class TestConnectSandbox:
             sandbox_conn=None,
             agent_manager=None,
         )
-        mgr._workspaces["w-prompt"] = info
+        mgr.registry._workspaces["w-prompt"] = info
 
         # Mock agent event stream
         turn_end_event = UniversalEvent(

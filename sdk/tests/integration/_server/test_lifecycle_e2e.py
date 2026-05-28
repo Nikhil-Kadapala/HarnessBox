@@ -84,7 +84,7 @@ class TestLifecycleE2E:
             info = await mgr.create_workspace(config, workspace_id="w-e2e")
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
-        assert "w-e2e" in mgr._idle_timers
+        assert "w-e2e" in mgr.idle._idle_timers
 
         # --- Phase 2: Send first prompt (should cancel + restart idle timer) ---
         events_1: list[UniversalEvent] = []
@@ -123,7 +123,7 @@ class TestLifecycleE2E:
         assert turn_count[0] == 2
 
         # Cleanup
-        mgr._cancel_idle_timer("w-e2e")
+        mgr.idle.cancel_timer("w-e2e")
 
     @pytest.mark.asyncio
     async def test_idle_timer_cancelled_during_turn(self) -> None:
@@ -175,7 +175,7 @@ class TestLifecycleE2E:
         await asyncio.sleep(0.05)
         assert info.runtime_state == RuntimeState.PAUSED.value
 
-        mgr._cancel_idle_timer("w-busy")
+        mgr.idle.cancel_timer("w-busy")
 
     @pytest.mark.asyncio
     async def test_runtime_state_event_emitted_on_pause_and_resume(self) -> None:
@@ -251,7 +251,7 @@ class TestLifecycleE2E:
         ]
         assert len(active_events) >= 1
 
-        mgr._cancel_idle_timer("w-events")
+        mgr.idle.cancel_timer("w-events")
 
     @pytest.mark.asyncio
     async def test_storage_persists_state_across_pause_resume(self) -> None:
@@ -309,7 +309,7 @@ class TestLifecycleE2E:
         record = next(r for r in records if r["workspace_id"] == "w-persist")
         assert record["runtime_state"] == RuntimeState.ACTIVE.value
 
-        mgr._cancel_idle_timer("w-persist")
+        mgr.idle.cancel_timer("w-persist")
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown_pauses_active_with_timer(self) -> None:
@@ -351,7 +351,7 @@ class TestLifecycleE2E:
             pass
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
-        assert "w-shutdown" in mgr._idle_timers
+        assert "w-shutdown" in mgr.idle._idle_timers
 
         # Simulate server shutdown
         await mgr.graceful_shutdown()
@@ -359,4 +359,4 @@ class TestLifecycleE2E:
         assert info.runtime_state == RuntimeState.PAUSED.value
         assert info.snapshot_id == "snap-shutdown"
         # Idle timers should be cleaned up
-        assert "w-shutdown" not in mgr._idle_timers
+        assert "w-shutdown" not in mgr.idle._idle_timers

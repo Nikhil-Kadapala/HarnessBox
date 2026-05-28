@@ -1,8 +1,4 @@
-"""Workspace management facade — composes registry, idle, session router, and event replay.
-
-Preserves the existing public API (WorkspaceManager, WorkspaceConfig, WorkspaceInstance,
-WorkspaceNotFoundError) for backward compatibility. Internally delegates to focused modules.
-"""
+"""Workspace management facade — composes registry, idle, session router, and event replay."""
 
 from __future__ import annotations
 
@@ -35,10 +31,7 @@ __all__ = [
 
 
 class WorkspaceManager:
-    """Facade composing WorkspaceRegistry, IdleOrchestrator, SessionRouter, and EventReplay.
-
-    Preserves the same public API as the original monolithic WorkspaceManager.
-    """
+    """Facade composing WorkspaceRegistry, IdleOrchestrator, SessionRouter, and EventReplay."""
 
     def __init__(
         self,
@@ -181,89 +174,3 @@ class WorkspaceManager:
         info = self._registry.get_workspace(workspace_id)
         if info.runtime_state == "active" and info.sandbox_conn is not None:
             await self._registry.pause_workspace(workspace_id)
-
-    # --- Compatibility properties for tests that access internal state ---
-
-    @property
-    def _storage(self) -> Any:
-        return self._registry._storage
-
-    @_storage.setter
-    def _storage(self, value: Any) -> None:
-        self._registry._storage = value
-        self._router._storage = value
-        self._event_replay._storage = value
-
-    @property
-    def _idle_timers(self) -> dict[str, Any]:
-        return self._idle._idle_timers
-
-    @property
-    def _active_turns(self) -> dict[str, int]:
-        return self._idle._active_turns
-
-    @property
-    def _auto_pause(self) -> bool:
-        return self._idle._auto_pause
-
-    @property
-    def _pause_timeout(self) -> int:
-        return self._idle._pause_timeout
-
-    @property
-    def _workspaces(self) -> dict[str, WorkspaceInstance]:
-        return self._registry._workspaces
-
-    @property
-    def _locks(self) -> dict[str, Any]:
-        return self._registry._locks
-
-    @property
-    def _workspace_configs(self) -> dict[str, WorkspaceConfig]:
-        return self._registry._workspace_configs
-
-    def _start_idle_timer(self, workspace_id: str) -> None:
-        self._idle.start_timer(workspace_id)
-
-    def _cancel_idle_timer(self, workspace_id: str) -> None:
-        self._idle.cancel_timer(workspace_id)
-
-    async def _pause_workspace(self, workspace_id: str) -> None:
-        self._idle.cancel_timer(workspace_id)
-        info = self._registry.get_workspace(workspace_id)
-        if not info.sandbox_conn:
-            return
-        async with self._registry._ensure_lock(workspace_id):
-            await self._registry._pause_workspace_locked(workspace_id, info)
-
-    async def _resume_workspace(self, workspace_id: str) -> None:
-        info = self._registry.get_workspace(workspace_id)
-        if not info.sandbox_conn:
-            await self._registry._connect_sandbox(workspace_id)
-            self._idle.start_timer(workspace_id)
-            return
-        async with self._registry._ensure_lock(workspace_id):
-            if info.runtime_state != "paused":
-                return
-            await self._registry._resume_workspace_locked(workspace_id, info)
-        self._idle.start_timer(workspace_id)
-
-    async def _connect_sandbox(self, workspace_id: str) -> None:
-        await self._registry._connect_sandbox(workspace_id)
-        self._idle.start_timer(workspace_id)
-
-    async def _ensure_sandbox(self, workspace_id: str) -> None:
-        await self._registry.ensure_sandbox(workspace_id)
-
-    async def _idle_countdown(self, workspace_id: str) -> None:
-        info = self._registry._workspaces.get(workspace_id)
-        if info and info.runtime_state == "active":
-            await self._pause_workspace(workspace_id)
-
-    @staticmethod
-    def _resolve_provider_api_key(provider: str) -> str | None:
-        return WorkspaceRegistry._resolve_provider_api_key(provider)
-
-    @staticmethod
-    def _resolve_env_vars(key_names: list[str]) -> dict[str, str]:
-        return WorkspaceRegistry._resolve_env_vars(key_names)
