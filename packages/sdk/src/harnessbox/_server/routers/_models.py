@@ -67,6 +67,7 @@ class SessionResponse(BaseModel):
     pr_number: int | None = None
     ci_status: str | None = None
     total_cost_usd: float = 0.0
+    error_message: str | None = None
 
 
 class SessionStatsResponse(BaseModel):

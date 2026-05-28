@@ -33,4 +33,5 @@ def session_response(info: Any) -> SessionResponse:
         pr_number=info.pr_number,
         ci_status=info.ci_status,
         total_cost_usd=info.total_cost_usd,
+        error_message=info.error_message,
     )
