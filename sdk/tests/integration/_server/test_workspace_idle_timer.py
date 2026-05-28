@@ -1,8 +1,7 @@
-"""Integration tests for WorkspaceManager idle timers and snapshot recovery.
+"""Integration tests for IdleOrchestrator and WorkspaceManager idle/recovery behavior.
 
-Tests exercise WorkspaceManager methods directly. Verifies that idle timers
-fire pause, active turn counters prevent premature pausing, and snapshot
-recovery creates new sandboxes when the original expires.
+Tests exercise IdleOrchestrator directly for timer mechanics and turn counting,
+and WorkspaceManager public API for higher-level pause/resume/snapshot recovery.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from harnessbox._server.idle import IdleOrchestrator
 from harnessbox._server.workspace_manager import (
     WorkspaceConfig,
     WorkspaceInstance,
@@ -21,7 +21,7 @@ from harnessbox.lifecycle import RuntimeState
 from tests.conftest import MockProvider
 
 # ---------------------------------------------------------------------------
-# Per-workspace idle timer
+# Per-workspace idle timer (tests IdleOrchestrator directly)
 # ---------------------------------------------------------------------------
 
 
@@ -39,82 +39,43 @@ class TestWorkspaceIdleTimer:
             instance._cwd = "/workspace"
             await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
 
-        assert "w-1" in mgr._idle_timers
-        assert not mgr._idle_timers["w-1"].done()
-        mgr._cancel_idle_timer("w-1")
+        assert "w-1" in mgr.idle._idle_timers
+        assert not mgr.idle._idle_timers["w-1"].done()
+        mgr.idle.cancel_timer("w-1")
 
     @pytest.mark.asyncio
     async def test_cancel_idle_timer_removes_it(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        mgr._idle_timers["w-x"] = asyncio.create_task(asyncio.sleep(9999))
-        mgr._cancel_idle_timer("w-x")
-        assert "w-x" not in mgr._idle_timers
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=9999)
+        idle._idle_timers["w-x"] = asyncio.create_task(asyncio.sleep(9999))
+        idle.cancel_timer("w-x")
+        assert "w-x" not in idle._idle_timers
 
     @pytest.mark.asyncio
     async def test_cancel_nonexistent_timer_is_noop(self) -> None:
-        mgr = WorkspaceManager()
-        mgr._cancel_idle_timer("nonexistent")
+        idle = IdleOrchestrator()
+        idle.cancel_timer("nonexistent")
 
     @pytest.mark.asyncio
     async def test_start_timer_replaces_existing(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        mgr._idle_timers["w-1"] = asyncio.create_task(asyncio.sleep(9999))
-        first_task = mgr._idle_timers["w-1"]
-        mgr._start_idle_timer("w-1")
-        assert mgr._idle_timers["w-1"] is not first_task
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=9999)
+        idle._idle_timers["w-1"] = asyncio.create_task(asyncio.sleep(9999))
+        first_task = idle._idle_timers["w-1"]
+        idle.start_timer("w-1")
+        assert idle._idle_timers["w-1"] is not first_task
         await asyncio.sleep(0)
         assert first_task.cancelled()
-        mgr._cancel_idle_timer("w-1")
+        idle.cancel_timer("w-1")
 
     @pytest.mark.asyncio
-    async def test_countdown_fires_pause_on_active_workspace(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=0)
-
-        info = WorkspaceInstance(
-            workspace_id="w-1",
-            remote="",
-            branch="",
-            provider="mock",
-            provider_sandbox_id="sb-1",
-            snapshot_id=None,
-            runtime_state=RuntimeState.ACTIVE.value,
-            workflow_state="in_progress",
-            created_at="",
-            last_active="",
-        )
-        mgr._workspaces["w-1"] = info
-        mgr._locks["w-1"] = asyncio.Lock()
-
+    async def test_countdown_fires_pause_callback(self) -> None:
         pause_called: list[str] = []
-        pause_mock = AsyncMock(side_effect=lambda wid: pause_called.append(wid))
 
-        with patch.object(mgr, "_pause_workspace", pause_mock):
-            await mgr._idle_countdown("w-1")
+        async def pause_cb(wid: str) -> None:
+            pause_called.append(wid)
 
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=0, pause_callback=pause_cb)
+        await idle._idle_countdown("w-1")
         assert pause_called == ["w-1"]
-
-    @pytest.mark.asyncio
-    async def test_countdown_skips_non_active_workspace(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=0)
-        info = WorkspaceInstance(
-            workspace_id="w-1",
-            remote="",
-            branch="",
-            provider="mock",
-            provider_sandbox_id=None,
-            snapshot_id=None,
-            runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
-            created_at="",
-            last_active="",
-        )
-        mgr._workspaces["w-1"] = info
-        pause_mock = AsyncMock()
-
-        with patch.object(mgr, "_pause_workspace", pause_mock):
-            await mgr._idle_countdown("w-1")
-
-        pause_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_timer_when_auto_pause_disabled(self) -> None:
@@ -129,7 +90,7 @@ class TestWorkspaceIdleTimer:
             instance._cwd = "/workspace"
             await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
 
-        assert "w-1" not in mgr._idle_timers
+        assert "w-1" not in mgr.idle._idle_timers
 
     @pytest.mark.asyncio
     async def test_no_global_scan_task_exists(self) -> None:
@@ -153,67 +114,46 @@ class TestWorkspaceIdleTimer:
             agent.shutdown_all = AsyncMock()
             await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
 
-        assert "w-1" in mgr._idle_timers
+        assert "w-1" in mgr.idle._idle_timers
         await mgr.destroy_workspace("w-1")
-        assert "w-1" not in mgr._idle_timers
+        assert "w-1" not in mgr.idle._idle_timers
 
 
 class TestActiveTurnCounter:
     @pytest.mark.asyncio
     async def test_concurrent_turns_prevent_premature_timer(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        mgr._active_turns["w-1"] = 2
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=9999)
+        idle._active_turns["w-1"] = 2
 
-        count = max(0, mgr._active_turns.get("w-1", 1) - 1)
-        mgr._active_turns["w-1"] = count
-        assert "w-1" not in mgr._idle_timers
+        idle.turn_ended("w-1")
+        assert idle._active_turns["w-1"] == 1
+        assert "w-1" not in idle._idle_timers
 
     @pytest.mark.asyncio
     async def test_timer_starts_when_last_turn_ends(self) -> None:
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        mgr._active_turns["w-1"] = 1
-        info = WorkspaceInstance(
-            workspace_id="w-1",
-            remote="",
-            branch="",
-            provider="mock",
-            provider_sandbox_id=None,
-            snapshot_id=None,
-            runtime_state=RuntimeState.ACTIVE.value,
-            workflow_state="in_progress",
-            created_at="",
-            last_active="",
-        )
-        mgr._workspaces["w-1"] = info
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=9999)
+        idle._active_turns["w-1"] = 1
 
-        count = max(0, mgr._active_turns.get("w-1", 1) - 1)
-        mgr._active_turns["w-1"] = count
-        if count == 0 and mgr._auto_pause:
-            mgr._start_idle_timer("w-1")
-
-        assert "w-1" in mgr._idle_timers
-        mgr._cancel_idle_timer("w-1")
+        idle.turn_ended("w-1")
+        assert idle._active_turns["w-1"] == 0
+        assert "w-1" in idle._idle_timers
+        idle.cancel_timer("w-1")
 
     @pytest.mark.asyncio
     async def test_turn_ended_flag_prevents_double_decrement(self) -> None:
         """Regression: TURN_ENDED + finally block must not double-decrement."""
-        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
-        mgr._active_turns["w-1"] = 2
+        idle = IdleOrchestrator(auto_pause=True, pause_timeout=9999)
+        idle._active_turns["w-1"] = 2
 
-        # TURN_ENDED decrements 2→1
-        active = max(0, mgr._active_turns.get("w-1", 1) - 1)
-        mgr._active_turns["w-1"] = active
+        idle.turn_ended("w-1")
+        assert idle._active_turns["w-1"] == 1
+
         turn_ended_seen = True
-
-        # finally block with fix: skips decrement because turn_ended_seen is True
         if not turn_ended_seen:
-            active = max(0, mgr._active_turns.get("w-1", 1) - 1)
-            mgr._active_turns["w-1"] = active
-            if active == 0 and mgr._auto_pause:
-                mgr._start_idle_timer("w-1")
+            idle.turn_ended("w-1")
 
-        assert mgr._active_turns["w-1"] == 1
-        assert "w-1" not in mgr._idle_timers
+        assert idle._active_turns["w-1"] == 1
+        assert "w-1" not in idle._idle_timers
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +162,9 @@ class TestActiveTurnCounter:
 
 
 class TestSnapshotRecovery:
-    """_resume_workspace recovers from expired sandboxes via snapshot."""
+    """WorkspaceRegistry._resume_workspace_locked recovers from expired sandboxes."""
 
-    def _make_mgr_with_workspace(
+    def _make_registry_with_workspace(
         self,
         *,
         snapshot_id: str | None = "snap-1",
@@ -232,6 +172,7 @@ class TestSnapshotRecovery:
     ) -> tuple[WorkspaceManager, WorkspaceInstance, MockProvider]:
         provider = MockProvider()
         mgr = WorkspaceManager(auto_pause=False)
+        registry = mgr.registry
 
         mock_sandbox = MagicMock()
         mock_sandbox._provider = provider
@@ -250,16 +191,17 @@ class TestSnapshotRecovery:
             last_active="",
             sandbox_conn=mock_sandbox,
         )
-        mgr._workspaces["w-1"] = info
-        mgr._locks["w-1"] = asyncio.Lock()
-        mgr._workspace_configs["w-1"] = WorkspaceConfig(timeout=300)
+        registry._workspaces["w-1"] = info
+        registry._locks["w-1"] = asyncio.Lock()
+        registry._workspace_configs["w-1"] = WorkspaceConfig(timeout=300)
         return mgr, info, provider
 
     @pytest.mark.asyncio
     async def test_recovery_creates_sandbox_from_snapshot(self) -> None:
         from harnessbox.providers import SandboxDeadError
 
-        mgr, info, provider = self._make_mgr_with_workspace()
+        mgr, info, provider = self._make_registry_with_workspace()
+        registry = mgr.registry
 
         created_calls: list[dict[str, object]] = []
 
@@ -275,8 +217,8 @@ class TestSnapshotRecovery:
         provider.create = fake_create  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
-            await mgr._resume_workspace("w-1")
+        with patch.object(registry, "_try_resume_sandbox", failing):
+            await registry.resume_workspace("w-1")
 
         assert len(created_calls) == 1
         assert created_calls[0]["snapshot_id"] == "snap-1"
@@ -287,18 +229,20 @@ class TestSnapshotRecovery:
     async def test_recovery_raises_when_no_snapshot_available(self) -> None:
         from harnessbox.providers import SandboxDeadError
 
-        mgr, info, provider = self._make_mgr_with_workspace(snapshot_id=None)
+        mgr, info, provider = self._make_registry_with_workspace(snapshot_id=None)
+        registry = mgr.registry
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
+        with patch.object(registry, "_try_resume_sandbox", failing):
             with pytest.raises(ValueError, match="has no snapshot"):
-                await mgr._resume_workspace("w-1")
+                await registry.resume_workspace("w-1")
 
     @pytest.mark.asyncio
     async def test_recovery_raises_when_snapshot_expired(self) -> None:
         from harnessbox.providers import SandboxDeadError
 
-        mgr, info, provider = self._make_mgr_with_workspace()
+        mgr, info, provider = self._make_registry_with_workspace()
+        registry = mgr.registry
 
         async def create_snapshot_not_found(
             env_vars: dict[str, str] | None = None,
@@ -310,19 +254,20 @@ class TestSnapshotRecovery:
         provider.create = create_snapshot_not_found  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
+        with patch.object(registry, "_try_resume_sandbox", failing):
             with pytest.raises(ValueError, match="no longer exists"):
-                await mgr._resume_workspace("w-1")
+                await registry.resume_workspace("w-1")
 
     @pytest.mark.asyncio
     async def test_happy_path_resume_no_snapshot_needed(self) -> None:
-        mgr, info, provider = self._make_mgr_with_workspace()
+        mgr, info, provider = self._make_registry_with_workspace()
+        registry = mgr.registry
         provider._sandbox_id = "sb-old"
         provider._running = True
 
         ok = AsyncMock()
-        with patch.object(mgr._registry, "_try_resume_sandbox", ok):
-            await mgr._resume_workspace("w-1")
+        with patch.object(registry, "_try_resume_sandbox", ok):
+            await registry.resume_workspace("w-1")
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
 
@@ -334,8 +279,9 @@ class TestSnapshotRecovery:
         storage = MemoryBackend()
         await storage.initialize()
 
-        mgr, info, provider = self._make_mgr_with_workspace()
-        mgr._storage = storage
+        mgr, info, provider = self._make_registry_with_workspace()
+        registry = mgr.registry
+        registry._storage = storage
 
         await storage.save_workspace(
             {
@@ -364,8 +310,8 @@ class TestSnapshotRecovery:
         provider.create = fake_create  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
-            await mgr._resume_workspace("w-1")
+        with patch.object(registry, "_try_resume_sandbox", failing):
+            await registry.resume_workspace("w-1")
 
         records = await storage.list_workspaces()
         assert records[0]["provider_sandbox_id"] == "sb-new"
@@ -380,6 +326,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_graceful_shutdown_pauses_active_workspaces(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+        registry = mgr.registry
 
         sandbox_mock = MagicMock()
         sandbox_mock.create_snapshot = AsyncMock(return_value="snap-1")
@@ -401,8 +348,8 @@ class TestGracefulShutdown:
             last_active="",
             sandbox_conn=sandbox_mock,
         )
-        mgr._workspaces["w-1"] = info
-        mgr._locks["w-1"] = asyncio.Lock()
+        registry._workspaces["w-1"] = info
+        registry._locks["w-1"] = asyncio.Lock()
 
         await mgr.graceful_shutdown()
 
@@ -414,6 +361,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_graceful_shutdown_skips_paused_workspaces(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+        registry = mgr.registry
 
         info = WorkspaceInstance(
             workspace_id="w-1",
@@ -428,7 +376,7 @@ class TestGracefulShutdown:
             last_active="",
             sandbox_conn=None,
         )
-        mgr._workspaces["w-1"] = info
+        registry._workspaces["w-1"] = info
 
         await mgr.graceful_shutdown()
 
@@ -437,6 +385,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_graceful_shutdown_timeout_guard(self) -> None:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+        registry = mgr.registry
 
         async def slow_snapshot() -> str:
             await asyncio.sleep(60)
@@ -462,17 +411,15 @@ class TestGracefulShutdown:
             last_active="",
             sandbox_conn=sandbox_mock,
         )
-        mgr._workspaces["w-1"] = info
-        mgr._locks["w-1"] = asyncio.Lock()
+        registry._workspaces["w-1"] = info
+        registry._locks["w-1"] = asyncio.Lock()
 
-        # Should not hang — timeout guard at 30s, but we patch wait_for
         with patch(
             "harnessbox._server.registry.asyncio.wait_for",
             side_effect=asyncio.TimeoutError,
         ):
             await mgr.graceful_shutdown()
 
-        # Workspace was NOT paused (timed out)
         assert info.runtime_state == RuntimeState.ACTIVE.value
 
 
@@ -526,4 +473,4 @@ class TestSessionTimeoutDisabledForManagedSandbox:
             call_kwargs = MockSandbox.call_args[1]
             assert call_kwargs["session_timeout"] == 0
 
-        mgr._cancel_idle_timer("w-1")
+        mgr.idle.cancel_timer("w-1")
