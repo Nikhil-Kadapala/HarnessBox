@@ -753,7 +753,7 @@ class TestConnectSandbox:
                 patch("harnessbox._server.registry.Sandbox"),
                 patch("harnessbox._server.registry.AgentManager"),
                 patch.object(
-                    WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"
+                    WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"
                 ),
             ):
                 await mgr._connect_sandbox("w-dead")
