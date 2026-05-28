@@ -436,13 +436,15 @@ async def stream_events(
             while True:
                 if info.runtime_state in terminal:
                     yield ServerSentEvent(
-                        data=json.dumps({
-                            "event_type": "runtime.state",
-                            "metadata": {
-                                "runtime_state": info.runtime_state,
-                                "error_message": info.error_message,
-                            },
-                        }),
+                        data=json.dumps(
+                            {
+                                "event_type": "runtime.state",
+                                "metadata": {
+                                    "runtime_state": info.runtime_state,
+                                    "error_message": info.error_message,
+                                },
+                            }
+                        ),
                         event="message",
                     )
                     break

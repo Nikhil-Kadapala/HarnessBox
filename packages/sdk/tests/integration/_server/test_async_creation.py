@@ -173,20 +173,22 @@ class TestLoadWorkspacesRecovery:
 
         storage = MemoryBackend()
         await storage.initialize()
-        await storage.save_workspace({
-            "workspace_id": "w-stuck",
-            "remote": "",
-            "branch": "",
-            "provider": "e2b",
-            "provider_sandbox_id": None,
-            "snapshot_id": None,
-            "harness": "claude-code",
-            "runtime_state": "starting",
-            "workflow_state": "in_progress",
-            "created_at": "2026-01-01T00:00:00Z",
-            "last_active": "2026-01-01T00:00:00Z",
-            "config_json": "{}",
-        })
+        await storage.save_workspace(
+            {
+                "workspace_id": "w-stuck",
+                "remote": "",
+                "branch": "",
+                "provider": "e2b",
+                "provider_sandbox_id": None,
+                "snapshot_id": None,
+                "harness": "claude-code",
+                "runtime_state": "starting",
+                "workflow_state": "in_progress",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_active": "2026-01-01T00:00:00Z",
+                "config_json": "{}",
+            }
+        )
 
         registry = WorkspaceRegistry(storage)
         await registry.load_workspaces()
