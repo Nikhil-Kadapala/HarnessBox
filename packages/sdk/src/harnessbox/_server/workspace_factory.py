@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from harnessbox.server import CreateSessionRequest
+    from harnessbox._server.routers._models import CreateSessionRequest
 
 from harnessbox._server.registry import WorkspaceConfig
 
