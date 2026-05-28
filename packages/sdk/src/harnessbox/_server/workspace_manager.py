@@ -76,6 +76,30 @@ class WorkspaceManager:
         await mgr._registry.initialize()
         return mgr
 
+    def register_workspace(
+        self,
+        config: WorkspaceConfig,
+        *,
+        workspace_id: str | None = None,
+    ) -> WorkspaceInstance:
+        """Register a workspace in STARTING state (no sandbox yet). Returns immediately."""
+        return self._registry.register_workspace(config, workspace_id=workspace_id)
+
+    async def provision_workspace(
+        self,
+        workspace_id: str,
+        config: WorkspaceConfig,
+        *,
+        event_handler: Any = None,
+    ) -> WorkspaceInstance:
+        """Provision the sandbox for a registered workspace. Starts idle timer on success."""
+        info = await self._registry.provision_workspace(
+            workspace_id, config, event_handler=event_handler
+        )
+        if info.runtime_state == "active":
+            self._idle.start_timer(info.workspace_id)
+        return info
+
     async def create_workspace(
         self,
         config: WorkspaceConfig,
@@ -83,11 +107,12 @@ class WorkspaceManager:
         workspace_id: str | None = None,
         event_handler: Any = None,
     ) -> WorkspaceInstance:
-        """Create a new workspace with live sandbox."""
+        """Create a new workspace with live sandbox (synchronous convenience)."""
         info = await self._registry.create_workspace(
             config, workspace_id=workspace_id, event_handler=event_handler
         )
-        self._idle.start_timer(info.workspace_id)
+        if info.runtime_state == "active":
+            self._idle.start_timer(info.workspace_id)
         return info
 
     def get_workspace(self, workspace_id: str) -> WorkspaceInstance:

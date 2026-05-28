@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,18 +28,25 @@ class TestCreateSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
 
             resp = client.post(
                 "/v1/workspaces",
                 json={"harness": "claude-code", "session_id": "test-1"},
             )
 
-        assert resp.status_code == 201
+        assert resp.status_code == 202
         data = resp.json()
         assert data["session_id"] == "test-1"
         assert data["harness"] == "claude-code"
-        assert data["runtime_state"] == "active"
+        assert data["runtime_state"] == "starting"
         assert data["workflow_state"] == "in_progress"
+
+        # Background task completes provisioning (TestClient runs them synchronously)
+        get_resp = client.get("/v1/workspaces/test-1")
+        assert get_resp.json()["runtime_state"] == "active"
 
 
 class TestListSessions:
@@ -171,6 +178,9 @@ class TestCreateSessionExpanded:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
 
             resp = client.post(
                 "/v1/workspaces",
@@ -183,13 +193,16 @@ class TestCreateSessionExpanded:
                     },
                 },
             )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
 
     def test_with_workspace(self, client: TestClient) -> None:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
 
             resp = client.post(
                 "/v1/workspaces",
@@ -201,7 +214,7 @@ class TestCreateSessionExpanded:
                     },
                 },
             )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
 
     def test_invalid_security_policy(self, client: TestClient) -> None:
         resp = client.post(
@@ -514,6 +527,9 @@ class TestServerTimeoutFields:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
 
             resp = client.post(
                 "/v1/workspaces",
@@ -523,7 +539,7 @@ class TestServerTimeoutFields:
                     "session_timeout": 1800,
                 },
             )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
 
     def test_session_timeout_clamped_to_sandbox_timeout(self) -> None:
         app = create_app(manager=WorkspaceManager())
@@ -533,6 +549,9 @@ class TestServerTimeoutFields:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
 
             resp = client.post(
                 "/v1/workspaces",
@@ -542,4 +561,4 @@ class TestServerTimeoutFields:
                     "session_timeout": 600,
                 },
             )
-        assert resp.status_code == 201
+        assert resp.status_code == 202

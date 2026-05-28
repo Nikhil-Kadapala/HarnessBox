@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -9,7 +10,7 @@ import uuid as _uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
@@ -38,16 +39,23 @@ router = APIRouter(tags=["sessions"])
 _NON_PROMPTABLE_RUNTIME = frozenset({"dead", "ended", "dying"})
 
 
-@router.post("/v1/workspaces", response_model=SessionResponse, status_code=201)
+@router.post("/v1/workspaces", response_model=SessionResponse, status_code=202)
 async def create_session(
-    req: CreateSessionRequest, mgr: WorkspaceManager = Depends(get_manager)
+    req: CreateSessionRequest,
+    background_tasks: BackgroundTasks,
+    mgr: WorkspaceManager = Depends(get_manager),
 ) -> SessionResponse:
     try:
         config = build_workspace_config(req)
-        info = await mgr.create_workspace(config, workspace_id=req.session_id)
+        info = mgr.register_workspace(config, workspace_id=req.session_id)
     except Exception as exc:
-        logger.exception("Failed to create session")
+        logger.exception("Failed to register session")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    async def _provision() -> None:
+        await mgr.provision_workspace(info.workspace_id, config)
+
+    background_tasks.add_task(_provision)
     return session_response(info)
 
 
@@ -389,37 +397,64 @@ async def prompt_session(
 async def stream_events(
     session_id: str, request: Request, mgr: WorkspaceManager = Depends(get_manager)
 ) -> EventSourceResponse:
-    """Subscribe to live events from an active session (SSE)."""
+    """Subscribe to live events from an active or provisioning session (SSE).
+
+    During provisioning (runtime_state=starting), the stream emits runtime.state
+    events as the workspace transitions to active or error. Clients can use this
+    to wait for creation to complete without polling.
+    """
     try:
         info = mgr.get_workspace(session_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
-    if info.sandbox_conn is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Session has no active sandbox. Send a prompt to connect, or use GET /v1/workspaces/{id}/history for historical events.",
-        )
-
     last_event_id_str = request.headers.get("last-event-id")
     last_seq = int(last_event_id_str) if last_event_id_str else None
 
     async def event_generator() -> Any:
-        if last_seq is not None:
-            live_buffer = info.sandbox_conn.event_buffer if info.sandbox_conn else None
-            async for event in mgr.event_replay.replay_then_live(session_id, last_seq, live_buffer):
-                yield ServerSentEvent(
-                    data=json.dumps(event.to_dict()),
-                    event="message",
-                    id=str(event.sequence),
-                )
+        if info.sandbox_conn is not None:
+            if last_seq is not None:
+                live_buffer = info.sandbox_conn.event_buffer
+                async for event in mgr.event_replay.replay_then_live(
+                    session_id, last_seq, live_buffer
+                ):
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
+            else:
+                async for event in info.sandbox_conn.event_buffer.stream(last_seq):
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
         else:
-            async for event in info.sandbox_conn.event_buffer.stream(last_seq):
-                yield ServerSentEvent(
-                    data=json.dumps(event.to_dict()),
-                    event="message",
-                    id=str(event.sequence),
-                )
+            # Workspace is provisioning — poll until sandbox appears or terminal state
+            terminal = frozenset({"error", "dead", "ended"})
+            while True:
+                if info.runtime_state in terminal:
+                    yield ServerSentEvent(
+                        data=json.dumps({
+                            "event_type": "runtime.state",
+                            "metadata": {
+                                "runtime_state": info.runtime_state,
+                                "error_message": info.error_message,
+                            },
+                        }),
+                        event="message",
+                    )
+                    break
+                if info.sandbox_conn is not None:
+                    async for event in info.sandbox_conn.event_buffer.stream(last_seq):
+                        yield ServerSentEvent(
+                            data=json.dumps(event.to_dict()),
+                            event="message",
+                            id=str(event.sequence),
+                        )
+                    break
+                await asyncio.sleep(0.5)
 
     return EventSourceResponse(event_generator(), ping=15)
 

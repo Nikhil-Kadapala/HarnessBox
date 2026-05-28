@@ -36,6 +36,7 @@ class RuntimeState(str, Enum):
     DYING = "dying"
     ENDED = "ended"
     DEAD = "dead"
+    ERROR = "error"
 
 
 _RUNTIME_TO_STATUS: dict[RuntimeState, SessionStatus] = {
@@ -45,6 +46,7 @@ _RUNTIME_TO_STATUS: dict[RuntimeState, SessionStatus] = {
     RuntimeState.DYING: SessionStatus.KILLED,
     RuntimeState.ENDED: SessionStatus.KILLED,
     RuntimeState.DEAD: SessionStatus.KILLED,
+    RuntimeState.ERROR: SessionStatus.KILLED,
 }
 
 
@@ -54,12 +56,13 @@ def to_session_status(state: RuntimeState) -> SessionStatus:
 
 
 VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
-    RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.DEAD}),
+    RuntimeState.STARTING: frozenset({RuntimeState.ACTIVE, RuntimeState.DEAD, RuntimeState.ERROR}),
     RuntimeState.ACTIVE: frozenset({RuntimeState.PAUSED, RuntimeState.DYING, RuntimeState.DEAD}),
     RuntimeState.PAUSED: frozenset({RuntimeState.ACTIVE, RuntimeState.DYING, RuntimeState.DEAD}),
     RuntimeState.DYING: frozenset({RuntimeState.ENDED, RuntimeState.DEAD}),
     RuntimeState.ENDED: frozenset(),
     RuntimeState.DEAD: frozenset(),
+    RuntimeState.ERROR: frozenset(),
 }
 
 

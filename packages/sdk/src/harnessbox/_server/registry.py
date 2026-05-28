@@ -107,6 +107,7 @@ class WorkspaceInstance:
     pr_number: int | None = None
     ci_status: str | None = None
     total_cost_usd: float = 0.0
+    error_message: str | None = None
 
     def to_record(self, config: WorkspaceConfig | None = None) -> dict[str, Any]:
         """Serialize to storage format (primitives only)."""
@@ -144,6 +145,7 @@ class WorkspaceInstance:
             "pr_number": self.pr_number,
             "ci_status": self.ci_status,
             "total_cost_usd": self.total_cost_usd,
+            "error_message": self.error_message,
         }
 
 
@@ -179,38 +181,19 @@ class WorkspaceRegistry:
             await self._storage.initialize()
             await self.load_workspaces()
 
-    async def create_workspace(
+    def register_workspace(
         self,
         config: WorkspaceConfig,
         *,
         workspace_id: str | None = None,
-        event_handler: Any = None,
     ) -> WorkspaceInstance:
-        """Create a new workspace with live sandbox."""
-        wid = workspace_id or str(uuid.uuid4())
-        lock = asyncio.Lock()
+        """Register a workspace in STARTING state without provisioning the sandbox.
 
-        sandbox = Sandbox(
-            client=config.provider,
-            api_key=config.api_key,
-            harness=config.harness,
-            model=config.model,
-            system_prompt=config.system_prompt,
-            security_policy=config.security_policy,
-            workspace=config.workspace,
-            env_vars=config.env_vars or None,
-            files=config.files,
-            dirs=config.dirs or None,
-            setup_script=config.setup_script,
-            cwd=config.cwd,
-            timeout=config.timeout,
-            skip_permissions=config.skip_permissions,
-            template=config.template,
-            event_handler=event_handler,
-            session_timeout=0,
-            snapshot_id=config.snapshot_id,
-        )
-        await sandbox.setup()
+        Returns immediately so the HTTP layer can return 202. Call
+        ``provision_workspace()`` to actually spin up the sandbox.
+        """
+        wid = workspace_id or str(uuid.uuid4())
+        provider_name = config.provider if isinstance(config.provider, str) else "custom"
 
         workspace_name = None
         branch = ""
@@ -232,37 +215,112 @@ class WorkspaceRegistry:
         if not remote:
             remote = config.remote_label
 
-        agent_mgr = AgentManager(sandbox)
-        provider_name = config.provider if isinstance(config.provider, str) else "custom"
-
         info = WorkspaceInstance(
             workspace_id=wid,
             remote=remote,
             branch=branch,
             provider=provider_name,
-            provider_sandbox_id=sandbox.sandbox_id,
+            provider_sandbox_id=None,
             snapshot_id=None,
-            runtime_state=RuntimeState.ACTIVE.value,
+            runtime_state=RuntimeState.STARTING.value,
             workflow_state="in_progress",
             created_at=datetime.now(timezone.utc).isoformat(),
             last_active=datetime.now(timezone.utc).isoformat(),
             harness=config.harness,
-            sandbox_conn=sandbox,
-            agent_manager=agent_mgr,
             workspace_name=workspace_name,
             base_branch=base_branch,
         )
 
         self._workspaces[wid] = info
-        self._locks[wid] = lock
+        self._locks[wid] = asyncio.Lock()
         self._workspace_configs[wid] = config
 
-        if self._storage and isinstance(config.provider, str):
-            try:
-                await self._storage.save_workspace(info.to_record(config))
-            except Exception as e:
-                logger.error(f"Failed to persist workspace {wid}: {e}")
+        return info
 
+    async def provision_workspace(
+        self,
+        workspace_id: str,
+        config: WorkspaceConfig,
+        *,
+        event_handler: Any = None,
+    ) -> WorkspaceInstance:
+        """Provision the sandbox for a registered workspace.
+
+        On success, transitions to ACTIVE. On failure, transitions to ERROR
+        with the error message stored on the instance.
+        """
+        info = self.get_workspace(workspace_id)
+
+        try:
+            sandbox = Sandbox(
+                client=config.provider,
+                api_key=config.api_key,
+                harness=config.harness,
+                model=config.model,
+                system_prompt=config.system_prompt,
+                security_policy=config.security_policy,
+                workspace=config.workspace,
+                env_vars=config.env_vars or None,
+                files=config.files,
+                dirs=config.dirs or None,
+                setup_script=config.setup_script,
+                cwd=config.cwd,
+                timeout=config.timeout,
+                skip_permissions=config.skip_permissions,
+                template=config.template,
+                event_handler=event_handler,
+                session_timeout=0,
+                snapshot_id=config.snapshot_id,
+            )
+            await sandbox.setup()
+
+            agent_mgr = AgentManager(sandbox)
+            info.sandbox_conn = sandbox
+            info.agent_manager = agent_mgr
+            info.provider_sandbox_id = sandbox.sandbox_id
+            info.runtime_state = RuntimeState.ACTIVE.value
+            info.last_active = datetime.now(timezone.utc).isoformat()
+
+            await self._emit_runtime_state(workspace_id, RuntimeState.ACTIVE.value)
+
+            if self._storage and isinstance(config.provider, str):
+                try:
+                    await self._storage.save_workspace(info.to_record(config))
+                except Exception as e:
+                    logger.error(f"Failed to persist workspace {workspace_id}: {e}")
+
+        except Exception as exc:
+            logger.exception("Failed to provision workspace %s", workspace_id)
+            info.runtime_state = RuntimeState.ERROR.value
+            info.error_message = str(exc)
+
+            await self._emit_runtime_state(workspace_id, RuntimeState.ERROR.value)
+
+            if self._storage:
+                try:
+                    await self._storage.update_workspace(
+                        workspace_id,
+                        runtime_state=RuntimeState.ERROR.value,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to persist error state for {workspace_id}: {e}")
+
+        return info
+
+    async def create_workspace(
+        self,
+        config: WorkspaceConfig,
+        *,
+        workspace_id: str | None = None,
+        event_handler: Any = None,
+    ) -> WorkspaceInstance:
+        """Create a new workspace with live sandbox (synchronous convenience method).
+
+        Registers and provisions in one call. For async creation with 202 pattern,
+        use ``register_workspace()`` + ``provision_workspace()`` separately.
+        """
+        info = self.register_workspace(config, workspace_id=workspace_id)
+        await self.provision_workspace(info.workspace_id, config, event_handler=event_handler)
         return info
 
     def get_workspace(self, workspace_id: str) -> WorkspaceInstance:
@@ -303,6 +361,8 @@ class WorkspaceRegistry:
                 stored_state = record["runtime_state"]
                 if stored_state == RuntimeState.ACTIVE.value:
                     stored_state = RuntimeState.PAUSED.value
+                elif stored_state == RuntimeState.STARTING.value:
+                    stored_state = RuntimeState.ERROR.value
 
                 info = WorkspaceInstance(
                     workspace_id=wid,
@@ -324,6 +384,7 @@ class WorkspaceRegistry:
                     pr_number=record.get("pr_number"),
                     ci_status=record.get("ci_status"),
                     total_cost_usd=record.get("total_cost_usd", 0.0),
+                    error_message=record.get("error_message"),
                 )
                 self._workspaces[wid] = info
 
@@ -401,6 +462,7 @@ class WorkspaceRegistry:
             pr_number=record.get("pr_number"),
             ci_status=record.get("ci_status"),
             total_cost_usd=record.get("total_cost_usd", 0.0),
+            error_message=record.get("error_message"),
         )
 
     # --- Connection lifecycle ---
