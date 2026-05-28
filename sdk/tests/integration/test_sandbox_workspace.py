@@ -26,6 +26,8 @@ class _WorkspaceMockProvider(MockProvider):
         for fragment, result in self._git_responses.items():
             if fragment in command:
                 return result
+        if "rev-parse --verify origin/" in command:
+            return CommandResult(exit_code=128, stdout="", stderr="fatal: not a valid ref")
         return CommandResult(exit_code=0, stdout="", stderr="")
 
 

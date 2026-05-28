@@ -14,6 +14,18 @@ from harnessbox.providers import CommandResult, SandboxProvider
 _log = logging.getLogger(__name__)
 
 
+class GitBranchAlreadyExistsError(RuntimeError):
+    """Raised when the target branch already exists on the remote."""
+
+    def __init__(self, branch: str) -> None:
+        self.branch = branch
+        super().__init__(
+            f"Branch '{branch}' already exists on the remote. "
+            f"Are you trying to resume working on an existing branch? "
+            f"If yes, set checkout=True."
+        )
+
+
 @dataclass(frozen=True)
 class GitStatus:
     """Structured git status returned by native git providers."""
@@ -64,6 +76,7 @@ class GitRepoConfig:
         clone_depth: int | None = None,
         auth_token: str | None = None,
         clone_dir_name: str | None = None,
+        checkout: bool = False,
         on_clone_start: EventCallback | None = None,
         on_clone_complete: EventCallback | None = None,
     ) -> None:
@@ -74,6 +87,7 @@ class GitRepoConfig:
         self.base_branch = base_branch or branch
         self.clone_depth = clone_depth
         self.clone_dir_name = clone_dir_name
+        self.checkout = checkout
         self._auth_token = auth_token
         self._on_clone_start = on_clone_start
         self._on_clone_complete = on_clone_complete
@@ -122,6 +136,8 @@ class GitRepoConfig:
                 branch=self.branch,
                 success=True,
             )
+        except GitBranchAlreadyExistsError:
+            raise
         except Exception as e:
             self._fire_event(
                 self._on_clone_complete,
@@ -151,7 +167,19 @@ class GitRepoConfig:
             )
 
         if self.branch != self.base_branch:
-            await provider.git_create_branch(workspace_root, self.branch)
+            check = await self._run_git(
+                provider,
+                f"rev-parse --verify origin/{self.branch}",
+                cwd=workspace_root,
+            )
+            branch_exists_remotely = check.exit_code == 0
+
+            if branch_exists_remotely:
+                if not self.checkout:
+                    raise GitBranchAlreadyExistsError(self.branch)
+                await self._run_git(provider, f"checkout {self.branch}", cwd=workspace_root)
+            else:
+                await provider.git_create_branch(workspace_root, self.branch)
 
         sha_result = await self._run_git(provider, "rev-parse HEAD", cwd=workspace_root)
         if sha_result.exit_code == 0:

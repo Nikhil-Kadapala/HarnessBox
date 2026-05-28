@@ -70,7 +70,7 @@ from harnessbox.streaming import (
 )
 from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.types import AgentResponse
-from harnessbox.workspace import GitRepoConfig, GitStatus, Workspace
+from harnessbox.workspace import GitBranchAlreadyExistsError, GitRepoConfig, GitStatus, Workspace
 
 __all__ = [
     "__version__",
@@ -135,6 +135,7 @@ __all__ = [
     "list_harness_types",
     "register_harness_type",
     # Workspace
+    "GitBranchAlreadyExistsError",
     "GitRepoConfig",
     "GitStatus",
     "Workspace",
