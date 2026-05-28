@@ -84,6 +84,8 @@ class MockProvider:
         self._commands.append(command)
         if command.startswith("echo "):
             return CommandResult(exit_code=0, stdout=command[5:] + "\n", stderr="")
+        if "rev-parse --verify origin/" in command:
+            return CommandResult(exit_code=128, stdout="", stderr="fatal: not a valid ref")
         return CommandResult(exit_code=0, stdout="", stderr="")
 
     async def start_session(

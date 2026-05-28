@@ -4,13 +4,19 @@ Deferred items. Post-adoption features informed by real usage data.
 
 ## Known Issues (from PR #32 code review — add tests if these areas mutate)
 
-### 1. `git_create_branch` fails for existing remote branches
+### ~~1. `git_create_branch` fails for existing remote branches~~ ✅ FIXED
 
-**Location:** `sdk/src/harnessbox/workspace.py` — `_native_clone()`
+Fixed: `GitRepoConfig` now raises `GitBranchAlreadyExistsError` when the target branch already exists on the remote. Users can set `checkout=True` to opt into checking out the existing branch instead.
 
-The code always clones with `branch=self.base_branch`, then calls `provider.git_create_branch(workspace_root, self.branch)` when branch differs. If the target branch already exists remotely (common resume scenario), `git_create_branch` will fail because you can't create a branch that already exists. Should either clone directly with `branch=self.branch`, or detect existing branches and checkout instead of create.
+### 1a. Include existing session ID in `GitBranchAlreadyExistsError` (paid feature)
 
-**When to fix:** If users report failures resuming work on existing feature branches, or if `_native_clone` is modified.
+**Location:** `sdk/src/harnessbox/workspace.py` — `GitBranchAlreadyExistsError`
+
+When the branch already exists and the user hasn't set `checkout=True`, the error message should also check for any existing sessions that used that branch and include the `session_id` in the error message, prompting the user to resume that session instead.
+
+**Depends on:** Session storage/logging infrastructure (paid tier only — OSS SDK users won't have session persistence).
+
+**When to fix:** When building paid-tier session management features.
 
 ### 2. SDK is now E2B-only (shell git fallback removed)
 

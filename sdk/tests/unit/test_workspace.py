@@ -118,6 +118,14 @@ class TestGitRepoConfigInject:
 
     @pytest.mark.asyncio
     async def test_clone_feature_branch_uses_create_branch(self, mock_provider):
+        async def patched_run(command, cwd=None, timeout=None):
+            mock_provider._commands.append(command)
+            if "rev-parse --verify origin/feat/new" in command:
+                return CommandResult(exit_code=1, stdout="", stderr="")
+            return CommandResult(exit_code=0, stdout="", stderr="")
+
+        mock_provider.run_command = patched_run
+
         ws = GitRepoConfig(
             remote="https://github.com/test/repo.git",
             branch="feat/new",
@@ -146,6 +154,54 @@ class TestGitRepoConfigInject:
 
         cmds = mock_provider._commands
         assert not any("git_create_branch:" in c for c in cmds)
+
+    @pytest.mark.asyncio
+    async def test_clone_raises_when_branch_exists_remotely(self, mock_provider):
+        """Default behavior: raise GitBranchAlreadyExistsError if branch exists on remote."""
+        from harnessbox.workspace import GitBranchAlreadyExistsError
+
+        async def patched_run(command, cwd=None, timeout=None):
+            mock_provider._commands.append(command)
+            if "rev-parse --verify origin/feat/existing" in command:
+                return CommandResult(exit_code=0, stdout="abc123\n", stderr="")
+            return CommandResult(exit_code=0, stdout="", stderr="")
+
+        mock_provider.run_command = patched_run
+
+        ws = GitRepoConfig(
+            remote="https://github.com/test/repo.git",
+            branch="feat/existing",
+            base_branch="main",
+        )
+        with pytest.raises(GitBranchAlreadyExistsError) as exc_info:
+            await ws.inject(mock_provider, "/workspace")
+
+        assert exc_info.value.branch == "feat/existing"
+        assert "checkout=True" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_clone_checks_out_existing_branch_when_checkout_true(self, mock_provider):
+        """With checkout=True, checkout the existing remote branch."""
+
+        async def patched_run(command, cwd=None, timeout=None):
+            mock_provider._commands.append(command)
+            if "rev-parse --verify origin/feat/existing" in command:
+                return CommandResult(exit_code=0, stdout="abc123\n", stderr="")
+            return CommandResult(exit_code=0, stdout="", stderr="")
+
+        mock_provider.run_command = patched_run
+
+        ws = GitRepoConfig(
+            remote="https://github.com/test/repo.git",
+            branch="feat/existing",
+            base_branch="main",
+            checkout=True,
+        )
+        await ws.inject(mock_provider, "/workspace")
+
+        cmds = mock_provider._commands
+        assert not any("git_create_branch:" in c for c in cmds)
+        assert any("git checkout feat/existing" in c for c in cmds)
 
     @pytest.mark.asyncio
     async def test_clone_records_initial_sha(self, mock_provider):
