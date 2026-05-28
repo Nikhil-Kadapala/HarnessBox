@@ -104,7 +104,7 @@ await auth_session.kill()
 await ui_session.kill()
 ```
 
-See [`examples/multi_session.py`](sdk/examples/multi_session.py) for a complete runnable example.
+See [`examples/multi_session.py`](packages/sdk/examples/multi_session.py) for a complete runnable example.
 
 ## How It Works
 
@@ -335,16 +335,13 @@ SecurityPolicy(
 ## Project Structure
 
 ```
-sdk/src/harnessbox/
+packages/sdk/src/harnessbox/
   __init__.py                   # public API
   harnessbox.py                 # HarnessBox — public entry point
-  workspace_manager.py          # internal workspace orchestration
-  agent_manager.py              # internal agent lifecycle
   sandbox.py                    # internal sandbox orchestration
   workspace.py                  # Workspace protocol, GitRepoConfig
   providers.py                  # SandboxProvider protocol
   lifecycle.py                  # SessionStatus & RuntimeState transition map
-  storage.py                    # StorageBackend protocol
   streaming.py                  # UniversalEvent, StreamParser
   events.py                     # EventBuffer (SSE replay)
   server.py                     # HTTP/SSE transport
@@ -357,11 +354,15 @@ sdk/src/harnessbox/
     events.py                   # SandboxEvent, EventHandler
   _providers/
     e2b.py                      # E2B provider
-  _storage/
-    sqlite.py                   # SQLite backend
-    memory.py                   # In-memory backend
-sdk/tests/                      # Unit & integration tests
-app/web/                        # Web application front-end (Vite/React)
+  _server/
+    workspace_manager.py        # internal workspace orchestration
+    registry.py                 # workspace registry
+    _storage/
+      sqlite.py                 # SQLite backend
+      memory.py                 # In-memory backend
+packages/sdk/tests/             # Unit & integration tests
+apps/web/                       # Web application front-end (Vite/React)
+apps/api/                       # Cloud API for paid tier (planned)
 ```
 
 ## License

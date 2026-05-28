@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdk
+        working-directory: packages/sdk
     environment: pypi
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Copy README for package build
-        run: cp ../README.md .
+        run: cp ../../README.md .
 
       - name: Build package
         run: uv build
@@ -29,5 +29,5 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: sdk/dist/
+          packages-dir: packages/sdk/dist/
           attestations: true

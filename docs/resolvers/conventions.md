@@ -11,7 +11,7 @@ This resolver contains the development standards, python styling rules, test inv
 
 ## Testing Invariants
 
-All tests use `MockProvider` from `sdk/tests/conftest.py` — an in-memory provider that tracks commands, files, and state. No real sandboxes are created. Tests are fast (~0.2s total). Never write tests that require real sandbox infrastructure unless they are in `tests/integration/` and explicitly marked.
+All tests use `MockProvider` from `packages/sdk/tests/conftest.py` — an in-memory provider that tracks commands, files, and state. No real sandboxes are created. Tests are fast (~0.2s total). Never write tests that require real sandbox infrastructure unless they are in `tests/integration/` and explicitly marked.
 
 ## Commit Message Format
 

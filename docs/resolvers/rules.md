@@ -15,7 +15,7 @@ Make sure to ask enough questions to clearly capture the user's intent before cr
 When executing tasks, follow this tool selection hierarchy:
 1. **Read before write**: Always read existing files/code before modifying
 2. **Search before create**: Search codebase for existing patterns before adding new ones
-3. **Lint/type-check after every change**: Run `ruff check` + `mypy` in `sdk/` before declaring done
+3. **Lint/type-check after every change**: Run `ruff check` + `mypy` in `packages/sdk/` before declaring done
 4. **Test before PR**: Run relevant `pytest` scope minimally before opening a PR
 
 ## Parallel Subagent Guidelines

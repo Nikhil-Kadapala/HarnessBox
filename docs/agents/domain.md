@@ -19,7 +19,7 @@ Single-context layout:
 ├── docs/adr/
 │   ├── 0001-protocol-based-providers.md
 │   └── 0002-zero-runtime-deps.md
-├── sdk/
+├── packages/sdk/
 └── apps/
 ```
 

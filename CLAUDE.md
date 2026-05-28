@@ -6,19 +6,21 @@ This file guides AI Coding Agents when working on the HarnessBox project.
 
 HarnessBox is a platform for running AI coding agents in secure sandbox environments. It consists of:
 
-- **`sdk/`** — Python SDK providing sandbox security, workspace, and harness primitives. Zero runtime dependencies — provider SDKs are optional extras.
-- **`app/web/`** — Web application (planned)
-- **`app/desktop/`** — Desktop application via Tauri (planned)
+- **`packages/sdk/`** — Python SDK providing sandbox security, workspace, and harness primitives. Zero runtime dependencies — provider SDKs are optional extras.
+- **`apps/web/`** — Web application (dashboard)
+- **`apps/desktop/`** — Desktop application via Tauri (planned)
+- **`apps/api/`** — Cloud API for paid tier (planned, imports SDK)
+- **`apps/site/`** — Marketing + documentation site (planned)
 
 ## Resolvers (Modular Instructions)
 
 To manage complexity and save context tokens, project instructions are split into specialized resolver files. When performing a task, you MUST first dynamically read (view) the relevant resolver file using your file reading tools.
 
-- **Developer Commands & Workspace Setup** → Read [commands.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/resolvers/commands.md) when building, running, testing, or syncing dependencies.
-- **Safety, Guards & Development Rules** → Read [rules.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/resolvers/rules.md) before implementing changes, especially when touching sandbox providers, security guards, or credentials.
-- **Architecture & Module Responsibilities** → Read [architecture.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/resolvers/architecture.md) to understand SDK orchestration, module layout, and key design decisions.
-- **Coding Conventions, Commits & CI Policies** → Read [conventions.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/resolvers/conventions.md) before formatting code, writing pytests, composing commit messages, or recovering from CI check failures.
-- **Issue Tracking, Labels & Domain Docs** → Read [issue-tracker.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/agents/issue-tracker.md), [triage-labels.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/agents/triage-labels.md), and [domain.md](file:///Users/nikhilk/conductor/workspaces/harnessbox/prague/docs/agents/domain.md) when managing GitHub issues or naming domain-specific entities.
+- **Developer Commands & Workspace Setup** → Read [commands.md](docs/resolvers/commands.md) when building, running, testing, or syncing dependencies.
+- **Safety, Guards & Development Rules** → Read [rules.md](docs/resolvers/rules.md) before implementing changes, especially when touching sandbox providers, security guards, or credentials.
+- **Architecture & Module Responsibilities** → Read [architecture.md](docs/resolvers/architecture.md) to understand SDK orchestration, module layout, and key design decisions.
+- **Coding Conventions, Commits & CI Policies** → Read [conventions.md](docs/resolvers/conventions.md) before formatting code, writing pytests, composing commit messages, or recovering from CI check failures.
+- **Issue Tracking, Labels & Domain Docs** → Read [issue-tracker.md](docs/agents/issue-tracker.md), [triage-labels.md](docs/agents/triage-labels.md), and [domain.md](docs/agents/domain.md) when managing GitHub issues or naming domain-specific entities.
 
 ## Skill routing
 

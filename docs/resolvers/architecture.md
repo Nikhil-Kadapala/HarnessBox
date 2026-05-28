@@ -21,7 +21,7 @@ This resolver contains the architectural design of HarnessBox, including its pub
 
 ## Module Responsibilities
 
-All SDK source lives under `sdk/src/harnessbox/`.
+All SDK source lives under `packages/sdk/src/harnessbox/`.
 
 | Module | Role |
 |--------|------|
@@ -54,6 +54,6 @@ All SDK source lives under `sdk/src/harnessbox/`.
 
 ## Extension Points
 
-**Adding a provider**: Create `sdk/src/harnessbox/_providers/yourprovider.py` implementing `SandboxProvider` protocol, register in `_providers/__init__.py`, add optional dependency in `sdk/pyproject.toml`.
+**Adding a provider**: Create `packages/sdk/src/harnessbox/_providers/yourprovider.py` implementing `SandboxProvider` protocol, register in `_providers/__init__.py`, add optional dependency in `packages/sdk/pyproject.toml`.
 
 **Adding a harness type**: Call `register_harness_type(HarnessTypeConfig(...))` in `config/harness.py`.

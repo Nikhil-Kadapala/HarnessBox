@@ -4,10 +4,10 @@ This resolver contains the setup, build, lint, and test commands for both the Py
 
 ## Commands
 
-### SDK (`sdk/`)
+### SDK (`packages/sdk/`)
 
 ```bash
-cd sdk
+cd packages/sdk
 uv sync                          # Install all dependencies
 uv run pytest tests/ -v          # Run all tests (~0.2s, uses MockProvider)
 uv run pytest tests/integration/test_sandbox.py -v                                    # Single file
@@ -18,10 +18,10 @@ uv run mypy .                    # Type check (strict for source, relaxed for te
 uv run ruff check . && uv run mypy . && uv run pytest tests/ -v  # Full CI check
 ```
 
-### Web App (`app/web/`)
+### Web App (`apps/web/`)
 
 ```bash
-cd app/web
+cd apps/web
 bun install                      # Install all dependencies
 bun run dev                      # Dev server (Vite)
 bun run build                    # Type check + production build
