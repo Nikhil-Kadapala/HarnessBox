@@ -95,6 +95,8 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "harnessbox.server",
+    "harnessbox._server.routers.sessions",
+    "harnessbox._server.routers._deps",
     "harnessbox.sandbox",
     "harnessbox._providers.e2b",
     "harnessbox._utils.timing",
