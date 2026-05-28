@@ -31,8 +31,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -121,8 +121,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=False)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -142,8 +142,8 @@ class TestWorkspaceIdleTimer:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -275,7 +275,7 @@ class TestSnapshotRecovery:
         provider.create = fake_create  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr, "_try_resume_sandbox", failing):
+        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
             await mgr._resume_workspace("w-1")
 
         assert len(created_calls) == 1
@@ -290,7 +290,7 @@ class TestSnapshotRecovery:
         mgr, info, provider = self._make_mgr_with_workspace(snapshot_id=None)
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr, "_try_resume_sandbox", failing):
+        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
             with pytest.raises(ValueError, match="has no snapshot"):
                 await mgr._resume_workspace("w-1")
 
@@ -310,7 +310,7 @@ class TestSnapshotRecovery:
         provider.create = create_snapshot_not_found  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr, "_try_resume_sandbox", failing):
+        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
             with pytest.raises(ValueError, match="no longer exists"):
                 await mgr._resume_workspace("w-1")
 
@@ -321,7 +321,7 @@ class TestSnapshotRecovery:
         provider._running = True
 
         ok = AsyncMock()
-        with patch.object(mgr, "_try_resume_sandbox", ok):
+        with patch.object(mgr._registry, "_try_resume_sandbox", ok):
             await mgr._resume_workspace("w-1")
 
         assert info.runtime_state == RuntimeState.ACTIVE.value
@@ -364,7 +364,7 @@ class TestSnapshotRecovery:
         provider.create = fake_create  # type: ignore[method-assign]
 
         failing = AsyncMock(side_effect=SandboxDeadError("sandbox was not found"))
-        with patch.object(mgr, "_try_resume_sandbox", failing):
+        with patch.object(mgr._registry, "_try_resume_sandbox", failing):
             await mgr._resume_workspace("w-1")
 
         records = await storage.list_workspaces()
@@ -467,7 +467,7 @@ class TestGracefulShutdown:
 
         # Should not hang — timeout guard at 30s, but we patch wait_for
         with patch(
-            "harnessbox._server.workspace_manager.asyncio.wait_for",
+            "harnessbox._server.registry.asyncio.wait_for",
             side_effect=asyncio.TimeoutError,
         ):
             await mgr.graceful_shutdown()
@@ -515,8 +515,8 @@ class TestSessionTimeoutDisabledForManagedSandbox:
         mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()

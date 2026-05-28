@@ -964,7 +964,11 @@ def create_app(
 
     @app.get("/v1/workspaces/{session_id}/events")
     async def stream_events(session_id: str, request: Request) -> EventSourceResponse:
-        """Subscribe to live events from an active session (SSE)."""
+        """Subscribe to live events from an active session (SSE).
+
+        Supports reconnection via Last-Event-ID: replays stored events first,
+        then switches to the live EventBuffer stream.
+        """
         try:
             info = mgr.get_workspace(session_id)
         except WorkspaceNotFoundError as exc:
@@ -980,12 +984,23 @@ def create_app(
         last_seq = int(last_event_id_str) if last_event_id_str else None
 
         async def event_generator() -> Any:
-            async for event in info.sandbox_conn.event_buffer.stream(last_seq):
-                yield ServerSentEvent(
-                    data=json.dumps(event.to_dict()),
-                    event="message",
-                    id=str(event.sequence),
-                )
+            if last_seq is not None:
+                live_buffer = info.sandbox_conn.event_buffer if info.sandbox_conn else None
+                async for event in mgr.event_replay.replay_then_live(
+                    session_id, last_seq, live_buffer
+                ):
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
+            else:
+                async for event in info.sandbox_conn.event_buffer.stream(last_seq):
+                    yield ServerSentEvent(
+                        data=json.dumps(event.to_dict()),
+                        event="message",
+                        id=str(event.sequence),
+                    )
 
         return EventSourceResponse(event_generator(), ping=15)
 
@@ -993,27 +1008,23 @@ def create_app(
     async def stream_history(
         session_id: str,
         after_sequence: int = 0,
-        limit: int | None = None,
+        limit: int = 500,
+        conversation_id: str | None = None,
     ) -> EventSourceResponse:
-        """Stream historical events from storage (incremental, O(1) memory).
+        """Stream historical events from storage via EventReplay.
 
         Args:
             session_id: Session whose history to retrieve.
             after_sequence: Only return events with sequence > this value.
-            limit: Maximum number of events to return (None = unlimited).
+            limit: Maximum number of events to return.
+            conversation_id: Optional filter by conversation.
 
         Returns:
             SSE stream with NDJSON events.
-
-        Note:
-            This endpoint streams from storage, not the live ring buffer.
-            For active sessions, use GET /v1/sessions/{id}/events instead.
         """
-        # Check if session exists
         try:
             mgr.get_workspace(session_id)
         except WorkspaceNotFoundError:
-            # Session not in memory — might still be in storage
             if not mgr._storage:
                 raise HTTPException(
                     status_code=404,
@@ -1027,18 +1038,17 @@ def create_app(
             )
 
         async def event_generator() -> Any:
-            async for event_record in mgr._storage.get_events(
-                session_id, after_sequence=after_sequence, limit=limit
+            async for event in mgr.event_replay.get_history(
+                session_id,
+                after_sequence=after_sequence,
+                limit=limit,
+                conversation_id=conversation_id,
             ):
-                try:
-                    event_data = json.loads(event_record["event_json"])
-                    yield ServerSentEvent(
-                        data=json.dumps(event_data),
-                        event="message",
-                        id=str(event_record["sequence"]),
-                    )
-                except json.JSONDecodeError as e:
-                    logger.error(f"Malformed event_json for event {event_record['event_id']}: {e}")
+                yield ServerSentEvent(
+                    data=json.dumps(event.to_dict()),
+                    event="message",
+                    id=str(event.sequence),
+                )
 
         return EventSourceResponse(event_generator(), ping=15)
 

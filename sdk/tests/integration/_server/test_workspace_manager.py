@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from harnessbox._server.registry import WorkspaceRegistry
 from harnessbox._server.workspace_manager import (
     WorkspaceConfig,
     WorkspaceManager,
@@ -49,8 +50,8 @@ class TestWorkspaceManager:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -73,8 +74,8 @@ class TestWorkspaceManager:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -97,8 +98,8 @@ class TestWorkspaceManager:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -119,8 +120,8 @@ class TestWorkspaceManager:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -149,8 +150,8 @@ class TestWorkspaceManager:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -176,8 +177,8 @@ class TestTransitionWorkspace:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -195,8 +196,8 @@ class TestTransitionWorkspace:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -220,8 +221,8 @@ class TestWorkflowTransitionMatrix:
     async def mgr_with_workspace(self) -> tuple[WorkspaceManager, str]:
         mgr = WorkspaceManager()
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -313,8 +314,8 @@ class TestFindByRepoBranch:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -339,8 +340,8 @@ class TestFindByRepoBranch:
         from unittest.mock import AsyncMock, patch
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -368,8 +369,8 @@ class TestWorkspacePooling:
         config = WorkspaceConfig(workspace=workspace)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -400,8 +401,8 @@ class TestWorkspacePooling:
         config = WorkspaceConfig(workspace=workspace)
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentManager,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentManager,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -473,9 +474,9 @@ class TestWorkspacePooling:
         )
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
-            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
+            patch.object(WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             instance = MockSandbox.return_value
             instance.resume = AsyncMock()
@@ -510,8 +511,8 @@ class TestResumeWorkspaceRaceCondition:
         )
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentManager,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentManager,
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -548,8 +549,8 @@ class TestResumeWorkspaceRaceCondition:
         mgr = WorkspaceManager()
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
@@ -616,9 +617,9 @@ class TestConnectSandbox:
         mgr._workspaces["w-revive"] = info
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
-            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
+            patch.object(WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
@@ -679,9 +680,9 @@ class TestConnectSandbox:
         mgr._workspaces["w-expired"] = info
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
-            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
+            patch.object(WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock(side_effect=SandboxDeadError("Sandbox was not found"))
@@ -749,8 +750,8 @@ class TestConnectSandbox:
 
         with pytest.raises(ValueError, match="no provider_sandbox_id or snapshot_id"):
             with (
-                patch("harnessbox._server.workspace_manager.Sandbox"),
-                patch("harnessbox._server.workspace_manager.AgentManager"),
+                patch("harnessbox._server.registry.Sandbox"),
+                patch("harnessbox._server.registry.AgentManager"),
                 patch.object(
                     WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"
                 ),
@@ -833,8 +834,8 @@ class TestConnectSandbox:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("pathlib.Path.is_file", return_value=False),
-            patch("harnessbox._server.workspace_manager.Sandbox"),
-            patch("harnessbox._server.workspace_manager.AgentManager"),
+            patch("harnessbox._server.registry.Sandbox"),
+            patch("harnessbox._server.registry.AgentManager"),
         ):
             with pytest.raises(ValueError, match="E2B API key not found"):
                 await mgr._connect_sandbox("w-nokey")
@@ -885,9 +886,9 @@ class TestConnectSandbox:
         mgr._workspaces["w-cfg"] = info
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager"),
-            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager"),
+            patch.object(WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"),
             patch.dict("os.environ", {"MY_KEY": "val"}),
         ):
             mock_sandbox = MockSandbox.return_value
@@ -964,9 +965,9 @@ class TestConnectSandbox:
             yield turn_end_event
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
-            patch.object(WorkspaceManager, "_resolve_provider_api_key", return_value="fake-key"),
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
+            patch.object(WorkspaceRegistry, "_resolve_provider_api_key", return_value="fake-key"),
         ):
             mock_sandbox = MockSandbox.return_value
             mock_sandbox.resume = AsyncMock()
@@ -1006,8 +1007,8 @@ class TestPerConversationHarness:
         config = WorkspaceConfig()
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
@@ -1057,8 +1058,8 @@ class TestPerConversationHarness:
         config = WorkspaceConfig()
 
         with (
-            patch("harnessbox._server.workspace_manager.Sandbox") as MockSandbox,
-            patch("harnessbox._server.workspace_manager.AgentManager") as MockAgentMgr,
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
         ):
             sandbox_instance = MockSandbox.return_value
             sandbox_instance.setup = AsyncMock()
