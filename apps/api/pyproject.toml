@@ -8,6 +8,7 @@ dependencies = [
     "supabase>=2.0.0",
     "stripe>=8.0.0",
     "pyjwt[crypto]>=2.8.0",
+    "pydantic-settings>=2.0.0",
 ]
 
 [dependency-groups]
