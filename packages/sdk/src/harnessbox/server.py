@@ -21,172 +21,45 @@ Endpoints:
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import Response
-    from pydantic import BaseModel, Field, field_validator
-    from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 except ImportError as e:
     raise ImportError(
         "Server dependencies not installed. Run: pip install harnessbox[server]"
     ) from e
 
+from harnessbox._server.routers import (
+    account_router,
+    discovery_router,
+    sessions_router,
+    workspace_router,
+)
+
+# Backward-compat re-exports (used in tests, workspace_factory)
+from harnessbox._server.routers._models import (  # noqa: F401
+    AttachmentPayload,
+    CreateSessionRequest,
+    PermissionRequest,
+    PromptRequest,
+    PRRequest,
+    RenameRequest,
+    SecurityPolicyRequest,
+    SessionResponse,
+    SessionStatsResponse,
+    TransitionRequest,
+    WorkspaceRequest,
+)
 from harnessbox._server.storage import StorageBackend
-from harnessbox._server.workspace_factory import (
-    build_workspace_config,
-    convert_ssh_to_https,
-)
-from harnessbox._server.workspace_manager import (
-    WorkspaceManager,
-    WorkspaceNotFoundError,
-)
-from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
-from harnessbox.sandbox import Sandbox
+from harnessbox._server.workspace_manager import WorkspaceManager
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
 logger = logging.getLogger("harnessbox.server")
-
-
-# ---------------------------------------------------------------------------
-# Request / Response models
-# ---------------------------------------------------------------------------
-
-
-class SecurityPolicyRequest(BaseModel):
-    """Request body for configuring a sandbox security policy."""
-
-    denied_tools: list[str] = []
-    denied_bash_patterns: list[str] = []
-    deny_network: bool = False
-    credential_guards: bool | list[str] = True
-
-    @field_validator("credential_guards", mode="before")
-    @classmethod
-    def _coerce_guards(cls, v: object) -> bool | list[str]:
-        if isinstance(v, (bool, list)):
-            return v
-        if isinstance(v, str):
-            return [v]
-        return True
-
-
-class WorkspaceRequest(BaseModel):
-    """Request body for git workspace configuration (remote, branch, auth)."""
-
-    remote: str
-    branch: str = "main"
-    auth_token: str | None = None
-    clone_depth: int = 1  # Shallow clone by default for faster setup
-    clone_dir_name: str | None = None  # Subdirectory name for clone (e.g., city name)
-
-
-class CreateSessionRequest(BaseModel):
-    """Request body for creating a new sandbox workspace session.
-
-    Note: harness is no longer specified at session creation. The sandbox
-    is universal (all agent CLIs pre-installed). Harness is chosen per-
-    conversation when sending a prompt.
-    """
-
-    provider: str = "e2b"
-    api_key: str | None = None
-    model: str | None = None
-    env_vars: dict[str, str] = {}
-    setup_script: str | None = None
-    cwd: str | None = None
-    sandbox_timeout: int = 1800
-    session_timeout: int = 900
-    skip_permissions: bool = False
-    template: str | None = None
-    session_id: str | None = None
-    security_policy: SecurityPolicyRequest | None = None
-    workspace: WorkspaceRequest | None = None
-
-
-class SessionResponse(BaseModel):
-    """Response body containing session metadata and state."""
-
-    session_id: str
-    harness: str
-    runtime_state: str
-    workflow_state: str
-    created_at: str
-    workspace_name: str | None = None
-    branch: str | None = None
-    base_branch: str | None = None
-    remote: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    ci_status: str | None = None
-    total_cost_usd: float = 0.0
-
-
-class SessionStatsResponse(BaseModel):
-    """Response body for workspace diff statistics."""
-
-    insertions: int = 0
-    deletions: int = 0
-    commit_count: int = 0
-
-
-class RenameRequest(BaseModel):
-    """Request body for renaming a workspace."""
-
-    name: str
-
-
-class PRRequest(BaseModel):
-    """Request body for creating a pull request from the workspace branch."""
-
-    title: str
-    body: str = ""
-
-
-class AttachmentPayload(BaseModel):
-    """A single attachment in a prompt request."""
-
-    filename: str
-    mime_type: str = "application/octet-stream"
-    data_b64: str = Field(max_length=14_000_000)  # ~10MB decoded
-
-
-class PromptRequest(BaseModel):
-    """Request body for sending a prompt to the agent."""
-
-    prompt: str
-    harness: str
-    conversation_id: str | None = None
-    attachments: list[AttachmentPayload] = []
-
-
-class TransitionRequest(BaseModel):
-    """Request body for transitioning workspace state.
-
-    Specify dimension as 'runtime' or 'workflow' to indicate which state to transition.
-    """
-
-    dimension: str = "workflow"
-    target_state: str
-
-
-class PermissionRequest(BaseModel):
-    """Request body for resolving an agent permission prompt."""
-
-    request_id: str
-    behavior: str = "allow"
-
-
-# ---------------------------------------------------------------------------
-# App factory
-# ---------------------------------------------------------------------------
 
 
 def create_app(
@@ -204,17 +77,7 @@ def create_app(
 
     Returns:
         FastAPI app ready to run with uvicorn.
-
-    Example:
-        >>> app = create_app()  # SQLite at ~/.harnessbox/sessions.db
-        >>> app = create_app(storage="memory")  # In-memory (no persistence)
-        >>> # OR custom path:
-        >>> from harnessbox._storage import get_storage_backend
-        >>> backend_cls = get_storage_backend("sqlite")
-        >>> storage = backend_cls(path="./my-sessions.db")
-        >>> app = create_app(storage=storage)
     """
-    # Resolve storage from env vars when called as uvicorn factory
     import os as _os
 
     if storage == "sqlite":
@@ -222,7 +85,6 @@ def create_app(
         if env_storage != "sqlite":
             storage = env_storage
 
-    # Resolve storage backend by name if string
     resolved_storage: StorageBackend | None = None
     if isinstance(storage, str):
         from harnessbox._server._storage import get_storage_backend
@@ -237,28 +99,24 @@ def create_app(
     elif storage is not None:
         resolved_storage = storage
 
-    # If manager provided, use it; otherwise create one with storage
     if manager is not None:
         mgr = manager
     else:
-        # Create manager synchronously, initialize in lifespan
         mgr = WorkspaceManager(storage=resolved_storage)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        # Initialize storage and load workspaces
-        if mgr._storage:
-            await mgr._storage.initialize()
+        if mgr.storage:
+            await mgr.storage.initialize()
             await mgr.load_workspaces()
             logger.info("Storage initialized and workspaces loaded")
 
         yield
 
-        # Shutdown: pause active workspaces (creates snapshots for recovery)
         await mgr.graceful_shutdown()
 
-        if mgr._storage:
-            await mgr._storage.close()
+        if mgr.storage:
+            await mgr.storage.close()
             logger.info("Storage closed")
 
     app = FastAPI(
@@ -274,603 +132,11 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # ----- Discovery endpoints (read-only) -----
-
-    @app.get("/v1/credentials/status")
-    async def get_credentials() -> dict[str, Any]:
-        from harnessbox.credentials import detect_credentials
-
-        status = detect_credentials()
-        return {
-            "probes": [{"name": p.name, "available": p.available} for p in status.probes],
-            "timestamp": status.timestamp,
-        }
-
-    @app.get("/v1/harnesses")
-    async def list_harnesses() -> list[dict[str, Any]]:
-        from harnessbox.config.harness import get_harness_type, list_harness_types
-
-        result = []
-        for name in list_harness_types():
-            cfg = get_harness_type(name)
-            result.append(
-                {
-                    "name": cfg.name,
-                    "cli_command": cfg.cli_command,
-                    "supports_persistent": cfg.supports_persistent,
-                    "default_template": cfg.default_template,
-                    "workspace_root": cfg.workspace_root,
-                }
-            )
-        return result
-
-    @app.get("/v1/providers")
-    async def list_available_providers() -> list[dict[str, str]]:
-        from harnessbox._providers import list_providers
-
-        return [{"name": p} for p in list_providers()]
-
-    @app.get("/v1/guards")
-    async def list_guards() -> list[dict[str, Any]]:
-        from harnessbox.security.guards import GUARD_CATALOG
-
-        return [
-            {
-                "name": gs.name,
-                "bash_deny_count": len(gs.bash_deny_globs),
-                "read_deny_count": len(gs.read_deny_globs),
-            }
-            for gs in GUARD_CATALOG.values()
-        ]
-
-    # ----- Workspace endpoints -----
-
-    @app.get("/v1/workspace/name")
-    async def generate_workspace_name() -> dict[str, str]:
-        """Generate a unique city name for a new workspace."""
-        from harnessbox.names import generate_workspace_name
-
-        return {"name": generate_workspace_name()}
-
-    @app.get("/v1/workspace/detect")
-    async def detect_workspace(path: str) -> dict[str, str]:
-        """
-        Detect git repo info from a local filesystem path.
-
-        Returns remote URL, default branch, and repo name.
-        Validates .git exists first (prevents path traversal).
-        Converts SSH URLs to HTTPS for sandbox compatibility.
-        """
-        import subprocess
-        from pathlib import Path
-
-        repo_path = Path(path).expanduser().resolve()
-        git_dir = repo_path / ".git"
-
-        if not git_dir.exists():
-            raise HTTPException(status_code=400, detail="Not a git repository")
-
-        if not git_dir.is_dir():
-            raise HTTPException(status_code=400, detail="Invalid git repository")
-
-        try:
-            result = subprocess.run(
-                ["git", "config", "--get", "remote.origin.url"],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=5,
-            )
-            remote = result.stdout.strip()
-            if not remote:
-                raise HTTPException(status_code=400, detail="No remote.origin.url found")
-            # Convert SSH to HTTPS for sandbox compatibility
-            remote = convert_ssh_to_https(remote)
-        except subprocess.CalledProcessError as exc:
-            raise HTTPException(status_code=400, detail="Failed to read remote URL") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(status_code=500, detail="Git command timed out") from exc
-
-        default_branch = "main"
-        try:
-            result = subprocess.run(
-                ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                ref = result.stdout.strip()
-                if ref.startswith("refs/remotes/origin/"):
-                    default_branch = ref.replace("refs/remotes/origin/", "")
-            else:
-                for branch in ["main", "master"]:
-                    result = subprocess.run(
-                        ["git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
-                        cwd=repo_path,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=5,
-                    )
-                    if result.returncode == 0:
-                        default_branch = branch
-                        break
-        except subprocess.TimeoutExpired:
-            pass
-
-        name = repo_path.name
-
-        return {"remote": remote, "default_branch": default_branch, "name": name}
-
-    # ----- Account endpoints -----
-
-    @app.get("/v1/account/github")
-    async def get_github_profile() -> dict[str, Any]:
-        """Fetch GitHub profile using the local gh CLI."""
-        import subprocess
-
-        try:
-            result = subprocess.run(
-                ["gh", "api", "user"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                raise HTTPException(status_code=404, detail="GitHub CLI not authenticated")
-            data = json.loads(result.stdout)
-            return {
-                "login": data.get("login", ""),
-                "name": data.get("name"),
-                "email": data.get("email"),
-                "avatar_url": data.get("avatar_url", ""),
-            }
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="GitHub CLI not installed")
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=504, detail="GitHub API request timed out")
-
-    # ----- Session endpoints -----
-
-    @app.post("/v1/workspaces", response_model=SessionResponse, status_code=201)
-    async def create_session(req: CreateSessionRequest) -> SessionResponse:
-        try:
-            config = build_workspace_config(req)
-            info = await mgr.create_workspace(config, workspace_id=req.session_id)
-        except Exception as exc:
-            logger.exception("Failed to create session")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return _session_response(info)
-
-    def _session_response(info: Any) -> SessionResponse:
-        return SessionResponse(
-            session_id=info.workspace_id,
-            harness=info.harness,
-            runtime_state=info.runtime_state,
-            workflow_state=info.workflow_state,
-            created_at=info.created_at,
-            workspace_name=info.workspace_name,
-            branch=info.branch,
-            base_branch=info.base_branch,
-            remote=info.remote,
-            pr_url=info.pr_url,
-            pr_number=info.pr_number,
-            ci_status=info.ci_status,
-            total_cost_usd=info.total_cost_usd,
-        )
-
-    @app.get("/v1/workspaces", response_model=list[SessionResponse])
-    async def list_sessions() -> list[SessionResponse]:
-        return [_session_response(s) for s in mgr.list_workspaces()]
-
-    @app.get("/v1/workspaces/{session_id}", response_model=SessionResponse)
-    async def get_session(session_id: str) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-        return _session_response(info)
-
-    @app.delete("/v1/workspaces/{session_id}", status_code=204)
-    async def destroy_session(session_id: str) -> Response:
-        try:
-            await mgr.destroy_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-        return Response(status_code=204)
-
-    @app.get("/v1/workspaces/{session_id}/conversations")
-    async def list_conversations(session_id: str) -> dict[str, Any]:
-        """List conversations for a workspace."""
-        try:
-            mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if mgr._storage:
-            conversations = await mgr._storage.get_conversations(workspace_id=session_id)
-            return {"conversations": conversations}
-        return {"conversations": []}
-
-    @app.post("/v1/workspaces/{session_id}/pause", response_model=SessionResponse)
-    async def pause_session(session_id: str) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        try:
-            await mgr.pause_workspace(session_id)
-        except InvalidTransitionError as exc:
-            raise HTTPException(
-                status_code=409, detail=f"Cannot pause session in state: {info.runtime_state}"
-            ) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        return _session_response(mgr.get_workspace(session_id))
-
-    @app.post("/v1/workspaces/{session_id}/resume", response_model=SessionResponse)
-    async def resume_session(session_id: str) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        try:
-            await mgr.resume_workspace(session_id)
-        except InvalidTransitionError as exc:
-            raise HTTPException(
-                status_code=409, detail=f"Cannot resume session in state: {info.runtime_state}"
-            ) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        return _session_response(mgr.get_workspace(session_id))
-
-    @app.post("/v1/workspaces/{session_id}/stop", status_code=204)
-    async def stop_session(session_id: str) -> Response:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        await info.sandbox_conn.kill()
-        info.runtime_state = RuntimeState.DEAD.value
-        return Response(status_code=204)
-
-    @app.post("/v1/workspaces/{session_id}/rename", response_model=SessionResponse)
-    async def rename_session(session_id: str, req: RenameRequest) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if info.sandbox_conn and isinstance(info.sandbox_conn, Sandbox):
-            try:
-                await info.sandbox_conn.rename_branch(req.name)
-            except RuntimeError:
-                pass  # No git workspace configured — still rename the metadata
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        info.branch = req.name
-        info.workspace_name = req.name
-        return _session_response(info)
-
-    @app.post("/v1/workspaces/{session_id}/pr", response_model=SessionResponse)
-    async def create_pr(session_id: str, req: PRRequest) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if not info.sandbox_conn or not isinstance(info.sandbox_conn, Sandbox):
-            raise HTTPException(status_code=400, detail="Session has no active sandbox")
-
-        try:
-            result = await info.sandbox_conn.create_pr(req.title, req.body)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        info.pr_url = result.get("url")
-        try:
-            mgr.transition_workflow(session_id, "in_review")
-        except Exception:
-            pass
-
-        return _session_response(info)
-
-    @app.post("/v1/workspaces/{session_id}/pr/refresh", response_model=SessionResponse)
-    async def refresh_pr_status(session_id: str) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if not isinstance(info.sandbox_conn, Sandbox) or not info.pr_url:
-            return _session_response(info)
-
-        try:
-            pr_data = await info.sandbox_conn.check_pr_status()
-        except RuntimeError:
-            return _session_response(info)
-        except Exception:
-            logger.debug("Failed to check PR status for session %s", session_id, exc_info=True)
-            return _session_response(info)
-
-        if pr_data:
-            info.ci_status = pr_data.get("ci_status")
-            info.pr_number = pr_data.get("number")
-            if pr_data.get("merged"):
-                try:
-                    mgr.transition_workflow(session_id, "merged")
-                except Exception:
-                    pass
-
-        return _session_response(info)
-
-    _NON_PROMPTABLE_RUNTIME = frozenset({"dead", "ended", "dying"})
-
-    @app.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
-    async def transition_session(session_id: str, req: TransitionRequest) -> SessionResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        try:
-            if req.dimension == "runtime":
-                RuntimeState(req.target_state)
-                info = mgr.transition_runtime(session_id, req.target_state)
-            elif req.dimension == "workflow":
-                info = mgr.transition_workflow(session_id, req.target_state)
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unknown dimension: {req.dimension}. Use 'runtime' or 'workflow'.",
-                )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400, detail=f"Unknown state: {req.target_state}"
-            ) from exc
-        except InvalidTransitionError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        return _session_response(info)
-
-    @app.get("/v1/workspaces/{session_id}/stats", response_model=SessionStatsResponse)
-    async def get_session_stats(session_id: str) -> SessionStatsResponse:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if not isinstance(info.sandbox_conn, Sandbox):
-            return SessionStatsResponse()
-
-        try:
-            diff = await info.sandbox_conn.diff_stat()
-            commits = await info.sandbox_conn.commit_count()
-        except RuntimeError:
-            return SessionStatsResponse()
-        except Exception:
-            logger.debug("Failed to fetch stats for session %s", session_id, exc_info=True)
-            return SessionStatsResponse()
-
-        return SessionStatsResponse(
-            insertions=diff["insertions"],
-            deletions=diff["deletions"],
-            commit_count=commits,
-        )
-
-    @app.post("/v1/workspaces/{session_id}/prompt")
-    async def prompt_session(session_id: str, req: PromptRequest) -> EventSourceResponse:
-        import base64
-        import uuid as _uuid
-
-        from harnessbox.config.harness import list_harness_types
-        from harnessbox.streaming import Attachment
-
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        available = list_harness_types()
-        if req.harness not in available:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unknown harness: {req.harness!r}. Available: {available}",
-            )
-
-        if info.runtime_state in _NON_PROMPTABLE_RUNTIME:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "SESSION_NOT_ACTIVE",
-                    "runtime_state": info.runtime_state,
-                    "message": "This session cannot accept prompts in its current state.",
-                },
-            )
-
-        attachments: list[Attachment] = []
-        total_size = 0
-        for att in req.attachments:
-            raw = base64.b64decode(att.data_b64)
-            total_size += len(raw)
-            if total_size > 10 * 1024 * 1024:
-                raise HTTPException(status_code=413, detail="Total attachment size exceeds 10MB")
-
-            att_id = str(_uuid.uuid4())
-            size = len(raw)
-
-            if size >= 1024 * 1024:
-                att_dir = Path.home() / ".harnessbox" / "attachments" / session_id
-                att_dir.mkdir(parents=True, exist_ok=True)
-                safe_name = Path(att.filename).name or "attachment"
-                file_path = att_dir / f"{att_id}_{safe_name}"
-                file_path.write_bytes(raw)
-                attachments.append(
-                    Attachment(
-                        attachment_id=att_id,
-                        filename=att.filename,
-                        mime_type=att.mime_type,
-                        size_bytes=size,
-                        data_b64=None,
-                        storage_path=str(file_path),
-                    )
-                )
-            else:
-                attachments.append(
-                    Attachment(
-                        attachment_id=att_id,
-                        filename=att.filename,
-                        mime_type=att.mime_type,
-                        size_bytes=size,
-                        data_b64=att.data_b64,
-                    )
-                )
-
-        async def event_generator() -> Any:
-            logger.info("SSE stream started for session %s", session_id)
-            event_count = 0
-            try:
-                async for event in mgr.prompt(
-                    session_id,
-                    req.prompt,
-                    harness=req.harness,
-                    conversation_id=req.conversation_id,
-                    attachments=attachments or None,
-                ):
-                    event_count += 1
-                    logger.info(
-                        "SSE event #%d: %s (kind=%s)",
-                        event_count,
-                        event.event_type,
-                        event.item_kind,
-                    )
-                    yield ServerSentEvent(
-                        data=json.dumps(event.to_dict()),
-                        event="message",
-                        id=str(event.sequence),
-                    )
-            except RuntimeError as exc:
-                logger.error("Stream error for session %s: %s", session_id, exc)
-                yield ServerSentEvent(
-                    data=json.dumps({"event_type": "error", "error_message": str(exc)}),
-                    event="message",
-                )
-            logger.info("SSE stream ended for session %s (%d events)", session_id, event_count)
-            yield ServerSentEvent(data="[DONE]", event="message")
-
-        return EventSourceResponse(event_generator())
-
-    @app.get("/v1/workspaces/{session_id}/events")
-    async def stream_events(session_id: str, request: Request) -> EventSourceResponse:
-        """Subscribe to live events from an active session (SSE).
-
-        Supports reconnection via Last-Event-ID: replays stored events first,
-        then switches to the live EventBuffer stream.
-        """
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-
-        if info.sandbox_conn is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Session has no active sandbox. Send a prompt to connect, or use GET /v1/workspaces/{id}/history for historical events.",
-            )
-
-        last_event_id_str = request.headers.get("last-event-id")
-        last_seq = int(last_event_id_str) if last_event_id_str else None
-
-        async def event_generator() -> Any:
-            if last_seq is not None:
-                live_buffer = info.sandbox_conn.event_buffer if info.sandbox_conn else None
-                async for event in mgr.event_replay.replay_then_live(
-                    session_id, last_seq, live_buffer
-                ):
-                    yield ServerSentEvent(
-                        data=json.dumps(event.to_dict()),
-                        event="message",
-                        id=str(event.sequence),
-                    )
-            else:
-                async for event in info.sandbox_conn.event_buffer.stream(last_seq):
-                    yield ServerSentEvent(
-                        data=json.dumps(event.to_dict()),
-                        event="message",
-                        id=str(event.sequence),
-                    )
-
-        return EventSourceResponse(event_generator(), ping=15)
-
-    @app.get("/v1/workspaces/{session_id}/history")
-    async def stream_history(
-        session_id: str,
-        after_sequence: int = 0,
-        limit: int = 500,
-        conversation_id: str | None = None,
-    ) -> EventSourceResponse:
-        """Stream historical events from storage via EventReplay.
-
-        Args:
-            session_id: Session whose history to retrieve.
-            after_sequence: Only return events with sequence > this value.
-            limit: Maximum number of events to return.
-            conversation_id: Optional filter by conversation.
-
-        Returns:
-            SSE stream with NDJSON events.
-        """
-        try:
-            mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError:
-            if not mgr._storage:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Session not found and no storage enabled",
-                )
-
-        if not mgr._storage:
-            raise HTTPException(
-                status_code=400,
-                detail="Storage not enabled. Historical events not available.",
-            )
-
-        async def event_generator() -> Any:
-            async for event in mgr.event_replay.get_history(
-                session_id,
-                after_sequence=after_sequence,
-                limit=limit,
-                conversation_id=conversation_id,
-            ):
-                yield ServerSentEvent(
-                    data=json.dumps(event.to_dict()),
-                    event="message",
-                    id=str(event.sequence),
-                )
-
-        return EventSourceResponse(event_generator(), ping=15)
-
-    @app.post("/v1/workspaces/{session_id}/permission")
-    async def respond_permission(session_id: str, req: PermissionRequest) -> dict[str, str]:
-        try:
-            info = mgr.get_workspace(session_id)
-        except WorkspaceNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-        agent_process = info.sandbox_conn._agent_process
-        if not agent_process:
-            raise HTTPException(status_code=400, detail="No persistent agent process")
-        await agent_process.respond_permission(req.request_id, req.behavior)
-        return {"status": "ok"}
+    app.state.manager = mgr
+
+    app.include_router(discovery_router)
+    app.include_router(workspace_router)
+    app.include_router(account_router)
+    app.include_router(sessions_router)
 
     return app

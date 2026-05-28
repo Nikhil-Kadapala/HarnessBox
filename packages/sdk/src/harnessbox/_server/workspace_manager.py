@@ -58,6 +58,10 @@ class WorkspaceManager:
         return self._idle
 
     @property
+    def storage(self) -> StorageBackend | None:
+        return self._registry._storage
+
+    @property
     def event_replay(self) -> EventReplay:
         return self._event_replay
 
