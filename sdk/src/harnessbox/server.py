@@ -40,8 +40,11 @@ except ImportError as e:
     ) from e
 
 from harnessbox._server.storage import StorageBackend
+from harnessbox._server.workspace_factory import (
+    build_workspace_config,
+    convert_ssh_to_https,
+)
 from harnessbox._server.workspace_manager import (
-    WorkspaceConfig,
     WorkspaceManager,
     WorkspaceNotFoundError,
 )
@@ -50,107 +53,6 @@ from harnessbox.sandbox import Sandbox
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(levelname)s: %(message)s")
 logger = logging.getLogger("harnessbox.server")
-
-_PROVIDER_KEY_NAMES: dict[str, list[str]] = {
-    "e2b": ["E2B_API_KEY", "E2B_ACCESS_TOKEN"],
-}
-
-_ENV_VAR_KEYS: tuple[str, ...] = (
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "E2B_API_KEY",
-    "GITHUB_TOKEN",
-    "GOOGLE_API_KEY",
-    "GEMINI_API_KEY",
-)
-
-
-def _inject_host_env_vars(env_vars: dict[str, str]) -> None:
-    """Auto-inject ALL available host credentials into the sandbox.
-
-    1. Builds Claude Code auth environment (Bedrock, Vertex, or direct API key)
-    2. Builds gcloud project/region config
-    3. Injects all detected API keys from host environment
-    4. User-provided env vars always take priority (not overwritten)
-    """
-    import os
-
-    from harnessbox.credentials import build_claude_env_vars, build_gcloud_env_vars
-
-    claude_envs = build_claude_env_vars()
-    for k, v in claude_envs.items():
-        env_vars.setdefault(k, v)
-
-    gcloud_envs = build_gcloud_env_vars()
-    for k, v in gcloud_envs.items():
-        env_vars.setdefault(k, v)
-
-    for key in _ENV_VAR_KEYS:
-        if key not in env_vars:
-            val = os.environ.get(key, "").strip()
-            if val:
-                env_vars[key] = val
-
-
-def _inject_host_credential_files() -> dict[str, str]:
-    """Auto-inject credential files (e.g., gcloud ADC) for sandbox use."""
-    from harnessbox.credentials import build_gcloud_credential_files
-
-    return build_gcloud_credential_files()
-
-
-def _get_git_auth_token() -> str | None:
-    """Resolve git auth token from GITHUB_TOKEN env var or gh CLI."""
-    import os
-    import subprocess
-
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token:
-        return token
-
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "token"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return None
-
-
-def _extract_provider_key(provider: str, env_vars: dict[str, str]) -> str | None:
-    """Resolve provider API key from: request env_vars → host env → CLI config files."""
-    import json
-    import os
-    from pathlib import Path
-
-    for key_name in _PROVIDER_KEY_NAMES.get(provider, []):
-        if key_name in env_vars:
-            return env_vars[key_name]
-
-    for key_name in _PROVIDER_KEY_NAMES.get(provider, []):
-        val = os.environ.get(key_name, "").strip()
-        if val:
-            return val
-
-    if provider == "e2b":
-        try:
-            config_path = Path.home() / ".e2b" / "config.json"
-            if config_path.is_file():
-                data = json.loads(config_path.read_text(encoding="utf-8"))
-                for field in ("teamApiKey", "accessToken"):
-                    val = (data.get(field) or "").strip()
-                    if val:
-                        return val
-        except Exception:
-            pass
-
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -430,24 +332,6 @@ def create_app(
 
         return {"name": generate_workspace_name()}
 
-    def _convert_ssh_to_https(url: str) -> str:
-        """
-        Convert SSH URLs to HTTPS URLs for git clone in sandboxes.
-
-        Handles formats:
-        - git@github.com:user/repo.git -> https://github.com/user/repo.git
-        - git@gitlab.com:user/repo.git -> https://gitlab.com/user/repo.git
-        """
-        import re
-
-        # Match SSH format: git@host:path
-        ssh_pattern = r"^git@([^:]+):(.+)$"
-        match = re.match(ssh_pattern, url)
-        if match:
-            host, path = match.groups()
-            return f"https://{host}/{path}"
-        return url
-
     @app.get("/v1/workspace/detect")
     async def detect_workspace(path: str) -> dict[str, str]:
         """
@@ -482,7 +366,7 @@ def create_app(
             if not remote:
                 raise HTTPException(status_code=400, detail="No remote.origin.url found")
             # Convert SSH to HTTPS for sandbox compatibility
-            remote = _convert_ssh_to_https(remote)
+            remote = convert_ssh_to_https(remote)
         except subprocess.CalledProcessError as exc:
             raise HTTPException(status_code=400, detail="Failed to read remote URL") from exc
         except subprocess.TimeoutExpired as exc:
@@ -555,83 +439,8 @@ def create_app(
 
     @app.post("/v1/workspaces", response_model=SessionResponse, status_code=201)
     async def create_session(req: CreateSessionRequest) -> SessionResponse:
-        env_vars = dict(req.env_vars)
-        _inject_host_env_vars(env_vars)
-        logger.info("Injected env vars: %s", list(env_vars.keys()))
-        credential_files: dict[str, str | Path] = dict(_inject_host_credential_files())
-        if "/root/.config/gcloud/application_default_credentials.json" in credential_files:
-            env_vars.setdefault(
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                "/root/.config/gcloud/application_default_credentials.json",
-            )
-        api_key = req.api_key or _extract_provider_key(req.provider, env_vars)
-
-        security_policy = None
-        if req.security_policy:
-            from harnessbox.security.policy import SecurityPolicy
-
-            security_policy = SecurityPolicy(
-                denied_tools=req.security_policy.denied_tools,
-                denied_bash_patterns=req.security_policy.denied_bash_patterns,
-                deny_network=req.security_policy.deny_network,
-                credential_guards=req.security_policy.credential_guards,
-            )
-
-        workspace = None
-        if req.workspace:
-            from harnessbox.names import generate_workspace_name
-            from harnessbox.workspace import GitRepoConfig
-
-            clone_dir_name = req.workspace.clone_dir_name
-            if clone_dir_name is None:
-                clone_dir_name = generate_workspace_name()
-
-            # Default working branch to the city name, branching off the base
-            base_branch = req.workspace.branch
-            branch = clone_dir_name if base_branch == "main" else base_branch
-
-            # Auto-inject git auth token if not provided
-            auth_token = req.workspace.auth_token
-            if not auth_token:
-                auth_token = _get_git_auth_token()
-
-            workspace = GitRepoConfig(
-                remote=req.workspace.remote,
-                branch=branch,
-                base_branch=base_branch,
-                auth_token=auth_token,
-                clone_depth=req.workspace.clone_depth,
-                clone_dir_name=clone_dir_name,
-            )
-
-        session_timeout = req.session_timeout
-        sandbox_timeout = req.sandbox_timeout
-        if session_timeout >= sandbox_timeout:
-            session_timeout = max(sandbox_timeout - 60, 0)
-            logger.warning(
-                "session_timeout (%d) >= sandbox_timeout (%d), clamped to %d",
-                req.session_timeout,
-                sandbox_timeout,
-                session_timeout,
-            )
-
-        config = WorkspaceConfig(
-            provider=req.provider,
-            api_key=api_key,
-            harness="claude-code",
-            model=req.model,
-            env_vars=env_vars,
-            files=credential_files or None,
-            setup_script=req.setup_script,
-            cwd=req.cwd,
-            timeout=sandbox_timeout,
-            skip_permissions=req.skip_permissions,
-            template=req.template,
-            security_policy=security_policy,
-            workspace=workspace,
-            session_timeout=session_timeout,
-        )
         try:
+            config = build_workspace_config(req)
             info = await mgr.create_workspace(config, workspace_id=req.session_id)
         except Exception as exc:
             logger.exception("Failed to create session")
