@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdk
+        working-directory: packages/sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +19,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Copy README for package metadata
-        run: cp ../README.md .
+        run: cp ../../README.md .
 
       - name: Install dependencies
         run: uv sync
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdk
+        working-directory: packages/sdk
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
@@ -57,7 +57,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Copy README for package metadata
-        run: cp ../README.md .
+        run: cp ../../README.md .
 
       - name: Install dependencies
         run: uv sync
@@ -69,7 +69,7 @@ jobs:
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
         with:
-          files: sdk/coverage.xml
+          files: packages/sdk/coverage.xml
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -4,7 +4,7 @@ Thanks for your interest in contributing. HarnessBox is an early-stage project a
 
 ## Development Setup
 
-HarnessBox consists of two components: the SDK in `sdk/` and the Web App in `app/web/`.
+HarnessBox consists of two components: the SDK in `packages/sdk/` and the Web App in `apps/web/`.
 
 ### SDK Setup & Testing
 
@@ -15,7 +15,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 Then, set up the SDK:
 ```bash
-cd sdk
+cd packages/sdk
 uv sync
 ```
 
@@ -47,7 +47,7 @@ uv run ruff check . && uv run mypy . && uv run pytest tests/ -v
 
 The web application uses Bun:
 ```bash
-cd app/web
+cd apps/web
 bun install
 ```
 
@@ -74,23 +74,23 @@ bun run build
 1. Fork the repo
 2. Create a branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Ensure all CI checks pass (for SDK: `cd sdk && uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`)
+4. Ensure all CI checks pass (for SDK: `cd packages/sdk && uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`)
 5. Commit with conventional commits (`feat:`, `fix:`, `docs:`, `test:`)
 6. Open a PR against `main`
 
 ## Adding a New Provider
 
-Providers live in `sdk/src/harnessbox/_providers/`. To add one:
+Providers live in `packages/sdk/src/harnessbox/_providers/`. To add one:
 
-1. Create `sdk/src/harnessbox/_providers/yourprovider.py`
-2. Implement the `SandboxProvider` protocol (see `sdk/src/harnessbox/providers.py`)
-3. Register it in `sdk/src/harnessbox/_providers/__init__.py`
-4. Add tests in `sdk/tests/unit/test_providers.py`
-5. Add an optional dependency in `sdk/pyproject.toml`
+1. Create `packages/sdk/src/harnessbox/_providers/yourprovider.py`
+2. Implement the `SandboxProvider` protocol (see `packages/sdk/src/harnessbox/providers.py`)
+3. Register it in `packages/sdk/src/harnessbox/_providers/__init__.py`
+4. Add tests in `packages/sdk/tests/unit/test_providers.py`
+5. Add an optional dependency in `packages/sdk/pyproject.toml`
 
 ## Adding a New Harness Type
 
-Harness types are registered in `sdk/src/harnessbox/config/harness.py`:
+Harness types are registered in `packages/sdk/src/harnessbox/config/harness.py`:
 
 ```python
 register_harness_type(HarnessTypeConfig(
