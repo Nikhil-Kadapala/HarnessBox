@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 
 import pytest
 import respx
@@ -12,7 +11,6 @@ from httpx import Response
 from harnessbox.client import HarnessBoxClient, WorkspaceCreationError, WorkspaceInfo
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.streaming import EventType, UniversalEvent
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -62,7 +60,7 @@ def _sse(data: str) -> str:
     return f"data: {data}\n\n"
 
 
-def _make_prompt_event(seq: int, delta: str, session_id: str = "ws-1") -> dict:
+def _make_prompt_event(seq: int, delta: str, session_id: str = "ws-1") -> dict[str, object]:
     return {
         "type": EventType.ITEM_DELTA.value,
         "timestamp": "2026-01-01T00:00:00Z",
@@ -165,9 +163,7 @@ class TestCreateWorkspace:
     @pytest.mark.asyncio
     @respx.mock
     async def test_already_active_returns_immediately(self) -> None:
-        respx.post(f"{_BASE}/v1/workspaces").mock(
-            return_value=Response(200, json=_SESSION_ACTIVE)
-        )
+        respx.post(f"{_BASE}/v1/workspaces").mock(return_value=Response(200, json=_SESSION_ACTIVE))
 
         async with HarnessBoxClient(_BASE) as client:
             ws = await client.create_workspace(
@@ -241,7 +237,7 @@ class TestCreateWorkspace:
     @pytest.mark.asyncio
     @respx.mock
     async def test_provider_api_key_forwarded(self) -> None:
-        captured: list[dict] = []
+        captured: list[dict[str, object]] = []
 
         def capture(request, route):  # type: ignore[no-untyped-def]
             captured.append(json.loads(request.content))
@@ -273,10 +269,7 @@ class TestPrompt:
             _make_prompt_event(1, "Hello"),
             _make_prompt_event(2, " world"),
         ]
-        body = (
-            "".join(_sse(json.dumps(e)) for e in events)
-            + _sse("[DONE]")
-        )
+        body = "".join(_sse(json.dumps(e)) for e in events) + _sse("[DONE]")
         respx.post(f"{_BASE}/v1/workspaces/ws-1/prompt").mock(
             return_value=Response(200, text=body, headers={"content-type": "text/event-stream"})
         )
@@ -309,11 +302,7 @@ class TestPrompt:
     @pytest.mark.asyncio
     @respx.mock
     async def test_skips_malformed_json(self) -> None:
-        body = (
-            _sse("not-json")
-            + _sse(json.dumps(_make_prompt_event(1, "ok")))
-            + _sse("[DONE]")
-        )
+        body = _sse("not-json") + _sse(json.dumps(_make_prompt_event(1, "ok"))) + _sse("[DONE]")
         respx.post(f"{_BASE}/v1/workspaces/ws-1/prompt").mock(
             return_value=Response(200, text=body, headers={"content-type": "text/event-stream"})
         )
@@ -329,7 +318,7 @@ class TestPrompt:
     @pytest.mark.asyncio
     @respx.mock
     async def test_conversation_id_forwarded(self) -> None:
-        captured: list[dict] = []
+        captured: list[dict[str, object]] = []
 
         def capture(request, route):  # type: ignore[no-untyped-def]
             captured.append(json.loads(request.content))

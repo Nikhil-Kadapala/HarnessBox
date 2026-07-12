@@ -19,8 +19,7 @@ try:
     import httpx
 except ImportError as _err:
     raise ImportError(
-        "httpx is required to use HarnessBoxClient. "
-        "Install it with: pip install harnessbox[client]"
+        "httpx is required to use HarnessBoxClient. Install it with: pip install harnessbox[client]"
     ) from _err
 
 _TERMINAL_STATES = frozenset(
