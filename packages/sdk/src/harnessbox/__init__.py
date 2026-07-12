@@ -1,6 +1,7 @@
 """HarnessBox — Sandbox security primitives and unified API for AI coding agents."""
 
 from harnessbox._version import __version__
+from harnessbox.client import HarnessBoxClient, WorkspaceCreationError, WorkspaceInfo
 from harnessbox.config.harness import (
     HarnessTypeConfig,
     get_harness_type,
@@ -74,6 +75,10 @@ from harnessbox.workspace import GitBranchAlreadyExistsError, GitRepoConfig, Git
 
 __all__ = [
     "__version__",
+    # Server client
+    "HarnessBoxClient",
+    "WorkspaceCreationError",
+    "WorkspaceInfo",
     # Cost tracking
     "CostMetrics",
     "ModelCost",

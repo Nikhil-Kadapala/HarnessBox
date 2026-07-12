@@ -431,6 +431,9 @@ version = "0.3.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+client = [
+    { name = "httpx" },
+]
 e2b = [
     { name = "e2b" },
 ]
@@ -451,6 +454,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "respx" },
     { name = "ruff" },
     { name = "sse-starlette" },
     { name = "uvicorn" },
@@ -460,11 +464,12 @@ dev = [
 requires-dist = [
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=1.0.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
+    { name = "httpx", marker = "extra == 'client'", specifier = ">=0.25.0" },
     { name = "sse-starlette", marker = "extra == 'server'", specifier = ">=1.0.0" },
     { name = "tenacity", marker = "extra == 'server'", specifier = ">=8.0.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.20.0" },
 ]
-provides-extras = ["e2b", "server"]
+provides-extras = ["e2b", "server", "client"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -476,6 +481,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "respx" },
     { name = "ruff" },
     { name = "sse-starlette", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.20.0" },
@@ -1084,6 +1090,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/b8/7a707d60fea4c49094e40262cc0e2ca6c768cca21587e34d3f705afec47e/requests-2.34.0.tar.gz", hash = "sha256:7d62fe92f50eb82c529b0916bb445afa1531a566fc8f35ffdc64446e771b856a", size = 142436, upload-time = "2026-05-11T19:29:51.717Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/e6/e300fce5fe83c30520607a015dabd985df3251e188d234bfe9492e17a389/requests-2.34.0-py3-none-any.whl", hash = "sha256:917520a21b767485ce7c588f4ebb917c436b24a31231b44228715eaeb5a52c60", size = 73021, upload-time = "2026-05-11T19:29:49.923Z" },
+]
+
+[[package]]
+name = "respx"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/98/4e55c9c486404ec12373708d015ebce157966965a5ebe7f28ff2c784d41b/respx-0.23.1.tar.gz", hash = "sha256:242dcc6ce6b5b9bf621f5870c82a63997e8e82bc7c947f9ffe272b8f3dd5a780", size = 29243, upload-time = "2026-04-08T14:37:16.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/4a/221da6ca167db45693d8d26c7dc79ccfc978a440251bf6721c9aaf251ac0/respx-0.23.1-py2.py3-none-any.whl", hash = "sha256:b18004b029935384bccfa6d7d9d74b4ec9af73a081cc28600fffc0447f4b8c1a", size = 25557, upload-time = "2026-04-08T14:37:14.613Z" },
 ]
 
 [[package]]
