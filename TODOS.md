@@ -40,29 +40,19 @@ Shipped: `WorkspaceMode.NEW` + `create_session(branch=...)` + `Session` handle. 
 
 **Remaining:** Implement `WorkspaceMode.SHARED` (git worktrees in a shared sandbox) when there's demand.
 
-## HarnessBox as Server Client (base_url pattern)
+## ~~HarnessBox as Server Client~~ ✅ DONE
 
-**What:** Add `base_url` param to `HarnessBox` so the SDK can act as a client to a running HarnessBox server (like LiteLLM's proxy pattern). When `base_url` is set, all methods (`create_session`, `send_message`, etc.) make HTTP calls to the server instead of orchestrating locally.
+Shipped as a dedicated `HarnessBoxClient` class (`packages/sdk/src/harnessbox/client.py`) rather than a `base_url` param on `HarnessBox`. It talks to a running HarnessBox server using the 202-pattern: `create_workspace()` does `POST /v1/workspaces`, subscribes to the SSE event stream, and blocks until the runtime reaches `ACTIVE`; `prompt()` is an async generator yielding `UniversalEvent` objects.
 
-**Why:** Enables parity between SDK-only and web-app usage. Teams deploy the server once, developers interact via SDK or web UI interchangeably.
+- `httpx` is an optional `client` extra — zero runtime deps preserved for non-client installs
+- `UniversalEvent.from_dict()` added to `streaming.py` (inverse of `to_dict()`) for parsing server events
+- Constructor takes `api_key` (Bearer auth); `create_workspace()` takes `provider_api_key` (forwarded sandbox key)
+- `respx` added as a dev dependency for httpx/SSE test mocking
 
-**API sketch:**
-```python
-# Local mode (default): HarnessBox orchestrates directly
-hb = HarnessBox(provider="e2b", secrets={...})
-
-# Client mode: HarnessBox proxies through a server
-hb = HarnessBox(base_url="http://hbox.internal:8080", api_key="hb_live_...")
-# Same methods, same types — different transport
-```
-
-**Implementation:**
-- Add `base_url: str | None = None` to `HarnessBox.__init__`
-- When set, all lifecycle methods use httpx to call server endpoints
-- SSE streaming via httpx async streaming for `send_message()`
-- Server validates `api_key` on each request
-
-**Depends on:** Nothing. Workspace Modes shipped — server and SDK have the same API shape.
+**Remaining (optional, deferred):**
+- e2e integration test against a real local server
+- CLI wrapper (`harnessbox client create-workspace ...`)
+- Snapshot/resume support (`create_from_snapshot()`)
 
 ## Subagent Visibility — Parallel Execution UI
 
