@@ -47,11 +47,8 @@ from harnessbox._server.routers._models import (  # noqa: F401
     CreateSessionRequest,
     PermissionRequest,
     PromptRequest,
-    PRRequest,
-    RenameRequest,
     SecurityPolicyRequest,
     SessionResponse,
-    SessionStatsResponse,
     TransitionRequest,
     WorkspaceRequest,
 )

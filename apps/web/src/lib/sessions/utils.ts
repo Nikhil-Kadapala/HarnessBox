@@ -13,7 +13,7 @@ export function transformSessionResponseToCard(session: SessionResponse): Sessio
   return {
     id: session.session_id,
     title: session.workspace_name || session.session_id.slice(0, 8),
-    status: session.workflow_state,
+    status: session.runtime_state,
     harness: session.harness,
     repository: extractRepoName(session.workspace_name),
     branch: session.branch,
@@ -21,9 +21,6 @@ export function transformSessionResponseToCard(session: SessionResponse): Sessio
     createdAt: session.created_at,
     updatedAt: session.created_at,
     workspaceName: session.workspace_name,
-    prUrl: session.pr_url,
-    prNumber: session.pr_number,
-    ciStatus: session.ci_status,
     totalCostUsd: session.total_cost_usd,
   };
 }

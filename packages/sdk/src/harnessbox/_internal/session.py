@@ -21,7 +21,7 @@ StopAgentFn = Callable[[], Coroutine[Any, Any, None]]
 
 
 class SandboxSession:
-    """Manages sandbox lifecycle state, idle timer, pause/resume/hibernate/wake, and snapshots.
+    """Manages sandbox lifecycle state, idle timer, pause/resume, and snapshots.
 
     Delegates provider calls for pause/resume/kill but owns the RuntimeState machine
     and event emission.
@@ -158,17 +158,6 @@ class SandboxSession:
         await self._provider.resume(sandbox_id)
         self._paused_sandbox_id = sandbox_id
         self.transition(RuntimeState.ACTIVE)
-
-    async def hibernate(self) -> str:
-        """Pause the sandbox using VM-style lifecycle terminology."""
-        return await self.pause()
-
-    async def wake(self, sandbox_id: str | None = None) -> None:
-        """Resume a hibernated sandbox."""
-        target = sandbox_id or self._paused_sandbox_id
-        if not target:
-            raise RuntimeError("No paused sandbox id is available to wake")
-        await self.resume(target)
 
     async def create_snapshot(self) -> str:
         """Create a snapshot of the sandbox's current filesystem state."""

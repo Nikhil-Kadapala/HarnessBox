@@ -17,7 +17,6 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from harnessbox._server.workspace_factory import build_workspace_config
 from harnessbox._server.workspace_manager import WorkspaceManager, WorkspaceNotFoundError
 from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
-from harnessbox.sandbox import Sandbox
 from harnessbox.streaming import Attachment
 
 from ._deps import get_manager, session_response
@@ -25,10 +24,7 @@ from ._models import (
     CreateSessionRequest,
     PermissionRequest,
     PromptRequest,
-    PRRequest,
-    RenameRequest,
     SessionResponse,
-    SessionStatsResponse,
     TransitionRequest,
 )
 
@@ -156,140 +152,30 @@ async def stop_session(session_id: str, mgr: WorkspaceManager = Depends(get_mana
     return Response(status_code=204)
 
 
-@router.post("/v1/workspaces/{session_id}/rename", response_model=SessionResponse)
-async def rename_session(
-    session_id: str, req: RenameRequest, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
-    try:
-        info = mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    if info.sandbox_conn and isinstance(info.sandbox_conn, Sandbox):
-        try:
-            await info.sandbox_conn.rename_branch(req.name)
-        except RuntimeError:
-            pass
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    info.branch = req.name
-    info.workspace_name = req.name
-    return session_response(info)
-
-
-@router.post("/v1/workspaces/{session_id}/pr", response_model=SessionResponse)
-async def create_pr(
-    session_id: str, req: PRRequest, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
-    try:
-        info = mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    if not info.sandbox_conn or not isinstance(info.sandbox_conn, Sandbox):
-        raise HTTPException(status_code=400, detail="Session has no active sandbox")
-
-    try:
-        result = await info.sandbox_conn.create_pr(req.title, req.body)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    info.pr_url = result.get("url")
-    try:
-        mgr.transition_workflow(session_id, "in_review")
-    except Exception:
-        pass
-
-    return session_response(info)
-
-
-@router.post("/v1/workspaces/{session_id}/pr/refresh", response_model=SessionResponse)
-async def refresh_pr_status(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
-    try:
-        info = mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    if not isinstance(info.sandbox_conn, Sandbox) or not info.pr_url:
-        return session_response(info)
-
-    try:
-        pr_data = await info.sandbox_conn.check_pr_status()
-    except RuntimeError:
-        return session_response(info)
-    except Exception:
-        logger.debug("Failed to check PR status for session %s", session_id, exc_info=True)
-        return session_response(info)
-
-    if pr_data:
-        info.ci_status = pr_data.get("ci_status")
-        info.pr_number = pr_data.get("number")
-        if pr_data.get("merged"):
-            try:
-                mgr.transition_workflow(session_id, "merged")
-            except Exception:
-                pass
-
-    return session_response(info)
-
-
 @router.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
 async def transition_session(
     session_id: str, req: TransitionRequest, mgr: WorkspaceManager = Depends(get_manager)
 ) -> SessionResponse:
     try:
-        info = mgr.get_workspace(session_id)
+        mgr.get_workspace(session_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
+    if req.dimension != "runtime":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dimension: {req.dimension}. Only 'runtime' is supported.",
+        )
+
     try:
-        if req.dimension == "runtime":
-            RuntimeState(req.target_state)
-            info = mgr.transition_runtime(session_id, req.target_state)
-        elif req.dimension == "workflow":
-            info = mgr.transition_workflow(session_id, req.target_state)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown dimension: {req.dimension}. Use 'runtime' or 'workflow'.",
-            )
+        RuntimeState(req.target_state)
+        info = mgr.transition_runtime(session_id, req.target_state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Unknown state: {req.target_state}") from exc
     except InvalidTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return session_response(info)
-
-
-@router.get("/v1/workspaces/{session_id}/stats", response_model=SessionStatsResponse)
-async def get_session_stats(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionStatsResponse:
-    try:
-        info = mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    if not isinstance(info.sandbox_conn, Sandbox):
-        return SessionStatsResponse()
-
-    try:
-        diff = await info.sandbox_conn.diff_stat()
-        commits = await info.sandbox_conn.commit_count()
-    except RuntimeError:
-        return SessionStatsResponse()
-    except Exception:
-        logger.debug("Failed to fetch stats for session %s", session_id, exc_info=True)
-        return SessionStatsResponse()
-
-    return SessionStatsResponse(
-        insertions=diff["insertions"],
-        deletions=diff["deletions"],
-        commit_count=commits,
-    )
 
 
 @router.post("/v1/workspaces/{session_id}/prompt")

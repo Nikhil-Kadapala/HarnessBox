@@ -42,7 +42,6 @@ class TestCreateSession:
         assert data["session_id"] == "test-1"
         assert data["harness"] == "claude-code"
         assert data["runtime_state"] == "starting"
-        assert data["workflow_state"] == "in_progress"
 
         # Background task completes provisioning (TestClient runs them synchronously)
         get_resp = client.get("/v1/workspaces/test-1")
@@ -345,101 +344,59 @@ class TestTransitionSession:
             instance.setup = AsyncMock()
             client.post("/v1/workspaces", json={"session_id": session_id})
 
-    def test_valid_workflow_transition(self, client: TestClient) -> None:
+    def test_valid_runtime_transition(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "in_review"},
+            json={"dimension": "runtime", "target_state": "paused"},
         )
         assert resp.status_code == 200
-        assert resp.json()["workflow_state"] == "in_review"
+        assert resp.json()["runtime_state"] == "paused"
 
     def test_invalid_transition_returns_409(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "merged"},
+            json={"dimension": "runtime", "target_state": "starting"},
         )
         assert resp.status_code == 409
+
+    def test_workflow_dimension_returns_400(self, client: TestClient) -> None:
+        self._create_active_session(client)
+        resp = client.post(
+            "/v1/workspaces/s-1/transition",
+            json={"dimension": "workflow", "target_state": "in_review"},
+        )
+        assert resp.status_code == 400
 
     def test_unknown_state_returns_400(self, client: TestClient) -> None:
         self._create_active_session(client)
         resp = client.post(
             "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "imaginary"},
+            json={"dimension": "runtime", "target_state": "imaginary"},
         )
         assert resp.status_code == 400
 
     def test_unknown_session_returns_404(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/workspaces/nonexistent/transition",
-            json={"dimension": "workflow", "target_state": "in_review"},
-        )
-        assert resp.status_code == 404
-
-    def test_chained_workflow_transitions(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "in_review"},
-        )
-        assert resp.status_code == 200
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "merged"},
-        )
-        assert resp.status_code == 200
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "archived"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["workflow_state"] == "archived"
-
-
-class TestRenameSession:
-    def test_rename_session(self, client: TestClient) -> None:
-        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            instance._workspace = None
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
-
-        resp = client.post(
-            "/v1/workspaces/s-1/rename",
-            json={"name": "feat/new-feature"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["branch"] == "feat/new-feature"
-        assert data["workspace_name"] == "feat/new-feature"
-
-    def test_rename_not_found(self, client: TestClient) -> None:
-        resp = client.post(
-            "/v1/workspaces/nonexistent/rename",
-            json={"name": "new-name"},
+            json={"dimension": "runtime", "target_state": "paused"},
         )
         assert resp.status_code == 404
 
 
-class TestSessionStats:
-    def test_stats_not_found(self, client: TestClient) -> None:
-        resp = client.get("/v1/workspaces/nonexistent/stats")
-        assert resp.status_code == 404
+class TestRemovedEndpointsGone:
+    """Phase 0 cut: PR, rename, and stats endpoints no longer exist."""
 
-    def test_stats_returns_defaults_without_workspace(self, client: TestClient) -> None:
-        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            instance._workspace = None
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+    def test_pr_endpoints_removed(self, client: TestClient) -> None:
+        assert client.post("/v1/workspaces/s-1/pr", json={"title": "t"}).status_code == 404
+        assert client.post("/v1/workspaces/s-1/pr/refresh").status_code == 404
 
-        resp = client.get("/v1/workspaces/s-1/stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["insertions"] == 0
-        assert data["deletions"] == 0
-        assert data["commit_count"] == 0
+    def test_rename_endpoint_removed(self, client: TestClient) -> None:
+        assert client.post("/v1/workspaces/s-1/rename", json={"name": "x"}).status_code == 404
+
+    def test_stats_endpoint_removed(self, client: TestClient) -> None:
+        assert client.get("/v1/workspaces/s-1/stats").status_code == 404
 
 
 class TestWorkspaceEndpoints:

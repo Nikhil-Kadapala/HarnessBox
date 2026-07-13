@@ -49,13 +49,10 @@ class StorageBackend(Protocol):
                 - snapshot_id (str | None)
                 - harness (str, required)
                 - runtime_state (str, required)
-                - workflow_state (str, required)
                 - created_at (str ISO 8601, required)
                 - last_active (str ISO 8601, required)
                 - config_json (str, required)
                 - workspace_name, base_branch (str | None)
-                - pr_url, ci_status (str | None)
-                - pr_number (int | None)
                 - total_cost_usd (float)
 
         Raises:
@@ -75,7 +72,6 @@ class StorageBackend(Protocol):
         self,
         *,
         runtime_state: str | None = None,
-        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
@@ -85,7 +81,6 @@ class StorageBackend(Protocol):
 
         Args:
             runtime_state: Filter by runtime state ('active', 'paused', 'failed', etc.).
-            workflow_state: Filter by workflow state ('in_progress', 'in_review', etc.).
             remote: Filter by git remote URL.
             branch: Filter by git branch name.
             limit: Maximum number of records to return.
@@ -101,7 +96,7 @@ class StorageBackend(Protocol):
 
         Args:
             workspace_id: Workspace to update.
-            **fields: Key-value pairs of fields to update (status, pr_url, etc.).
+            **fields: Key-value pairs of fields to update (runtime_state, snapshot_id, etc.).
 
         Raises:
             KeyError or equivalent if workspace_id not found.

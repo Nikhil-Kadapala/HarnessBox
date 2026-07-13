@@ -34,7 +34,6 @@ _SESSION_STARTING = {
     "session_id": "ws-1",
     "harness": "claude-code",
     "runtime_state": "starting",
-    "workflow_state": "in_progress",
     "created_at": "2026-01-01T00:00:00Z",
     "workspace_name": "brave-otter",
     "branch": "brave-otter",
@@ -95,7 +94,6 @@ class TestWorkspaceInfo:
             workspace_id="ws-1",
             harness="claude-code",
             runtime_state="active",
-            workflow_state="in_progress",
             created_at="2026-01-01T00:00:00Z",
             remote="https://github.com/org/repo",
             branch="brave-otter",
@@ -105,7 +103,6 @@ class TestWorkspaceInfo:
         assert ws.runtime_state == "active"
         assert ws.total_cost_usd == 0.0
         assert ws.error_message is None
-        assert ws.pr_url is None
 
 
 # ---------------------------------------------------------------------------

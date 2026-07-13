@@ -83,10 +83,10 @@ class SQLiteBackend:
                 """
                 INSERT INTO workspaces (
                     workspace_id, remote, branch, provider, provider_sandbox_id,
-                    snapshot_id, harness, runtime_state, workflow_state,
+                    snapshot_id, harness, runtime_state,
                     created_at, last_active, config_json, workspace_name, base_branch,
-                    pr_url, pr_number, ci_status, total_cost_usd
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_cost_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["workspace_id"],
@@ -97,15 +97,11 @@ class SQLiteBackend:
                     record.get("snapshot_id"),
                     record["harness"],
                     record["runtime_state"],
-                    record.get("workflow_state", "backlog"),
                     record["created_at"],
                     record.get("last_active", record["created_at"]),
                     record["config_json"],
                     record.get("workspace_name"),
                     record.get("base_branch"),
-                    record.get("pr_url"),
-                    record.get("pr_number"),
-                    record.get("ci_status"),
                     record.get("total_cost_usd", 0.0),
                 ),
             )
@@ -132,7 +128,6 @@ class SQLiteBackend:
         self,
         *,
         runtime_state: str | None = None,
-        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
@@ -142,7 +137,6 @@ class SQLiteBackend:
             return await asyncio.to_thread(
                 self._list_workspaces_sync,
                 runtime_state,
-                workflow_state,
                 remote,
                 branch,
                 limit,
@@ -152,7 +146,6 @@ class SQLiteBackend:
     def _list_workspaces_sync(
         self,
         runtime_state: str | None,
-        workflow_state: str | None,
         remote: str | None,
         branch: str | None,
         limit: int,
@@ -165,9 +158,6 @@ class SQLiteBackend:
         if runtime_state is not None:
             conditions.append("runtime_state = ?")
             params.append(runtime_state)
-        if workflow_state is not None:
-            conditions.append("workflow_state = ?")
-            params.append(workflow_state)
         if remote is not None:
             conditions.append("remote = ?")
             params.append(remote)

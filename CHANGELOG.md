@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed (Reduce & Rebuild Phase 0 — #62)
+- **Kanban workflow state machine** — `workflow_state` field, `transition_workflow`, and the workflow dimension of `POST /v1/workspaces/{id}/transition` (runtime dimension remains); `workflow_state` dropped from `SessionResponse`, storage protocol, and the DB (migration v006)
+- **PR endpoints and plumbing** — `POST .../pr`, `POST .../pr/refresh`, `POST .../rename`, `GET .../stats`; `GitRepoConfig.create_pr/check_pr_status/rename_branch` and their `Sandbox`/`WorkspaceMount` delegations; `pr_url`/`pr_number`/`ci_status` fields and DB columns (migration v006). `diff`/`diff_stat`/`commit_count` remain as SDK git primitives
+- **Hibernate/wake aliases** — `Sandbox.hibernate/wake` and `SandboxSession.hibernate/wake`; use `pause()`/`resume()`
+
 ## [0.3.0] - 2026-05-19
 
 ### Added

@@ -24,15 +24,15 @@ class TestMigrationRunner:
     def test_run_pending_applies_all_migrations(self, conn):
         runner = MigrationRunner(conn)
         applied = runner.run_pending()
-        assert applied == 5
-        assert runner.get_version() == 5
+        assert applied == 6
+        assert runner.get_version() == 6
 
     def test_run_pending_idempotent(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
         applied = runner.run_pending()
         assert applied == 0
-        assert runner.get_version() == 5
+        assert runner.get_version() == 6
 
     def test_creates_workspaces_table(self, conn):
         runner = MigrationRunner(conn)
@@ -64,10 +64,47 @@ class TestMigrationRunner:
         )
         assert cursor.fetchone() is not None
 
+    def test_v006_drops_workflow_and_pr_columns(self, conn):
+        """v006 removes workflow_state and PR-tracking columns; other data survives."""
+        from harnessbox._server._storage import migrations
+
+        original = migrations.MIGRATIONS[:]
+        migrations.MIGRATIONS[:] = original[:5]
+
+        runner = MigrationRunner(conn)
+        try:
+            runner.run_pending()
+            conn.execute(
+                """
+                INSERT INTO workspaces (
+                    workspace_id, remote, branch, provider, harness, runtime_state,
+                    workflow_state, created_at, last_active, config_json,
+                    pr_url, pr_number, ci_status
+                ) VALUES ('ws-1', 'https://github.com/t/r.git', 'main', 'e2b',
+                          'claude-code', 'active', 'in_review',
+                          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '{}',
+                          'https://github.com/t/r/pull/1', 1, 'success')
+                """
+            )
+            conn.commit()
+        finally:
+            migrations.MIGRATIONS[:] = original
+
+        runner.run_pending()
+        assert runner.get_version() == 6
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(workspaces)")}
+        assert {"workflow_state", "pr_url", "pr_number", "ci_status"}.isdisjoint(columns)
+
+        row = conn.execute("SELECT * FROM workspaces WHERE workspace_id = 'ws-1'").fetchone()
+        assert row is not None
+        assert row["runtime_state"] == "active"
+        assert row["branch"] == "main"
+
     def test_rollback_on_failure(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        assert runner.get_version() == 5
+        assert runner.get_version() == 6
 
         # Monkey-patch MIGRATIONS to add a failing migration
         from harnessbox._server._storage import migrations
@@ -91,8 +128,8 @@ class TestMigrationRunner:
             with pytest.raises(RuntimeError, match="Intentional failure"):
                 runner.run_pending()
 
-            # Version should stay at 5 (fake v006 rolled back)
-            assert runner.get_version() == 5
+            # Version should stay at 6 (fake v007 rolled back)
+            assert runner.get_version() == 6
         finally:
             migrations.MIGRATIONS[:] = original
             del sys.modules["harnessbox._server._storage.migrations._fake_broken"]
@@ -119,10 +156,10 @@ class TestMigrationRunner:
         finally:
             migrations.MIGRATIONS[:] = original
 
-        # Now run remaining (v002 + v003 + v004 + v005)
+        # Now run remaining (v002 through v006)
         applied = runner.run_pending()
-        assert applied == 4
-        assert runner.get_version() == 5
+        assert applied == 5
+        assert runner.get_version() == 6
 
         # Index should exist now
         cursor = conn.execute(
@@ -155,7 +192,6 @@ class TestSQLiteBackendIntegration:
             "provider": "e2b",
             "harness": "claude-code",
             "runtime_state": "active",
-            "workflow_state": "in_progress",
             "created_at": "2026-01-01T00:00:00Z",
             "last_active": "2026-01-01T00:00:00Z",
             "config_json": "{}",
@@ -174,7 +210,6 @@ class TestSQLiteBackendIntegration:
             "provider": "e2b",
             "harness": "claude-code",
             "runtime_state": "active",
-            "workflow_state": "in_progress",
             "created_at": "2026-01-01T00:00:00Z",
             "last_active": "2026-01-01T00:00:00Z",
             "config_json": "{}",
@@ -209,7 +244,6 @@ class TestSQLiteBackendIntegration:
             "provider": "e2b",
             "harness": "claude-code",
             "runtime_state": "active",
-            "workflow_state": "in_progress",
             "created_at": "2026-01-01T00:00:00Z",
             "last_active": "2026-01-01T00:00:00Z",
             "config_json": "{}",
@@ -254,7 +288,6 @@ class TestSQLiteBackendIntegration:
             "provider": "e2b",
             "harness": "claude-code",
             "runtime_state": "active",
-            "workflow_state": "in_progress",
             "created_at": "2026-01-01T00:00:00Z",
             "last_active": "2026-01-01T00:00:00Z",
             "config_json": "{}",

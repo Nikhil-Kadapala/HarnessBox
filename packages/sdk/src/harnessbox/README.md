@@ -173,7 +173,7 @@ sequenceDiagram
     S->>P: provider.create_snapshot() → "snap_xyz"
     WM->>S: pause()
     S->>P: provider.pause() → "sbx_abc123"
-    Note over P: VM hibernated, no billing
+    Note over P: VM paused, no billing
 
     Note over WM: User sends new message...
     U->>WM: prompt(workspace_id, "Continue the work")
@@ -318,8 +318,6 @@ git checkout -b tokyo                  # Create local working branch
 ```
 
 The `base_branch` field tracks what the session branched from. The `branch` field tracks the current working branch name.
-
-Branch rename (`POST /v1/sessions/{id}/rename`) runs `git branch -m <old> <new>` in the sandbox and updates both `SessionInfo.branch` and `SessionInfo.workspace_name`.
 
 ### Security Considerations
 

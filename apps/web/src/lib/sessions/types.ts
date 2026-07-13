@@ -12,16 +12,7 @@ export interface SessionCard {
   updatedAt?: string
   latestMessage?: string
   workspaceName?: string
-  prUrl?: string
-  prNumber?: number
-  ciStatus?: string
   totalCostUsd?: number
-}
-
-export interface SessionStats {
-  insertions: number
-  deletions: number
-  commit_count: number
 }
 
 export interface CreateSessionInput {

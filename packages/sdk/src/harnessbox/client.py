@@ -39,15 +39,11 @@ class WorkspaceInfo:
     workspace_id: str
     harness: str
     runtime_state: str
-    workflow_state: str
     created_at: str
     workspace_name: str | None = None
     branch: str | None = None
     base_branch: str | None = None
     remote: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    ci_status: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
 
@@ -336,15 +332,11 @@ def _parse_workspace_info(data: dict[str, Any]) -> WorkspaceInfo:
         workspace_id=data["session_id"],
         harness=data.get("harness", "claude-code"),
         runtime_state=data["runtime_state"],
-        workflow_state=data.get("workflow_state", "in_progress"),
         created_at=data.get("created_at", ""),
         workspace_name=data.get("workspace_name"),
         branch=data.get("branch"),
         base_branch=data.get("base_branch"),
         remote=data.get("remote"),
-        pr_url=data.get("pr_url"),
-        pr_number=data.get("pr_number"),
-        ci_status=data.get("ci_status"),
         total_cost_usd=data.get("total_cost_usd", 0.0),
         error_message=data.get("error_message"),
     )
