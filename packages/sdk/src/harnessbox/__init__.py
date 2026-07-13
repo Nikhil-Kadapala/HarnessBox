@@ -1,5 +1,7 @@
 """HarnessBox — Sandbox security primitives and unified API for AI coding agents."""
 
+from typing import TYPE_CHECKING, Any
+
 from harnessbox._version import __version__
 from harnessbox.config.harness import (
     HarnessTypeConfig,
@@ -72,8 +74,37 @@ from harnessbox.streaming import EventType as StreamEventType
 from harnessbox.types import AgentResponse
 from harnessbox.workspace import GitBranchAlreadyExistsError, GitRepoConfig, GitStatus, Workspace
 
+if TYPE_CHECKING:
+    from harnessbox.client import (
+        HarnessBoxClient,
+        PromptStreamError,
+        WorkspaceCreationError,
+        WorkspaceInfo,
+    )
+
+# The HTTP client lives behind the optional ``client`` extra (httpx). Import it
+# lazily so ``import harnessbox`` keeps zero runtime dependencies — accessing
+# HarnessBoxClient et al. without the extra raises a clear ImportError.
+_CLIENT_EXPORTS = frozenset(
+    {"HarnessBoxClient", "PromptStreamError", "WorkspaceCreationError", "WorkspaceInfo"}
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _CLIENT_EXPORTS:
+        from harnessbox import client
+
+        return getattr(client, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "__version__",
+    # Server client
+    "HarnessBoxClient",
+    "PromptStreamError",
+    "WorkspaceCreationError",
+    "WorkspaceInfo",
     # Cost tracking
     "CostMetrics",
     "ModelCost",

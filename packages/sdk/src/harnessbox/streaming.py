@@ -190,6 +190,39 @@ class UniversalEvent:
             "message": msg,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UniversalEvent":
+        """Reconstruct from a to_dict() payload.
+
+        Inverse of to_dict(). Handles enum coercion for EventType, ItemKind,
+        ItemStatus, and ToolKind. content parts are reconstructed from the
+        serialized dicts. ``metadata`` is shallow-copied so the returned event
+        does not alias the dict nested inside ``raw``. ``raw`` is set to the
+        full input dict.
+        """
+        msg: dict[str, Any] = data.get("message", {})
+        content = tuple(
+            ContentPart(**part) for part in msg.get("content", []) if isinstance(part, dict)
+        )
+        return cls(
+            event_id=msg.get("event_id", ""),
+            sequence=msg.get("sequence", 0),
+            timestamp=data.get("timestamp", ""),
+            session_id=msg.get("session_id", ""),
+            event_type=EventType(data["type"]),
+            item_id=msg.get("item_id"),
+            item_kind=ItemKind(msg["item_kind"]) if msg.get("item_kind") else None,
+            item_status=ItemStatus(msg["item_status"]) if msg.get("item_status") else None,
+            content=content,
+            delta=msg.get("delta"),
+            tool_kind=ToolKind(msg["tool_kind"]) if msg.get("tool_kind") else None,
+            cost_usd=msg.get("cost_usd"),
+            duration_ms=msg.get("duration_ms"),
+            error_message=msg.get("error_message"),
+            metadata=dict(msg.get("metadata", {})),
+            raw=data,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Stream parser — Claude Code NDJSON → UniversalEvent
