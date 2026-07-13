@@ -31,22 +31,24 @@ _TERMINAL_STATES = frozenset(
 class WorkspaceInfo:
     """Client-side view of a workspace.
 
-    Mirrors SessionResponse fields without Pydantic — safe to import
-    without the server extra installed.
+    Mirrors the server's SessionResponse fields without Pydantic — safe to
+    import without the server extra installed. Field names and optionality
+    track ``_server/routers/_models.py::SessionResponse``.
     """
 
     workspace_id: str
-    remote: str
-    branch: str
-    provider: str
     harness: str
     runtime_state: str
     workflow_state: str
     created_at: str
-    last_active: str
-    provider_sandbox_id: str | None = None
-    snapshot_id: str | None = None
-    sandbox_conn: str | None = None
+    workspace_name: str | None = None
+    branch: str | None = None
+    base_branch: str | None = None
+    remote: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    ci_status: str | None = None
+    total_cost_usd: float = 0.0
     error_message: str | None = None
 
 
@@ -62,6 +64,14 @@ class WorkspaceCreationError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.runtime_state = runtime_state
+
+
+class PromptStreamError(Exception):
+    """Raised when the server emits an error event on a prompt SSE stream."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.error_message = message
 
 
 class HarnessBoxClient:
@@ -101,7 +111,6 @@ class HarnessBoxClient:
         remote: str,
         branch: str,
         provider: str = "e2b",
-        harness: str = "claude-code",
         provider_api_key: str | None = None,
         timeout: float = 120.0,
     ) -> WorkspaceInfo:
@@ -110,11 +119,15 @@ class HarnessBoxClient:
         Issues POST /v1/workspaces (202), then subscribes to the events
         SSE stream until the workspace reaches ACTIVE or a terminal state.
 
+        The request body matches the server's ``CreateSessionRequest``: git
+        settings are nested under ``workspace`` and the provider key is sent as
+        ``api_key``. The harness is fixed server-side (claude-code); pass a
+        harness per-turn to ``prompt()`` instead.
+
         Args:
             remote: Git remote URL for the workspace repository.
             branch: Branch to check out.
             provider: Sandbox provider (default: "e2b").
-            harness: Agent harness to configure (default: "claude-code").
             provider_api_key: API key forwarded to the sandbox provider
                 (e.g. E2B_API_KEY). Distinct from the Bearer token used
                 for server authentication.
@@ -127,13 +140,11 @@ class HarnessBoxClient:
             WorkspaceCreationError: HTTP error, ERROR/DEAD/ENDED state, or timeout.
         """
         payload: dict[str, Any] = {
-            "remote": remote,
-            "branch": branch,
             "provider": provider,
-            "harness": harness,
+            "workspace": {"remote": remote, "branch": branch},
         }
         if provider_api_key is not None:
-            payload["provider_api_key"] = provider_api_key
+            payload["api_key"] = provider_api_key
 
         resp = await self._client.post("/v1/workspaces", json=payload)
         if resp.status_code not in (200, 201, 202):
@@ -171,6 +182,7 @@ class HarnessBoxClient:
             timeout=None,
         ) as response:
             if response.status_code != 200:
+                await response.aread()
                 raise WorkspaceCreationError(
                     f"Failed to subscribe to events: {response.text}",
                     status_code=response.status_code,
@@ -207,7 +219,23 @@ class HarnessBoxClient:
                             runtime_state=state,
                         )
 
-        return await self.get_workspace(workspace_id)
+        # Stream ended without an explicit ACTIVE/terminal signal. Reconcile
+        # against the server's current state rather than returning a possibly
+        # still-provisioning workspace (the contract is "blocks until ACTIVE").
+        info = await self.get_workspace(workspace_id)
+        if info.runtime_state == RuntimeState.ACTIVE.value:
+            return info
+        if info.runtime_state in _TERMINAL_STATES:
+            raise WorkspaceCreationError(
+                f"Workspace {workspace_id!r} entered {info.runtime_state!r}: "
+                f"{info.error_message or 'Unknown error'}",
+                runtime_state=info.runtime_state,
+            )
+        raise WorkspaceCreationError(
+            f"Event stream ended before workspace {workspace_id!r} became ACTIVE "
+            f"(state: {info.runtime_state!r})",
+            runtime_state=info.runtime_state,
+        )
 
     async def get_workspace(self, workspace_id: str) -> WorkspaceInfo:
         """Fetch current workspace state from the server."""
@@ -260,6 +288,11 @@ class HarnessBoxClient:
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Server signals a mid-stream failure with a flat error frame
+                # ({"event_type": "error", "error_message": ...}). Surface it
+                # instead of silently dropping it as an unparseable event.
+                if isinstance(data, dict) and data.get("event_type") == EventType.ERROR.value:
+                    raise PromptStreamError(data.get("error_message") or "Unknown stream error")
                 try:
                     yield UniversalEvent.from_dict(data)
                 except (KeyError, ValueError):
@@ -277,29 +310,41 @@ class HarnessBoxClient:
 
 
 async def _iter_sse_lines(response: httpx.Response) -> AsyncGenerator[str, None]:
-    """Yield data payloads from an SSE stream, skipping comments and blanks."""
+    """Yield data payloads from an SSE stream, skipping comments and blanks.
+
+    Per the SSE spec a ``data:`` field may or may not be followed by a single
+    space; strip at most one so payloads survive servers that omit it.
+    """
     async for raw_line in response.aiter_lines():
         line = raw_line.strip()
         if not line or line.startswith(":"):
             continue
-        if line.startswith("data: "):
-            yield line[6:]
+        if line.startswith("data:"):
+            payload = line[5:]
+            if payload.startswith(" "):
+                payload = payload[1:]
+            yield payload
 
 
 def _parse_workspace_info(data: dict[str, Any]) -> WorkspaceInfo:
-    """Parse a SessionResponse JSON dict into a WorkspaceInfo."""
+    """Parse a server SessionResponse JSON dict into a WorkspaceInfo.
+
+    Only ``session_id`` and ``runtime_state`` are required; every other field
+    is optional on SessionResponse and read with a default.
+    """
     return WorkspaceInfo(
         workspace_id=data["session_id"],
-        remote=data["remote"],
-        branch=data["branch"],
-        provider=data["provider"],
         harness=data.get("harness", "claude-code"),
         runtime_state=data["runtime_state"],
         workflow_state=data.get("workflow_state", "in_progress"),
-        created_at=data["created_at"],
-        last_active=data["last_active"],
-        provider_sandbox_id=data.get("provider_sandbox_id"),
-        snapshot_id=data.get("snapshot_id"),
-        sandbox_conn=data.get("sandbox_conn"),
+        created_at=data.get("created_at", ""),
+        workspace_name=data.get("workspace_name"),
+        branch=data.get("branch"),
+        base_branch=data.get("base_branch"),
+        remote=data.get("remote"),
+        pr_url=data.get("pr_url"),
+        pr_number=data.get("pr_number"),
+        ci_status=data.get("ci_status"),
+        total_cost_usd=data.get("total_cost_usd", 0.0),
         error_message=data.get("error_message"),
     )
