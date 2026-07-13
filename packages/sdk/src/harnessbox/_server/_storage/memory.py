@@ -53,7 +53,6 @@ class MemoryBackend:
         self,
         *,
         runtime_state: str | None = None,
-        workflow_state: str | None = None,
         remote: str | None = None,
         branch: str | None = None,
         limit: int = 100,
@@ -64,9 +63,6 @@ class MemoryBackend:
 
         if runtime_state is not None:
             workspaces = [w for w in workspaces if w.get("runtime_state") == runtime_state]
-
-        if workflow_state is not None:
-            workspaces = [w for w in workspaces if w.get("workflow_state") == workflow_state]
 
         if remote is not None:
             workspaces = [w for w in workspaces if w.get("remote") == remote]

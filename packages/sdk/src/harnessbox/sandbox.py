@@ -404,19 +404,6 @@ class Sandbox:
         async with self._lock:
             await self._session.resume(sandbox_id)
 
-    async def hibernate(self) -> str:
-        """Pause the sandbox using VM-style lifecycle terminology."""
-        async with self._lock:
-            return await self._session.hibernate()
-
-    async def wake(self, sandbox_id: str | None = None) -> None:
-        """Resume a hibernated sandbox.
-
-        If *sandbox_id* is omitted, resumes the most recently paused sandbox.
-        """
-        async with self._lock:
-            await self._session.wake(sandbox_id)
-
     async def create_snapshot(self) -> str:
         """Create a snapshot of the sandbox's current filesystem state.
 
@@ -561,18 +548,6 @@ class Sandbox:
     # ------------------------------------------------------------------
     # Git operations facade (delegated to WorkspaceMount)
     # ------------------------------------------------------------------
-
-    async def rename_branch(self, new_name: str) -> None:
-        """Rename the workspace branch in the sandbox."""
-        await self._mount.rename_branch(self._provider, new_name)
-
-    async def create_pr(self, title: str, body: str = "") -> dict[str, str]:
-        """Commit, push, and create a GitHub PR. Returns {"url": "..."}."""
-        return await self._mount.create_pr(self._provider, title, body)
-
-    async def check_pr_status(self) -> dict[str, Any]:
-        """Check PR status via gh CLI. Returns {state, merged, ci_status, url, number}."""
-        return await self._mount.check_pr_status(self._provider)
 
     async def diff(self) -> str:
         """Return unified diff of changes since clone (or last snapshot restore)."""

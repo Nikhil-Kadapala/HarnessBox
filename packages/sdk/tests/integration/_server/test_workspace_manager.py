@@ -169,143 +169,6 @@ class TestWorkspaceManager:
         assert len(mgr.list_workspaces()) == 0
 
 
-class TestTransitionWorkspace:
-    @pytest.mark.asyncio
-    async def test_valid_transition(self) -> None:
-        mgr = WorkspaceManager()
-
-        from unittest.mock import AsyncMock, patch
-
-        with (
-            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
-            patch("harnessbox._server.registry.AgentManager"),
-        ):
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            instance._skip_permissions = False
-            instance._cwd = "/workspace"
-            await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
-
-        info = mgr.transition_workflow("w-1", "in_review")
-        assert info.workflow_state == "in_review"
-
-    @pytest.mark.asyncio
-    async def test_invalid_transition_raises(self) -> None:
-        mgr = WorkspaceManager()
-
-        from unittest.mock import AsyncMock, patch
-
-        with (
-            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
-            patch("harnessbox._server.registry.AgentManager"),
-        ):
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            instance._skip_permissions = False
-            instance._cwd = "/workspace"
-            await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-1")
-
-        with pytest.raises(InvalidTransitionError):
-            mgr.transition_workflow("w-1", "merged")
-
-    def test_transition_unknown_workspace_raises(self) -> None:
-        mgr = WorkspaceManager()
-        with pytest.raises(WorkspaceNotFoundError):
-            mgr.transition_workflow("nope", "in_review")
-
-
-class TestWorkflowTransitionMatrix:
-    """Full valid/invalid workflow transition coverage for WorkspaceManager."""
-
-    @pytest.fixture
-    async def mgr_with_workspace(self) -> tuple[WorkspaceManager, str]:
-        mgr = WorkspaceManager()
-        with (
-            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
-            patch("harnessbox._server.registry.AgentManager"),
-        ):
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            instance._skip_permissions = False
-            instance._cwd = "/workspace"
-            await mgr.create_workspace(WorkspaceConfig(), workspace_id="w-wf")
-        return mgr, "w-wf"
-
-    def _set_workflow_state(self, mgr: WorkspaceManager, wid: str, state: str) -> None:
-        info = mgr.get_workspace(wid)
-        info.workflow_state = state
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "current,target",
-        [
-            ("backlog", "in_progress"),
-            ("backlog", "archived"),
-            ("in_progress", "in_review"),
-            ("in_progress", "archived"),
-            ("in_review", "in_progress"),
-            ("in_review", "merged"),
-            ("in_review", "archived"),
-            ("merged", "archived"),
-        ],
-    )
-    async def test_valid_transitions(
-        self,
-        mgr_with_workspace: tuple[WorkspaceManager, str],
-        current: str,
-        target: str,
-    ) -> None:
-        mgr, wid = mgr_with_workspace
-        self._set_workflow_state(mgr, wid, current)
-        info = mgr.transition_workflow(wid, target)
-        assert info.workflow_state == target
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "current,target",
-        [
-            ("backlog", "merged"),
-            ("backlog", "in_review"),
-            ("in_progress", "merged"),
-            ("in_progress", "backlog"),
-            ("in_review", "backlog"),
-            ("merged", "in_progress"),
-            ("merged", "in_review"),
-            ("archived", "in_progress"),
-            ("archived", "merged"),
-            ("archived", "backlog"),
-        ],
-    )
-    async def test_invalid_transitions(
-        self,
-        mgr_with_workspace: tuple[WorkspaceManager, str],
-        current: str,
-        target: str,
-    ) -> None:
-        mgr, wid = mgr_with_workspace
-        self._set_workflow_state(mgr, wid, current)
-        with pytest.raises(InvalidTransitionError):
-            mgr.transition_workflow(wid, target)
-
-    @pytest.mark.asyncio
-    async def test_archived_is_terminal(
-        self, mgr_with_workspace: tuple[WorkspaceManager, str]
-    ) -> None:
-        mgr, wid = mgr_with_workspace
-        self._set_workflow_state(mgr, wid, "archived")
-        for state in ("backlog", "in_progress", "in_review", "merged"):
-            with pytest.raises(InvalidTransitionError):
-                mgr.transition_workflow(wid, state)
-
-    @pytest.mark.asyncio
-    async def test_unknown_target_state_raises_value_error(
-        self, mgr_with_workspace: tuple[WorkspaceManager, str]
-    ) -> None:
-        mgr, wid = mgr_with_workspace
-        with pytest.raises(ValueError, match="Unknown workflow state"):
-            mgr.transition_workflow(wid, "imaginary")
-
-
 class TestFindByRepoBranch:
     @pytest.mark.asyncio
     async def test_find_matching_workspace(self) -> None:
@@ -466,7 +329,6 @@ class TestWorkspacePooling:
                 "snapshot_id": "storage-snapshot",
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
                 "config_json": '{"timeout": 300, "skip_permissions": false}',
@@ -591,7 +453,6 @@ class TestConnectSandbox:
                 "snapshot_id": "snap-1",
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300, "skip_permissions": true}',
@@ -607,7 +468,6 @@ class TestConnectSandbox:
             provider_sandbox_id="live-sandbox-42",
             snapshot_id="snap-1",
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -655,7 +515,6 @@ class TestConnectSandbox:
                 "snapshot_id": "snap-recover",
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 600, "skip_permissions": false}',
@@ -670,7 +529,6 @@ class TestConnectSandbox:
             provider_sandbox_id="dead-sandbox",
             snapshot_id="snap-recover",
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -724,7 +582,6 @@ class TestConnectSandbox:
                 "snapshot_id": None,
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.ACTIVE.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": "{}",
@@ -739,7 +596,6 @@ class TestConnectSandbox:
             provider_sandbox_id=None,
             snapshot_id=None,
             runtime_state=RuntimeState.ACTIVE.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -774,7 +630,6 @@ class TestConnectSandbox:
             provider_sandbox_id="sb-1",
             snapshot_id=None,
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -807,7 +662,6 @@ class TestConnectSandbox:
                 "snapshot_id": None,
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300}',
@@ -822,7 +676,6 @@ class TestConnectSandbox:
             provider_sandbox_id="sb-1",
             snapshot_id=None,
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -861,7 +714,6 @@ class TestConnectSandbox:
                 "snapshot_id": None,
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 600, "session_timeout": 3600, "env_var_keys": ["MY_KEY"]}',
@@ -876,7 +728,6 @@ class TestConnectSandbox:
             provider_sandbox_id="sb-cfg",
             snapshot_id=None,
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",
@@ -927,7 +778,6 @@ class TestConnectSandbox:
                 "snapshot_id": None,
                 "harness": "claude-code",
                 "runtime_state": RuntimeState.PAUSED.value,
-                "workflow_state": "in_progress",
                 "created_at": now,
                 "last_active": now,
                 "config_json": '{"timeout": 300, "skip_permissions": true}',
@@ -942,7 +792,6 @@ class TestConnectSandbox:
             provider_sandbox_id="prompt-sandbox",
             snapshot_id=None,
             runtime_state=RuntimeState.PAUSED.value,
-            workflow_state="in_progress",
             created_at=now,
             last_active=now,
             harness="claude-code",

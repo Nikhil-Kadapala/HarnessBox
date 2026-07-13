@@ -146,20 +146,6 @@ class TestGitRepoConfigAlias:
 
 class TestSandboxGitFacade:
     @pytest.mark.asyncio
-    async def test_rename_branch_delegates(self, ws_provider):
-        ws_provider.set_git_response(
-            "branch -m",
-            CommandResult(exit_code=0, stdout="", stderr=""),
-        )
-        ws = GitRepoConfig(remote="https://github.com/test/repo.git", branch="old-branch")
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-
-        await sb.rename_branch("new-branch")
-        assert ws.branch == "new-branch"
-        assert any("branch -m" in c for c in ws_provider._commands)
-
-    @pytest.mark.asyncio
     async def test_diff_stat_delegates(self, ws_provider):
         ws_provider.set_git_response(
             "diff --shortstat",
@@ -195,58 +181,7 @@ class TestSandboxGitFacade:
         await sb.setup()
 
         with pytest.raises(RuntimeError, match="No git workspace configured"):
-            await sb.rename_branch("x")
-
-        with pytest.raises(RuntimeError, match="No git workspace configured"):
             await sb.diff_stat()
 
         with pytest.raises(RuntimeError, match="No git workspace configured"):
             await sb.commit_count()
-
-    @pytest.mark.asyncio
-    async def test_create_pr_delegates(self, ws_provider):
-        ws_provider.set_git_response(
-            "gh pr create",
-            CommandResult(exit_code=0, stdout="https://github.com/test/repo/pull/1\n", stderr=""),
-        )
-        ws = GitRepoConfig(
-            remote="https://github.com/test/repo.git",
-            branch="feat",
-            base_branch="main",
-            auth_token="tok",
-        )
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-
-        result = await sb.create_pr("Add feature", "Description")
-        assert result["url"] == "https://github.com/test/repo/pull/1"
-
-    @pytest.mark.asyncio
-    async def test_check_pr_status_delegates(self, ws_provider):
-        import json
-
-        pr_json = json.dumps(
-            {
-                "state": "OPEN",
-                "merged": False,
-                "url": "https://github.com/test/repo/pull/1",
-                "number": 1,
-                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
-            }
-        )
-        ws_provider.set_git_response(
-            "gh pr view",
-            CommandResult(exit_code=0, stdout=pr_json, stderr=""),
-        )
-        ws = GitRepoConfig(
-            remote="https://github.com/test/repo.git",
-            branch="feat",
-            auth_token="tok",
-        )
-        sb = Sandbox(client=ws_provider, workspace=ws)
-        await sb.setup()
-
-        status = await sb.check_pr_status()
-        assert status["state"] == "open"
-        assert status["ci_status"] == "success"
-        assert status["number"] == 1

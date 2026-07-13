@@ -250,7 +250,6 @@ components:
         - session_id
         - harness
         - runtime_state
-        - workflow_state
         - created_at
         - total_cost_usd
       properties:
@@ -261,9 +260,6 @@ components:
         runtime_state:
           type: string
           description: Sandbox runtime state (e.g., active, paused, ended).
-        workflow_state:
-          type: string
-          description: Workspace workflow state (e.g., backlog, starting, streaming, failed).
         created_at:
           type: string
           format: date-time
@@ -277,15 +273,6 @@ components:
           type: string
           nullable: true
         remote:
-          type: string
-          nullable: true
-        pr_url:
-          type: string
-          nullable: true
-        pr_number:
-          type: integer
-          nullable: true
-        ci_status:
           type: string
           nullable: true
         total_cost_usd:

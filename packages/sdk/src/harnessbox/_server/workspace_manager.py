@@ -169,10 +169,6 @@ class WorkspaceManager:
         """Transition workspace runtime state with validation."""
         return self._registry.transition_runtime(workspace_id, target_state)
 
-    def transition_workflow(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
-        """Transition workspace workflow state with validation."""
-        return self._registry.transition_workflow(workspace_id, target_state)
-
     async def pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace: snapshot, suspend sandbox, persist."""
         self._idle.cancel_timer(workspace_id)

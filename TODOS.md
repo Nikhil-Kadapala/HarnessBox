@@ -1,5 +1,10 @@
 # TODOs
 
+> **BACKLOG FROZEN (2026-07-13)** — Reduce & Rebuild is in progress
+> ([#62](https://github.com/Nikhil-Kadapala/HarnessBox/issues/62)). No new items
+> until Phases 0–4 land. Items below referencing removed features (kanban
+> workflow, PR endpoints) are void.
+
 Deferred items. Post-adoption features informed by real usage data.
 
 ## Known Issues (from PR #32 code review — add tests if these areas mutate)

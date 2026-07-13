@@ -94,7 +94,6 @@ class WorkspaceInstance:
     provider_sandbox_id: str | None
     snapshot_id: str | None
     runtime_state: str
-    workflow_state: str
     created_at: str
     last_active: str
     harness: str = "claude-code"
@@ -103,9 +102,6 @@ class WorkspaceInstance:
     agent_manager: Any = None
     workspace_name: str | None = None
     base_branch: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    ci_status: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
 
@@ -135,15 +131,11 @@ class WorkspaceInstance:
             "snapshot_id": self.snapshot_id,
             "harness": self.harness,
             "runtime_state": self.runtime_state,
-            "workflow_state": self.workflow_state,
             "created_at": self.created_at,
             "last_active": self.last_active,
             "config_json": config_json,
             "workspace_name": self.workspace_name,
             "base_branch": self.base_branch,
-            "pr_url": self.pr_url,
-            "pr_number": self.pr_number,
-            "ci_status": self.ci_status,
             "total_cost_usd": self.total_cost_usd,
             "error_message": self.error_message,
         }
@@ -223,7 +215,6 @@ class WorkspaceRegistry:
             provider_sandbox_id=None,
             snapshot_id=None,
             runtime_state=RuntimeState.STARTING.value,
-            workflow_state="in_progress",
             created_at=datetime.now(timezone.utc).isoformat(),
             last_active=datetime.now(timezone.utc).isoformat(),
             harness=config.harness,
@@ -372,7 +363,6 @@ class WorkspaceRegistry:
                     provider_sandbox_id=record.get("provider_sandbox_id"),
                     snapshot_id=record.get("snapshot_id"),
                     runtime_state=stored_state,
-                    workflow_state=record.get("workflow_state", "backlog"),
                     created_at=record["created_at"],
                     last_active=record.get("last_active", record["created_at"]),
                     harness=record["harness"],
@@ -380,9 +370,6 @@ class WorkspaceRegistry:
                     agent_manager=None,
                     workspace_name=record.get("workspace_name"),
                     base_branch=record.get("base_branch"),
-                    pr_url=record.get("pr_url"),
-                    pr_number=record.get("pr_number"),
-                    ci_status=record.get("ci_status"),
                     total_cost_usd=record.get("total_cost_usd", 0.0),
                     error_message=record.get("error_message"),
                 )
@@ -450,7 +437,6 @@ class WorkspaceRegistry:
             provider_sandbox_id=record.get("provider_sandbox_id"),
             snapshot_id=record.get("snapshot_id"),
             runtime_state=record["runtime_state"],
-            workflow_state=record.get("workflow_state", "backlog"),
             created_at=record["created_at"],
             last_active=record.get("last_active", record["created_at"]),
             harness=record["harness"],
@@ -458,9 +444,6 @@ class WorkspaceRegistry:
             agent_manager=None,
             workspace_name=record.get("workspace_name"),
             base_branch=record.get("base_branch"),
-            pr_url=record.get("pr_url"),
-            pr_number=record.get("pr_number"),
-            ci_status=record.get("ci_status"),
             total_cost_usd=record.get("total_cost_usd", 0.0),
             error_message=record.get("error_message"),
         )
@@ -648,32 +631,6 @@ class WorkspaceRegistry:
         if self._storage:
             asyncio.create_task(
                 self._storage.update_workspace(workspace_id, runtime_state=target.value)
-            )
-
-        return info
-
-    _VALID_WORKFLOW_TRANSITIONS: dict[str, frozenset[str]] = {
-        "backlog": frozenset({"in_progress", "archived"}),
-        "in_progress": frozenset({"in_review", "archived"}),
-        "in_review": frozenset({"in_progress", "merged", "archived"}),
-        "merged": frozenset({"archived"}),
-        "archived": frozenset(),
-    }
-
-    def transition_workflow(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
-        """Transition workspace workflow state with validation."""
-        info = self.get_workspace(workspace_id)
-        current = info.workflow_state
-        if target_state not in self._VALID_WORKFLOW_TRANSITIONS:
-            raise ValueError(f"Unknown workflow state: {target_state!r}")
-        allowed = self._VALID_WORKFLOW_TRANSITIONS.get(current, frozenset())
-        if target_state not in allowed:
-            raise InvalidTransitionError(current, target_state)
-        info.workflow_state = target_state
-
-        if self._storage:
-            asyncio.create_task(
-                self._storage.update_workspace(workspace_id, workflow_state=target_state)
             )
 
         return info

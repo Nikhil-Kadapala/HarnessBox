@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from harnessbox.config.harness import HarnessTypeConfig
 from harnessbox.config.pipeline import SetupContext
@@ -149,20 +149,6 @@ class WorkspaceMount:
         if not self._workspace or not isinstance(self._workspace, GitRepoConfig):
             raise RuntimeError("No git workspace configured for this sandbox")
         return self._workspace
-
-    async def rename_branch(self, provider: SandboxProvider, new_name: str) -> None:
-        ws = self._git_workspace()
-        await ws.rename_branch(provider, self._harness_config.workspace_root, new_name)
-
-    async def create_pr(
-        self, provider: SandboxProvider, title: str, body: str = ""
-    ) -> dict[str, str]:
-        ws = self._git_workspace()
-        return await ws.create_pr(provider, self._harness_config.workspace_root, title, body)
-
-    async def check_pr_status(self, provider: SandboxProvider) -> dict[str, Any]:
-        ws = self._git_workspace()
-        return await ws.check_pr_status(provider, self._harness_config.workspace_root)
 
     async def diff(self, provider: SandboxProvider) -> str:
         ws = self._git_workspace()

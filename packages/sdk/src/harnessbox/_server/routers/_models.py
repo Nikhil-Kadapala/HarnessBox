@@ -57,38 +57,13 @@ class SessionResponse(BaseModel):
     session_id: str
     harness: str
     runtime_state: str
-    workflow_state: str
     created_at: str
     workspace_name: str | None = None
     branch: str | None = None
     base_branch: str | None = None
     remote: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    ci_status: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
-
-
-class SessionStatsResponse(BaseModel):
-    """Response body for workspace diff statistics."""
-
-    insertions: int = 0
-    deletions: int = 0
-    commit_count: int = 0
-
-
-class RenameRequest(BaseModel):
-    """Request body for renaming a workspace."""
-
-    name: str
-
-
-class PRRequest(BaseModel):
-    """Request body for creating a pull request from the workspace branch."""
-
-    title: str
-    body: str = ""
 
 
 class AttachmentPayload(BaseModel):
@@ -109,9 +84,9 @@ class PromptRequest(BaseModel):
 
 
 class TransitionRequest(BaseModel):
-    """Request body for transitioning workspace state."""
+    """Request body for transitioning workspace runtime state."""
 
-    dimension: str = "workflow"
+    dimension: str = "runtime"
     target_state: str
 
 
