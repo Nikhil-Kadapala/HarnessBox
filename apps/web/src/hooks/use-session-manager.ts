@@ -13,7 +13,6 @@ import {
   createSession as apiCreateSession,
   destroySession as apiDestroySession,
   listSessions,
-  renameSession as apiRenameSession,
 } from "@/lib/api";
 import { sessionsReducer, statusFromEvent } from "@/lib/sessions/reducer";
 import { SessionConnections } from "@/lib/sessions/connections";
@@ -275,18 +274,6 @@ export function useSessionManager() {
     [activeSessionId, sessions],
   );
 
-  const renameSession = useCallback(
-    async (sessionId: string, name: string) => {
-      try {
-        await apiRenameSession(sessionId, name);
-      } catch {
-        return;
-      }
-      dispatch({ type: "rename_session", sessionId, name });
-    },
-    [],
-  );
-
   return {
     sessions,
     activeSessionId,
@@ -297,7 +284,6 @@ export function useSessionManager() {
     sendPrompt,
     stopStreaming,
     destroySession: destroySessionById,
-    renameSession,
   };
 }
 

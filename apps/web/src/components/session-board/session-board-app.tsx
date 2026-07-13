@@ -1,9 +1,7 @@
 import * as React from "react"
 import {
   ArrowCounterClockwiseIcon,
-  ArchiveIcon,
   GitBranchIcon,
-  GitPullRequestIcon,
   MagnifyingGlassIcon,
   PauseIcon,
   StopIcon,
@@ -24,15 +22,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   fetchSessions,
-  fetchSessionStats,
-  transitionSession,
   pauseSession,
   resumeSession,
   stopSession,
-  createPR,
 } from "@/lib/sessions/client"
 import { KANBAN_COLUMNS, getColumnForState } from "@/lib/sessions/columns"
-import type { SessionCard, SessionStats } from "@/lib/sessions/types"
+import type { SessionCard } from "@/lib/sessions/types"
 import { cn } from "@/lib/utils"
 
 interface SessionBoardAppProps {
@@ -77,12 +72,6 @@ export function SessionBoardApp({ onSelectSession }: SessionBoardAppProps) {
     [sessions],
   )
 
-  const handleTransition = React.useCallback(
-    (sessionId: string, targetState: string) =>
-      withOptimistic(sessionId, targetState, () => transitionSession(sessionId, targetState).then(() => {})),
-    [withOptimistic],
-  )
-
   const handlePause = React.useCallback(
     (sessionId: string) =>
       withOptimistic(sessionId, "paused", () => pauseSession(sessionId).then(() => {})),
@@ -97,29 +86,8 @@ export function SessionBoardApp({ onSelectSession }: SessionBoardAppProps) {
 
   const handleStop = React.useCallback(
     (sessionId: string) =>
-      withOptimistic(sessionId, "failed", () => stopSession(sessionId)),
+      withOptimistic(sessionId, "dying", () => stopSession(sessionId)),
     [withOptimistic],
-  )
-
-  const handleCreatePR = React.useCallback(
-    async (sessionId: string) => {
-      const session = sessions.find((s) => s.id === sessionId)
-      const title = session?.title ?? "Agent changes"
-      const prev = sessions
-      setSessions((cur) =>
-        cur.map((s) => (s.id === sessionId ? { ...s, status: "in_review" } : s)),
-      )
-      try {
-        const updated = await createPR(sessionId, title)
-        setSessions((cur) =>
-          cur.map((s) => (s.id === sessionId ? { ...s, ...updated } : s)),
-        )
-      } catch (err) {
-        setSessions(prev)
-        setError(err instanceof Error ? err.message : "PR creation failed.")
-      }
-    },
-    [sessions],
   )
 
   const visible = searchSessions(sessions, query)
@@ -188,11 +156,9 @@ export function SessionBoardApp({ onSelectSession }: SessionBoardAppProps) {
                   sessions={col.sessions}
                   onSelectSession={onSelectSession}
                   actions={{
-                    onTransition: handleTransition,
                     onPause: handlePause,
                     onResume: handleResume,
                     onStop: handleStop,
-                    onCreatePR: handleCreatePR,
                   }}
                 />
               ))
@@ -205,11 +171,9 @@ export function SessionBoardApp({ onSelectSession }: SessionBoardAppProps) {
 }
 
 interface CardActions {
-  onTransition: (sessionId: string, targetState: string) => void
   onPause: (sessionId: string) => void
   onResume: (sessionId: string) => void
   onStop: (sessionId: string) => void
-  onCreatePR: (sessionId: string) => void
 }
 
 function KanbanColumn({
@@ -252,8 +216,6 @@ function KanbanColumn({
   )
 }
 
-const LIVE_COLUMNS = new Set(["in_progress", "in_review"])
-
 function SessionCardItem({
   session,
   columnId,
@@ -265,19 +227,6 @@ function SessionCardItem({
   onSelect?: () => void
   actions: CardActions
 }) {
-  const [stats, setStats] = React.useState<SessionStats | null>(null)
-
-  React.useEffect(() => {
-    if (!LIVE_COLUMNS.has(columnId)) return
-    let cancelled = false
-    fetchSessionStats(session.id).then((s) => {
-      if (!cancelled) setStats(s)
-    })
-    return () => { cancelled = true }
-  }, [session.id, columnId])
-
-  const hasStats = stats && (stats.insertions > 0 || stats.deletions > 0 || stats.commit_count > 0)
-
   return (
     <Card
       size="sm"
@@ -316,28 +265,8 @@ function SessionCardItem({
       <CardFooter className="flex-wrap justify-between gap-2 border-t-0 bg-transparent text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
-          {hasStats && (
-            <>
-              <span className="text-green-600">+{stats.insertions}</span>
-              <span className="text-red-500">-{stats.deletions}</span>
-              {stats.commit_count > 0 && (
-                <span>{stats.commit_count} {stats.commit_count === 1 ? "commit" : "commits"}</span>
-              )}
-            </>
-          )}
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          {session.ciStatus && <CIStatusDot status={session.ciStatus} />}
-          {session.prUrl && (
-            <a
-              href={session.prUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-foreground hover:underline"
-            >
-              <GitPullRequestIcon className="size-3" />
-            </a>
-          )}
           {session.totalCostUsd != null && session.totalCostUsd > 0 && (
             <span className="font-mono">${session.totalCostUsd.toFixed(2)}</span>
           )}
@@ -363,72 +292,34 @@ function ColumnAction({
 }) {
   const btn = "h-5 px-1.5 text-[10px]"
 
-  if (columnId === "in_progress") {
-    const isPaused = session.status === "paused"
+  if (columnId === "running") {
     return (
       <div className="flex items-center gap-1">
-        {isPaused ? (
-          <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onResume(session.id)}>
-            <ArrowCounterClockwiseIcon className="size-3" />
-            Resume
-          </Button>
-        ) : (
-          <>
-            <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onPause(session.id)}>
-              <PauseIcon className="size-3" />
-            </Button>
-            <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onStop(session.id)}>
-              <StopIcon className="size-3" />
-            </Button>
-            <Button variant="outline" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "in_review")}>
-              Review
-            </Button>
-          </>
-        )}
-      </div>
-    )
-  }
-
-  if (columnId === "in_review") {
-    return (
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "active")}>
-          <ArrowCounterClockwiseIcon className="size-3" />
+        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onPause(session.id)}>
+          <PauseIcon className="size-3" />
         </Button>
-        {!session.prUrl && (
-          <Button variant="outline" size="sm" className={btn} onClick={() => actions.onCreatePR(session.id)}>
-            <GitPullRequestIcon className="size-3" />
-            PR
-          </Button>
-        )}
+        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onStop(session.id)}>
+          <StopIcon className="size-3" />
+        </Button>
       </div>
     )
   }
 
-  if (columnId === "merged") {
+  if (columnId === "paused") {
     return (
-      <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onTransition(session.id, "archived")}>
-        <ArchiveIcon className="size-3" />
-        Archive
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onResume(session.id)}>
+          <ArrowCounterClockwiseIcon className="size-3" />
+          Resume
+        </Button>
+        <Button variant="ghost" size="sm" className={btn} onClick={() => actions.onStop(session.id)}>
+          <StopIcon className="size-3" />
+        </Button>
+      </div>
     )
   }
 
   return null
-}
-
-function CIStatusDot({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    success: "bg-green-500",
-    failure: "bg-red-500",
-    pending: "bg-yellow-500",
-  }
-  return (
-    <div
-      className={cn("size-2 rounded-full", colors[status] ?? "bg-muted-foreground")}
-      title={`CI: ${status}`}
-    />
-  )
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -450,11 +341,9 @@ function StatusBadge({ status }: { status: string }) {
 
 function ColumnDot({ columnId }: { columnId: string }) {
   const colors: Record<string, string> = {
-    backlog: "bg-muted-foreground/40",
-    in_progress: "bg-blue-500",
-    in_review: "bg-yellow-500",
-    merged: "bg-green-500",
-    archived: "bg-muted-foreground",
+    running: "bg-blue-500",
+    paused: "bg-yellow-500",
+    stopped: "bg-muted-foreground",
   }
   return (
     <div className={cn("size-2 rounded-full", colors[columnId] ?? "bg-muted-foreground")} />

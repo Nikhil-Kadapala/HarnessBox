@@ -138,15 +138,11 @@ export interface SessionResponse {
   session_id: string;
   harness: string;
   runtime_state: string;
-  workflow_state: string;
   created_at: string;
   workspace_name?: string;
   branch?: string;
   base_branch?: string;
   remote?: string;
-  pr_url?: string;
-  pr_number?: number;
-  ci_status?: string;
   total_cost_usd?: number;
 }
 
@@ -161,9 +157,6 @@ export interface SessionCard {
   createdAt: string;
   updatedAt: string;
   workspaceName?: string;
-  prUrl?: string;
-  prNumber?: number;
-  ciStatus?: string;
   totalCostUsd?: number;
   latestMessage?: string;
 }
