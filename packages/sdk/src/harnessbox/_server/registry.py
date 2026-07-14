@@ -881,22 +881,48 @@ class WorkspaceRegistry:
         )
 
     async def _emit_runtime_state(self, workspace_id: str, state: str) -> None:
-        """Emit a runtime.state event to the session's event buffer."""
+        """Emit a runtime.state event: broadcast live and persist durably.
+
+        Must not silently no-op when there's no live sandbox yet — a workspace
+        that fails STARTING -> ERROR before a Sandbox ever exists still needs
+        that transition recorded, or reconnecting clients and /history never
+        see it. When no buffer is available to assign a sequence, fall back to
+        storage's max-sequence + 1 so retried failures don't collide on
+        duplicate (workspace_id, 0) pairs, which storage silently drops.
+        """
         info = self._workspaces.get(workspace_id)
-        if not info or not info.sandbox_conn or not info.sandbox_conn._event_buffer:
+        if not info:
             return
-        try:
-            event = UniversalEvent(
-                event_id=str(uuid.uuid4()),
-                sequence=0,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                session_id=workspace_id,
-                event_type=StreamEventType.RUNTIME_STATE,
-                metadata={"runtime_state": state},
-            )
-            await info.sandbox_conn._event_buffer.push(event)
-        except Exception as e:
-            logger.debug(f"Failed to emit runtime state event for {workspace_id}: {e}")
+
+        buffer = info.sandbox_conn._event_buffer if info.sandbox_conn else None
+
+        sequence = 0
+        if not buffer and self._storage:
+            try:
+                sequence = await self._storage.get_max_sequence(workspace_id) + 1
+            except Exception as e:
+                logger.debug(f"Failed to look up sequence for {workspace_id}: {e}")
+
+        event = UniversalEvent(
+            event_id=str(uuid.uuid4()),
+            sequence=sequence,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            session_id=workspace_id,
+            event_type=StreamEventType.RUNTIME_STATE,
+            metadata={"runtime_state": state},
+        )
+
+        if buffer:
+            try:
+                event = await buffer.push(event)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast runtime state event for {workspace_id}: {e}")
+
+        if self._storage:
+            try:
+                await self._storage.append_events(workspace_id, [event.to_storage_dict()])
+            except Exception as e:
+                logger.debug(f"Failed to persist runtime state event for {workspace_id}: {e}")
 
     @staticmethod
     def _create_from_snapshot(
