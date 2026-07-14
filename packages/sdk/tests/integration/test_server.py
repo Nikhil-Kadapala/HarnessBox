@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -573,3 +574,67 @@ class TestServerTimeoutFields:
                 },
             )
         assert resp.status_code == 202
+
+
+class TestExportEventsJsonl:
+    """GET /v1/workspaces/{id}/events.jsonl — full durable event log export."""
+
+    async def _client_with_storage(self) -> TestClient:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        mgr = await WorkspaceManager.create(storage=storage)
+        return TestClient(create_app(manager=mgr))
+
+    @pytest.mark.asyncio
+    async def test_export_returns_ndjson_of_persisted_events(self) -> None:
+        from dataclasses import replace
+
+        client = await self._client_with_storage()
+
+        # Real EventBuffer.push() assigns a fresh monotonic sequence (>= 1)
+        # per call; a bare identity echo would leave every event at
+        # sequence=0, which get_history()'s default after_sequence=0 filter
+        # excludes (sequence > after_sequence, not >=).
+        next_seq = [0]
+
+        async def _assign_sequence(event):
+            next_seq[0] += 1
+            return replace(event, sequence=next_seq[0])
+
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-export"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock(side_effect=_assign_sequence)
+            instance._event_buffer = instance.event_buffer
+            resp = client.post("/v1/workspaces", json={"session_id": "s-export"})
+            assert resp.status_code == 202
+
+        resp = client.get("/v1/workspaces/s-export/events.jsonl")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/x-ndjson")
+        assert "attachment" in resp.headers["content-disposition"]
+        assert "s-export-events.jsonl" in resp.headers["content-disposition"]
+
+        lines = [line for line in resp.text.strip().split("\n") if line]
+        assert len(lines) >= 1
+        events = [json.loads(line) for line in lines]
+        assert any(e["type"] == "runtime.state" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_export_unknown_session_returns_404(self) -> None:
+        client = await self._client_with_storage()
+        resp = client.get("/v1/workspaces/nonexistent/events.jsonl")
+        assert resp.status_code == 404
+
+    def test_export_without_storage_returns_400(self, client: TestClient) -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
+
+        resp = client.get("/v1/workspaces/s-1/events.jsonl")
+        assert resp.status_code == 400

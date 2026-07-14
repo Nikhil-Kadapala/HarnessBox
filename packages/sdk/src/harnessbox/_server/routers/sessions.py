@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from harnessbox._server.workspace_factory import build_workspace_config
@@ -412,6 +412,39 @@ async def stream_history(
             )
 
     return EventSourceResponse(event_generator(), ping=15)
+
+
+@router.get("/v1/workspaces/{session_id}/events.jsonl")
+async def export_events_jsonl(
+    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> StreamingResponse:
+    """Export a workspace's full durable event log as newline-delimited JSON.
+
+    One JSON-encoded event per line (same shape as UniversalEvent.to_dict()),
+    ordered by sequence. Unlike /history, this is unpaginated by design — a
+    complete export, not a live-reconnect feed.
+    """
+    try:
+        mgr.get_workspace(session_id)
+    except WorkspaceNotFoundError:
+        if not mgr.storage or await mgr.storage.get_workspace(session_id) is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    if not mgr.storage:
+        raise HTTPException(
+            status_code=400,
+            detail="Storage not enabled. Event export not available.",
+        )
+
+    async def body() -> Any:
+        async for event in mgr.event_replay.get_history(session_id, limit=None):
+            yield json.dumps(event.to_dict()).encode() + b"\n"
+
+    return StreamingResponse(
+        body(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{session_id}-events.jsonl"'},
+    )
 
 
 @router.post("/v1/workspaces/{session_id}/permission")
