@@ -83,13 +83,6 @@ class PromptRequest(BaseModel):
     attachments: list[AttachmentPayload] = []
 
 
-class TransitionRequest(BaseModel):
-    """Request body for transitioning workspace runtime state."""
-
-    dimension: str = "runtime"
-    target_state: str
-
-
 class PermissionRequest(BaseModel):
     """Request body for resolving an agent permission prompt."""
 

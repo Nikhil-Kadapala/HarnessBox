@@ -16,7 +16,7 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from harnessbox._server.workspace_factory import build_workspace_config
 from harnessbox._server.workspace_manager import WorkspaceManager, WorkspaceNotFoundError
-from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
+from harnessbox.lifecycle import InvalidTransitionError
 from harnessbox.streaming import Attachment
 
 from ._deps import get_manager, session_response
@@ -25,7 +25,6 @@ from ._models import (
     PermissionRequest,
     PromptRequest,
     SessionResponse,
-    TransitionRequest,
 )
 
 logger = logging.getLogger("harnessbox.server")
@@ -177,32 +176,6 @@ async def retry_session(
 
     background_tasks.add_task(_reprovision)
     return session_response(mgr.get_workspace(session_id))
-
-
-@router.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
-async def transition_session(
-    session_id: str, req: TransitionRequest, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
-    try:
-        mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    if req.dimension != "runtime":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown dimension: {req.dimension}. Only 'runtime' is supported.",
-        )
-
-    try:
-        RuntimeState(req.target_state)
-        info = mgr.transition_runtime(session_id, req.target_state)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Unknown state: {req.target_state}") from exc
-    except InvalidTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    return session_response(info)
 
 
 @router.post("/v1/workspaces/{session_id}/prompt")

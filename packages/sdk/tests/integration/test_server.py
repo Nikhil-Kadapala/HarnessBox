@@ -392,56 +392,8 @@ class TestRetrySession:
         assert resp.status_code == 404
 
 
-class TestTransitionSession:
-    def _create_active_session(self, client: TestClient, session_id: str = "s-1") -> None:
-        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
-            instance = MockSandbox.return_value
-            instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": session_id})
-
-    def test_valid_runtime_transition(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "paused"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["runtime_state"] == "paused"
-
-    def test_invalid_transition_returns_409(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "starting"},
-        )
-        assert resp.status_code == 409
-
-    def test_workflow_dimension_returns_400(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "in_review"},
-        )
-        assert resp.status_code == 400
-
-    def test_unknown_state_returns_400(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "imaginary"},
-        )
-        assert resp.status_code == 400
-
-    def test_unknown_session_returns_404(self, client: TestClient) -> None:
-        resp = client.post(
-            "/v1/workspaces/nonexistent/transition",
-            json={"dimension": "runtime", "target_state": "paused"},
-        )
-        assert resp.status_code == 404
-
-
 class TestRemovedEndpointsGone:
-    """Phase 0 cut: PR, rename, and stats endpoints no longer exist."""
+    """Phase 0/1 cuts: PR, rename, stats, and transition endpoints no longer exist."""
 
     def test_pr_endpoints_removed(self, client: TestClient) -> None:
         assert client.post("/v1/workspaces/s-1/pr", json={"title": "t"}).status_code == 404
@@ -452,6 +404,14 @@ class TestRemovedEndpointsGone:
 
     def test_stats_endpoint_removed(self, client: TestClient) -> None:
         assert client.get("/v1/workspaces/s-1/stats").status_code == 404
+
+    def test_transition_endpoint_removed(self, client: TestClient) -> None:
+        """/transition had no remaining callers (pause/resume/retry have dedicated endpoints)."""
+        resp = client.post(
+            "/v1/workspaces/s-1/transition",
+            json={"dimension": "runtime", "target_state": "paused"},
+        )
+        assert resp.status_code == 404
 
 
 class TestWorkspaceEndpoints:

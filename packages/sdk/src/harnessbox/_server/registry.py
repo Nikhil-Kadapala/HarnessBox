@@ -674,24 +674,6 @@ class WorkspaceRegistry:
             except Exception as e:
                 logger.error(f"Failed to persist stopped workspace {workspace_id}: {e}")
 
-    # --- State transitions ---
-
-    def transition_runtime(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
-        """Transition workspace runtime state with validation."""
-        info = self.get_workspace(workspace_id)
-        current = RuntimeState(info.runtime_state)
-        target = RuntimeState(target_state)
-        if not validate_runtime_transition(current, target):
-            raise InvalidTransitionError(current, target)
-        info.runtime_state = target.value
-
-        if self._storage:
-            asyncio.create_task(
-                self._storage.update_workspace(workspace_id, runtime_state=target.value)
-            )
-
-        return info
-
     # --- Graceful shutdown ---
 
     async def graceful_shutdown(self) -> None:
