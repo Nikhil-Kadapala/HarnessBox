@@ -298,6 +298,34 @@ class WorkspaceRegistry:
 
         return info
 
+    def prepare_retry(self, workspace_id: str) -> WorkspaceConfig:
+        """Validate and transition a workspace from ERROR back to STARTING for a retry.
+
+        Returns the workspace's original config so the caller can re-run
+        provision_workspace() (typically as a background task, mirroring the
+        create-session 202 pattern). Raises InvalidTransitionError if the
+        workspace isn't in ERROR, or ValueError if no stored config exists.
+        """
+        info = self.get_workspace(workspace_id)
+        current = RuntimeState(info.runtime_state)
+        target = RuntimeState.STARTING
+        if not validate_runtime_transition(current, target):
+            raise InvalidTransitionError(current, target)
+
+        config = self._workspace_configs.get(workspace_id)
+        if config is None:
+            raise ValueError(f"No stored configuration for workspace {workspace_id}; cannot retry.")
+
+        info.runtime_state = target.value
+        info.error_message = None
+
+        if self._storage:
+            asyncio.create_task(
+                self._storage.update_workspace(workspace_id, runtime_state=target.value)
+            )
+
+        return config
+
     async def create_workspace(
         self,
         config: WorkspaceConfig,

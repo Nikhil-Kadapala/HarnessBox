@@ -151,6 +151,34 @@ async def stop_session(session_id: str, mgr: WorkspaceManager = Depends(get_mana
     return Response(status_code=204)
 
 
+@router.post("/v1/workspaces/{session_id}/retry", response_model=SessionResponse, status_code=202)
+async def retry_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> SessionResponse:
+    """Retry provisioning a session stuck in ERROR. Transitions ERROR -> STARTING."""
+    try:
+        info = mgr.get_workspace(session_id)
+    except WorkspaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+
+    try:
+        config = mgr.prepare_retry(session_id)
+    except InvalidTransitionError as exc:
+        raise HTTPException(
+            status_code=409, detail=f"Cannot retry session in state: {info.runtime_state}"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    async def _reprovision() -> None:
+        await mgr.provision_workspace(session_id, config)
+
+    background_tasks.add_task(_reprovision)
+    return session_response(mgr.get_workspace(session_id))
+
+
 @router.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
 async def transition_session(
     session_id: str, req: TransitionRequest, mgr: WorkspaceManager = Depends(get_manager)

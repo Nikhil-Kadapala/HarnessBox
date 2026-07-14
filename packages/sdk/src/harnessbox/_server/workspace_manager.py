@@ -169,6 +169,10 @@ class WorkspaceManager:
         """Transition workspace runtime state with validation."""
         return self._registry.transition_runtime(workspace_id, target_state)
 
+    def prepare_retry(self, workspace_id: str) -> WorkspaceConfig:
+        """Validate ERROR->STARTING and transition; returns config for reprovisioning."""
+        return self._registry.prepare_retry(workspace_id)
+
     async def pause_workspace(self, workspace_id: str) -> None:
         """Pause workspace: snapshot, suspend sandbox, persist."""
         self._idle.cancel_timer(workspace_id)

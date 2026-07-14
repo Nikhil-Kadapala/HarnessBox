@@ -351,6 +351,46 @@ class TestStopSession:
         assert get_resp.json()["runtime_state"] == "dead"
 
 
+class TestRetrySession:
+    def _create_errored_session(self, client: TestClient, session_id: str = "s-err") -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock(side_effect=RuntimeError("boom"))
+            client.post("/v1/workspaces", json={"session_id": session_id})
+
+    def test_retry_reprovisions_errored_session(self, client: TestClient) -> None:
+        self._create_errored_session(client)
+        assert client.get("/v1/workspaces/s-err").json()["runtime_state"] == "error"
+
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-retry-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
+            resp = client.post("/v1/workspaces/s-err/retry")
+
+        assert resp.status_code == 202
+
+        data = client.get("/v1/workspaces/s-err").json()
+        assert data["runtime_state"] == "active"
+        assert data["error_message"] is None
+
+    def test_retry_non_error_session_returns_409(self, client: TestClient) -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
+
+        resp = client.post("/v1/workspaces/s-1/retry")
+        assert resp.status_code == 409
+
+    def test_retry_not_found_returns_404(self, client: TestClient) -> None:
+        resp = client.post("/v1/workspaces/nonexistent/retry")
+        assert resp.status_code == 404
+
+
 class TestTransitionSession:
     def _create_active_session(self, client: TestClient, session_id: str = "s-1") -> None:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
