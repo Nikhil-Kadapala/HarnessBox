@@ -336,6 +336,20 @@ class TestStopSession:
         resp = client.post("/v1/workspaces/nonexistent/stop")
         assert resp.status_code == 404
 
+    def test_stop_session_still_provisioning(
+        self, client: TestClient, manager: WorkspaceManager
+    ) -> None:
+        """Stopping a session with no live sandbox yet (sandbox_conn=None) must not 500."""
+        from harnessbox._server.registry import WorkspaceConfig
+
+        manager.register_workspace(WorkspaceConfig(), workspace_id="s-starting")
+
+        resp = client.post("/v1/workspaces/s-starting/stop")
+        assert resp.status_code == 204
+
+        get_resp = client.get("/v1/workspaces/s-starting")
+        assert get_resp.json()["runtime_state"] == "dead"
+
 
 class TestTransitionSession:
     def _create_active_session(self, client: TestClient, session_id: str = "s-1") -> None:

@@ -617,6 +617,35 @@ class WorkspaceRegistry:
         self._locks.pop(workspace_id, None)
         self._workspace_configs.pop(workspace_id, None)
 
+    async def stop_workspace(self, workspace_id: str) -> None:
+        """Kill a workspace's sandbox but keep its record queryable as DEAD.
+
+        Unlike destroy_workspace, this does not remove the workspace from the
+        registry — callers can still GET/list it afterwards. Safe to call on a
+        workspace with no live sandbox (e.g. still STARTING, or already
+        stopped) since sandbox_conn may be None.
+        """
+        info = self.get_workspace(workspace_id)
+        async with self._ensure_lock(workspace_id):
+            if info.agent_manager:
+                await info.agent_manager.shutdown_all()
+
+            await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
+
+            if info.sandbox_conn:
+                await info.sandbox_conn.kill()
+
+            info.runtime_state = RuntimeState.DEAD.value
+
+        if self._storage:
+            try:
+                await self._storage.update_workspace(
+                    workspace_id,
+                    runtime_state=RuntimeState.DEAD.value,
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist stopped workspace {workspace_id}: {e}")
+
     # --- State transitions ---
 
     def transition_runtime(self, workspace_id: str, target_state: str) -> WorkspaceInstance:

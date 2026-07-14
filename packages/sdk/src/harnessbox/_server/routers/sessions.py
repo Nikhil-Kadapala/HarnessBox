@@ -143,12 +143,11 @@ async def resume_session(
 @router.post("/v1/workspaces/{session_id}/stop", status_code=204)
 async def stop_session(session_id: str, mgr: WorkspaceManager = Depends(get_manager)) -> Response:
     try:
-        info = mgr.get_workspace(session_id)
+        mgr.get_workspace(session_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
-    await info.sandbox_conn.kill()
-    info.runtime_state = RuntimeState.DEAD.value
+    await mgr.stop_workspace(session_id)
     return Response(status_code=204)
 
 

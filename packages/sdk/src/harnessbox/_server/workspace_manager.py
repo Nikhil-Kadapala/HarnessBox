@@ -184,6 +184,11 @@ class WorkspaceManager:
         self._idle.remove_workspace(workspace_id)
         await self._registry.destroy_workspace(workspace_id)
 
+    async def stop_workspace(self, workspace_id: str) -> None:
+        """Kill a workspace's sandbox, leaving its record queryable as DEAD."""
+        self._idle.remove_workspace(workspace_id)
+        await self._registry.stop_workspace(workspace_id)
+
     async def graceful_shutdown(self) -> None:
         """Pause all active workspaces with snapshots for later recovery."""
         self._idle.cancel_all()
