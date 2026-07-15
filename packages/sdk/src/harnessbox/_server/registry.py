@@ -742,6 +742,13 @@ class WorkspaceRegistry:
                 await self._recover_from_snapshot(workspace_id, info, cause=e)
             else:
                 raise
+        else:
+            # Sandbox reconnected in place (not recovered from snapshot): the
+            # process(es) tracked by agent_manager survived, but their stdout
+            # subscriptions did not. _recover_from_snapshot already discards
+            # process state via shutdown_all(), so reattach only applies here.
+            if info.agent_manager:
+                await info.agent_manager.reattach_all()
 
         info.runtime_state = RuntimeState.ACTIVE.value
         info.last_active = datetime.now(timezone.utc).isoformat()

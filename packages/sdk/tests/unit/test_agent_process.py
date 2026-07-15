@@ -25,6 +25,7 @@ class FakeProvider:
     def __init__(self) -> None:
         self._on_stdout: Any = None
         self.stdin_writes: list[str] = []
+        self.reconnect_calls: list[int] = []
 
     async def start_session(self, command: str, cwd: str, on_stdout: Any) -> int:
         self._on_stdout = on_stdout
@@ -32,6 +33,10 @@ class FakeProvider:
 
     async def send_stdin(self, pid: int, data: str) -> None:
         self.stdin_writes.append(data)
+
+    async def reconnect_process(self, pid: int, on_stdout: Any) -> None:
+        self.reconnect_calls.append(pid)
+        self._on_stdout = on_stdout
 
     def inject_stdout(self, line: str) -> None:
         """Simulate a line of NDJSON output from the agent process."""
@@ -275,3 +280,43 @@ class TestTurnTimeout:
         assert len(events) == 1
         assert events[0].event_type == EventType.ERROR
         assert "0.01s" in (events[0].error_message or "")
+
+
+# --- reattach tests ---
+
+
+class TestReattach:
+    """Regression: sandbox pause/resume orphans the stdout subscription,
+    not the remote process. reattach() must re-register a handler for the
+    pid captured at spawn time, without touching send_stdin/queue state."""
+
+    @pytest.mark.asyncio
+    async def test_reattach_reconnects_using_captured_pid(self) -> None:
+        provider, process = _started_process()
+        await _start(process, provider)
+
+        await process.reattach()
+
+        assert provider.reconnect_calls == [42]
+        assert process.is_running is True
+
+    @pytest.mark.asyncio
+    async def test_reattach_delivers_events_through_same_queue(self) -> None:
+        provider, process = _started_process()
+        await _start(process, provider)
+        await process.reattach()
+
+        provider.inject_stdout(
+            json.dumps({"type": "result", "subtype": "success", "total_cost_usd": 0.01})
+        )
+
+        events = [event async for event in process.stream_turn()]
+        assert len(events) == 1
+        assert events[0].event_type == EventType.TURN_ENDED
+
+    @pytest.mark.asyncio
+    async def test_reattach_before_start_raises(self) -> None:
+        _, process = _started_process()
+
+        with pytest.raises(RuntimeError, match="never started"):
+            await process.reattach()

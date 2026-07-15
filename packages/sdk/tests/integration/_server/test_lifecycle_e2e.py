@@ -81,6 +81,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-e2e")
@@ -160,6 +161,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = slow_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-busy")
@@ -217,6 +219,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-events")
@@ -287,6 +290,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             await mgr.create_workspace(config, workspace_id="w-persist")
@@ -366,6 +370,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             await mgr.create_workspace(config, workspace_id="w-events-persist")
@@ -460,6 +465,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-shutdown")

@@ -106,6 +106,16 @@ class SandboxProvider(Protocol):
         """Send data to the stdin of a running process."""
         ...
 
+    async def reconnect_process(self, pid: int, on_stdout: Callable[[Any], None]) -> None:
+        """Re-attach to an already-running background process's stdout stream.
+
+        A sandbox pause/resume cycle can invalidate the local stdout
+        subscription for a still-running process (the process itself
+        survives; only the connection-bound callback registration is lost).
+        Re-registers ``on_stdout`` for ``pid`` on the current connection.
+        """
+        ...
+
     def stream_command(
         self,
         command: str,

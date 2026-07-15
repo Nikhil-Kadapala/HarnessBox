@@ -238,6 +238,23 @@ class E2BProvider:
                 raise SandboxDeadError(str(e)) from e
             raise
 
+    async def reconnect_process(self, pid: int, on_stdout: Any) -> None:
+        """Re-subscribe to a background process's stdout after reconnect.
+
+        E2B's pause/resume preserves the running process and its pid, but
+        the stdout stream was registered against the pre-pause connection
+        object and does not carry over to the new one from ``resume()``.
+        ``commands.connect`` re-attaches and starts a fresh background
+        reader task for ``on_stdout``, mirroring what ``commands.run(...,
+        background=True, on_stdout=...)`` does for a freshly started process.
+        """
+        try:
+            await self._sandbox.commands.connect(pid, on_stdout=on_stdout)
+        except Exception as e:
+            if _is_sandbox_dead(e):
+                raise SandboxDeadError(str(e)) from e
+            raise
+
     async def start_session(
         self,
         command: str,

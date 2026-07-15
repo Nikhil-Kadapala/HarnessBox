@@ -73,11 +73,8 @@ class AgentProcess:
         """Restore previously accumulated cost metrics (e.g. after restart)."""
         self._cost_metrics = metrics
 
-    async def start(self, command: str, cwd: str) -> None:
-        """Launch the agent as a persistent background process."""
-        if self._running:
-            raise RuntimeError("Agent process already running")
-
+    def _make_stdout_handler(self) -> Any:
+        """Build an on_stdout callback that splits NDJSON lines into the queue."""
         loop = asyncio.get_running_loop()
         buffer = ""
 
@@ -92,11 +89,35 @@ class AgentProcess:
                 if line:
                     loop.call_soon_threadsafe(self._stdout_queue.put_nowait, line)
 
+        return on_stdout
+
+    async def start(self, command: str, cwd: str) -> None:
+        """Launch the agent as a persistent background process."""
+        if self._running:
+            raise RuntimeError("Agent process already running")
+
         _log.info("Starting session process: %s", command[:200])
-        self._pid = await self._provider.start_session(command, cwd, on_stdout)
+        self._pid = await self._provider.start_session(command, cwd, self._make_stdout_handler())
         self._running = True
 
         _log.info("Agent process started: pid=%s", self._pid)
+
+    async def reattach(self) -> None:
+        """Re-attach to the already-running process after a sandbox pause/resume.
+
+        The remote process and its pid survive an E2B pause/resume; only the
+        local stdout subscription is lost. Re-registers a fresh handler for
+        the pid captured at spawn time, writing into the same queue so
+        ``stream_turn()`` picks up where it left off.
+        """
+        if self._pid is None:
+            raise RuntimeError("Cannot reattach: agent process was never started")
+
+        _log.info("Reattaching to agent process: pid=%s", self._pid)
+        await self._provider.reconnect_process(self._pid, self._make_stdout_handler())
+        self._running = True
+
+        _log.info("Reattached to agent process: pid=%s", self._pid)
 
     async def send_prompt(self, text: str) -> None:
         """Send a user message to the agent's stdin as a JSON line.

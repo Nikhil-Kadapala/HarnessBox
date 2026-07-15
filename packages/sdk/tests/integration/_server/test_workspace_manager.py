@@ -278,6 +278,7 @@ class TestWorkspacePooling:
 
             agent_mgr_instance = MockAgentManager.return_value
             agent_mgr_instance.shutdown_all = AsyncMock()
+            agent_mgr_instance.reattach_all = AsyncMock()
 
             # Create workspace
             info = await mgr.create_workspace(config, workspace_id="w-1")
@@ -387,6 +388,7 @@ class TestResumeWorkspaceRaceCondition:
 
             agent_mgr_instance = MockAgentManager.return_value
             agent_mgr_instance.shutdown_all = AsyncMock()
+            agent_mgr_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(workspace=workspace)
             await mgr.create_workspace(config, workspace_id="w-race")

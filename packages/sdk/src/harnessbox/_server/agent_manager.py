@@ -115,6 +115,26 @@ class AgentManager:
             + (f" (resuming session {agent_session_id})" if agent_session_id else "")
         )
 
+    async def reattach_all(self) -> None:
+        """Re-attach every tracked process's stdout stream after a sandbox resume.
+
+        A pause/resume cycle invalidates each process's stdout subscription
+        even though the remote process (and its conversation state) survives.
+        If reattach fails for a given process (e.g. it no longer exists), the
+        entry is dropped so the next ``send_message`` respawns it fresh via
+        ``--resume``.
+        """
+        for conversation_id, process in list(self._agents.items()):
+            try:
+                await process.reattach()
+            except Exception:
+                logger.exception(
+                    f"Failed to reattach agent process for conversation {conversation_id}; "
+                    "will respawn on next message"
+                )
+                self._agents.pop(conversation_id, None)
+                self._locks.pop(conversation_id, None)
+
     def list_conversations(self) -> list[str]:
         """Return list of active conversation IDs."""
         return list(self._agents.keys())

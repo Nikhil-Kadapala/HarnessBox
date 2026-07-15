@@ -104,6 +104,13 @@ class MockProvider:
     async def send_stdin(self, pid: int, data: str) -> None:
         self._commands.append(f"stdin:{pid}:{data}")
 
+    async def reconnect_process(self, pid: int, on_stdout: Any) -> None:
+        self._commands.append(f"reconnect:{pid}")
+        self._on_stdout = on_stdout
+        if self._stream_lines:
+            for line in self._stream_lines:
+                on_stdout(type("Data", (), {"line": line})())
+
     async def stream_command(
         self,
         command: str,
