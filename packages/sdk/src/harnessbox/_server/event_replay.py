@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
-from harnessbox.streaming import UniversalEvent
+from harnessbox.streaming import EventType, UniversalEvent
 
 if TYPE_CHECKING:
     from harnessbox._server.storage import StorageBackend
@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 def _event_from_record(record: dict[str, Any]) -> UniversalEvent | None:
-    """Reconstruct a UniversalEvent from a storage record dict."""
+    """Reconstruct a UniversalEvent from a storage record dict.
+
+    event_type must be coerced back to the EventType enum, not left as the
+    raw string stored in event_json — UniversalEvent.to_dict() (used by both
+    /history and the events.jsonl export) calls event_type.value, which
+    raises AttributeError on a plain str.
+    """
     try:
         event_json = record.get("event_json", "{}")
         data = json.loads(event_json) if isinstance(event_json, str) else event_json
@@ -31,7 +37,7 @@ def _event_from_record(record: dict[str, Any]) -> UniversalEvent | None:
             sequence=data.get("sequence", record.get("sequence", 0)),
             timestamp=data.get("timestamp", record.get("timestamp", "")),
             session_id=data.get("session_id", ""),
-            event_type=data.get("event_type", record.get("event_type", "")),
+            event_type=EventType(data.get("event_type", record.get("event_type", ""))),
             metadata=data.get("metadata", {}),
             delta=data.get("delta"),
             cost_usd=data.get("cost_usd"),
@@ -100,10 +106,14 @@ class EventReplay:
         workspace_id: str,
         *,
         after_sequence: int = 0,
-        limit: int = 500,
+        limit: int | None = 500,
         conversation_id: str | None = None,
     ) -> AsyncGenerator[UniversalEvent, None]:
-        """Stream historical events (for /history endpoint)."""
+        """Stream historical events (for /history and events.jsonl export).
+
+        Pass limit=None for an unbounded stream (e.g. full export) — both
+        storage backends treat None as unlimited, paginating internally.
+        """
         if not self._storage:
             return
 

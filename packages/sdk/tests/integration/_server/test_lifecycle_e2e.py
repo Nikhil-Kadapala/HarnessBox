@@ -10,6 +10,8 @@ state transitions, event emission, and storage persistence without hitting E2B.
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -79,6 +81,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-e2e")
@@ -158,6 +161,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = slow_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-busy")
@@ -215,6 +219,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-events")
@@ -285,6 +290,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             await mgr.create_workspace(config, workspace_id="w-persist")
@@ -310,6 +316,123 @@ class TestLifecycleE2E:
         assert record["runtime_state"] == RuntimeState.ACTIVE.value
 
         mgr.idle.cancel_timer("w-persist")
+
+    @pytest.mark.asyncio
+    async def test_prompt_events_persisted_to_storage(self) -> None:
+        """user_prompt and turn events from mgr.prompt() must durably persist.
+
+        Regression test: SessionRouter.prompt() called
+        storage.append_events(workspace_id, [event.to_dict()]), but to_dict()
+        produces the nested SSE wire format ({"type", "timestamp", "message":
+        {...}}) while StorageBackend.append_events() (both MemoryBackend and
+        SQLiteBackend) needs a flat row with top-level event_id/sequence/
+        event_type/event_json. That mismatch raised KeyError('sequence') on
+        every call, silently swallowed by the surrounding try/except — no
+        prompt or turn event was ever actually written to storage.
+        """
+        storage = MemoryBackend()
+        await storage.initialize()
+
+        mgr = await WorkspaceManager.create(storage=storage, auto_pause=False)
+
+        # Real EventBuffer.push() assigns a fresh monotonic sequence per call
+        # (starting at 1); replicate that instead of echoing the event
+        # unchanged, or every event lands at the constructor's sequence=0 and
+        # collides under storage's (workspace_id, sequence) dedup.
+        next_seq = [0]
+
+        async def _assign_sequence(event: UniversalEvent) -> UniversalEvent:
+            next_seq[0] += 1
+            return replace(event, sequence=next_seq[0])
+
+        with (
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentMgr,
+        ):
+            sandbox_instance = MockSandbox.return_value
+            sandbox_instance.setup = AsyncMock()
+            sandbox_instance.sandbox_id = "sb-events-persist"
+            sandbox_instance._cwd = "/workspace"
+            sandbox_instance._event_buffer = MagicMock()
+            sandbox_instance._event_buffer.push = AsyncMock(side_effect=_assign_sequence)
+            sandbox_instance._event_buffer.close = AsyncMock()
+            sandbox_instance.event_buffer = sandbox_instance._event_buffer
+
+            async def mock_send_message(
+                conv_id: str, prompt: str, harness: str = "claude-code", **kwargs: Any
+            ):
+                yield replace(
+                    _make_turn_event(conv_id, EventType.TURN_ENDED, duration_ms=50),
+                    sequence=next_seq[0] + 1,
+                )
+                next_seq[0] += 1
+
+            agent_instance = MockAgentMgr.return_value
+            agent_instance.send_message = mock_send_message
+            agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
+
+            config = WorkspaceConfig(provider="e2b", harness="claude-code")
+            await mgr.create_workspace(config, workspace_id="w-events-persist")
+
+        async for _ in mgr.prompt("w-events-persist", "hello"):
+            pass
+
+        rows = [row async for row in storage.get_events("w-events-persist")]
+        assert len(rows) >= 2  # user_prompt + turn_ended, at minimum
+
+        event_types = {row["event_type"] for row in rows}
+        assert EventType.USER_PROMPT.value in event_types
+        assert EventType.TURN_ENDED.value in event_types
+
+        # event_json must round-trip through the read path without error.
+        for row in rows:
+            payload = json.loads(row["event_json"])
+            assert payload["sequence"] == row["sequence"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_state_persisted_when_no_sandbox_ever_existed(self) -> None:
+        """A STARTING -> ERROR transition with no live sandbox must still land in storage.
+
+        Regression test: _emit_runtime_state used to bail out entirely when
+        info.sandbox_conn was None (e.g. the Sandbox constructor itself raises,
+        so info.sandbox_conn is never assigned), silently dropping the ERROR
+        transition from the durable event log.
+        """
+        storage = MemoryBackend()
+        await storage.initialize()
+
+        mgr = await WorkspaceManager.create(storage=storage)
+
+        with patch("harnessbox._server.registry.Sandbox", side_effect=RuntimeError("boom")):
+            config = WorkspaceConfig(provider="e2b", harness="claude-code")
+            info = mgr.register_workspace(config, workspace_id="w-error")
+            await mgr.provision_workspace("w-error", config)
+
+        assert info.runtime_state == RuntimeState.ERROR.value
+
+        async def _error_rows() -> list[dict[str, Any]]:
+            rows = [row async for row in storage.get_events("w-error")]
+            return [
+                {**row, **json.loads(row["event_json"])}
+                for row in rows
+                if row["event_type"] == EventType.RUNTIME_STATE.value
+                and json.loads(row["event_json"])["metadata"].get("runtime_state")
+                == RuntimeState.ERROR.value
+            ]
+
+        error_rows = await _error_rows()
+        assert len(error_rows) == 1
+
+        # A second failed attempt (e.g. after /retry) must not collide on
+        # sequence 0 and get silently dropped by storage's dedup.
+        with patch("harnessbox._server.registry.Sandbox", side_effect=RuntimeError("boom again")):
+            mgr.prepare_retry("w-error")
+            await mgr.provision_workspace("w-error", config)
+
+        error_rows = await _error_rows()
+        assert len(error_rows) == 2
+        assert error_rows[0]["sequence"] != error_rows[1]["sequence"]
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown_pauses_active_with_timer(self) -> None:
@@ -342,6 +465,7 @@ class TestLifecycleE2E:
             agent_instance = MockAgentMgr.return_value
             agent_instance.send_message = mock_send_message
             agent_instance.shutdown_all = AsyncMock()
+            agent_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(provider="e2b", harness="claude-code")
             info = await mgr.create_workspace(config, workspace_id="w-shutdown")

@@ -298,6 +298,34 @@ class WorkspaceRegistry:
 
         return info
 
+    def prepare_retry(self, workspace_id: str) -> WorkspaceConfig:
+        """Validate and transition a workspace from ERROR back to STARTING for a retry.
+
+        Returns the workspace's original config so the caller can re-run
+        provision_workspace() (typically as a background task, mirroring the
+        create-session 202 pattern). Raises InvalidTransitionError if the
+        workspace isn't in ERROR, or ValueError if no stored config exists.
+        """
+        info = self.get_workspace(workspace_id)
+        current = RuntimeState(info.runtime_state)
+        target = RuntimeState.STARTING
+        if not validate_runtime_transition(current, target):
+            raise InvalidTransitionError(current, target)
+
+        config = self._workspace_configs.get(workspace_id)
+        if config is None:
+            raise ValueError(f"No stored configuration for workspace {workspace_id}; cannot retry.")
+
+        info.runtime_state = target.value
+        info.error_message = None
+
+        if self._storage:
+            asyncio.create_task(
+                self._storage.update_workspace(workspace_id, runtime_state=target.value)
+            )
+
+        return config
+
     async def create_workspace(
         self,
         config: WorkspaceConfig,
@@ -617,23 +645,34 @@ class WorkspaceRegistry:
         self._locks.pop(workspace_id, None)
         self._workspace_configs.pop(workspace_id, None)
 
-    # --- State transitions ---
+    async def stop_workspace(self, workspace_id: str) -> None:
+        """Kill a workspace's sandbox but keep its record queryable as DEAD.
 
-    def transition_runtime(self, workspace_id: str, target_state: str) -> WorkspaceInstance:
-        """Transition workspace runtime state with validation."""
+        Unlike destroy_workspace, this does not remove the workspace from the
+        registry — callers can still GET/list it afterwards. Safe to call on a
+        workspace with no live sandbox (e.g. still STARTING, or already
+        stopped) since sandbox_conn may be None.
+        """
         info = self.get_workspace(workspace_id)
-        current = RuntimeState(info.runtime_state)
-        target = RuntimeState(target_state)
-        if not validate_runtime_transition(current, target):
-            raise InvalidTransitionError(current, target)
-        info.runtime_state = target.value
+        async with self._ensure_lock(workspace_id):
+            if info.agent_manager:
+                await info.agent_manager.shutdown_all()
+
+            await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
+
+            if info.sandbox_conn:
+                await info.sandbox_conn.kill()
+
+            info.runtime_state = RuntimeState.DEAD.value
 
         if self._storage:
-            asyncio.create_task(
-                self._storage.update_workspace(workspace_id, runtime_state=target.value)
-            )
-
-        return info
+            try:
+                await self._storage.update_workspace(
+                    workspace_id,
+                    runtime_state=RuntimeState.DEAD.value,
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist stopped workspace {workspace_id}: {e}")
 
     # --- Graceful shutdown ---
 
@@ -703,6 +742,13 @@ class WorkspaceRegistry:
                 await self._recover_from_snapshot(workspace_id, info, cause=e)
             else:
                 raise
+        else:
+            # Sandbox reconnected in place (not recovered from snapshot). E2B
+            # preserves the VM process, but Claude's outbound HTTP connection
+            # can remain stale after pause/resume. A fresh process started with
+            # the persisted Claude session ID is safer than reattaching stdout.
+            if info.agent_manager:
+                await info.agent_manager.shutdown_all()
 
         info.runtime_state = RuntimeState.ACTIVE.value
         info.last_active = datetime.now(timezone.utc).isoformat()
@@ -824,22 +870,48 @@ class WorkspaceRegistry:
         )
 
     async def _emit_runtime_state(self, workspace_id: str, state: str) -> None:
-        """Emit a runtime.state event to the session's event buffer."""
+        """Emit a runtime.state event: broadcast live and persist durably.
+
+        Must not silently no-op when there's no live sandbox yet — a workspace
+        that fails STARTING -> ERROR before a Sandbox ever exists still needs
+        that transition recorded, or reconnecting clients and /history never
+        see it. When no buffer is available to assign a sequence, fall back to
+        storage's max-sequence + 1 so retried failures don't collide on
+        duplicate (workspace_id, 0) pairs, which storage silently drops.
+        """
         info = self._workspaces.get(workspace_id)
-        if not info or not info.sandbox_conn or not info.sandbox_conn._event_buffer:
+        if not info:
             return
-        try:
-            event = UniversalEvent(
-                event_id=str(uuid.uuid4()),
-                sequence=0,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                session_id=workspace_id,
-                event_type=StreamEventType.RUNTIME_STATE,
-                metadata={"runtime_state": state},
-            )
-            await info.sandbox_conn._event_buffer.push(event)
-        except Exception as e:
-            logger.debug(f"Failed to emit runtime state event for {workspace_id}: {e}")
+
+        buffer = info.sandbox_conn._event_buffer if info.sandbox_conn else None
+
+        sequence = 0
+        if not buffer and self._storage:
+            try:
+                sequence = await self._storage.get_max_sequence(workspace_id) + 1
+            except Exception as e:
+                logger.debug(f"Failed to look up sequence for {workspace_id}: {e}")
+
+        event = UniversalEvent(
+            event_id=str(uuid.uuid4()),
+            sequence=sequence,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            session_id=workspace_id,
+            event_type=StreamEventType.RUNTIME_STATE,
+            metadata={"runtime_state": state},
+        )
+
+        if buffer:
+            try:
+                event = await buffer.push(event)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast runtime state event for {workspace_id}: {e}")
+
+        if self._storage:
+            try:
+                await self._storage.append_events(workspace_id, [event.to_storage_dict()])
+            except Exception as e:
+                logger.debug(f"Failed to persist runtime state event for {workspace_id}: {e}")
 
     @staticmethod
     def _create_from_snapshot(

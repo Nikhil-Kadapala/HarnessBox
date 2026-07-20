@@ -62,7 +62,7 @@ VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {
     RuntimeState.DYING: frozenset({RuntimeState.ENDED, RuntimeState.DEAD}),
     RuntimeState.ENDED: frozenset(),
     RuntimeState.DEAD: frozenset(),
-    RuntimeState.ERROR: frozenset(),
+    RuntimeState.ERROR: frozenset({RuntimeState.STARTING}),
 }
 
 

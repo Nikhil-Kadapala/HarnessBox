@@ -17,7 +17,7 @@ def _make_event_record(seq: int, workspace_id: str = "ws-1", **overrides) -> dic
         "sequence": seq,
         "timestamp": f"2026-05-27T10:00:{seq:02d}Z",
         "session_id": overrides.pop("session_id", "conv-1"),
-        "event_type": overrides.pop("event_type", "message.delta"),
+        "event_type": overrides.pop("event_type", "item.delta"),
         "metadata": overrides.pop("metadata", {}),
         "delta": overrides.pop("delta", f"chunk-{seq}"),
         "cost_usd": overrides.pop("cost_usd", None),
@@ -42,7 +42,7 @@ class TestEventFromRecord:
         assert event.event_id == "evt-5"
         assert event.sequence == 5
         assert event.session_id == "conv-1"
-        assert event.event_type == "message.delta"
+        assert event.event_type == "item.delta"
         assert event.delta == "chunk-5"
 
     def test_returns_none_for_malformed_json(self) -> None:
@@ -70,7 +70,7 @@ class TestEventFromRecord:
             "sequence": 3,
             "timestamp": "2026-01-01T00:00:00Z",
             "session_id": "s-2",
-            "event_type": "message.delta",
+            "event_type": "item.delta",
             "metadata": {"key": "val"},
             "delta": "hello",
         }
@@ -80,12 +80,31 @@ class TestEventFromRecord:
         assert event.event_id == "e-dict"
         assert event.metadata == {"key": "val"}
 
-    def test_empty_record_returns_event_with_defaults(self) -> None:
-        record = {"event_json": "{}"}
+    def test_event_type_coerced_to_enum_for_to_dict(self) -> None:
+        """Regression: event_type must be an EventType, not a raw str.
+
+        UniversalEvent.to_dict() calls event_type.value — a plain str
+        survives construction (dataclasses don't validate field types) but
+        crashes with AttributeError the moment /history or the events.jsonl
+        export tries to serialize a replayed event.
+        """
+        from harnessbox.streaming import EventType
+
+        record = _make_event_record(1, event_type="turn.ended")
         event = _event_from_record(record)
         assert event is not None
-        assert event.event_id == ""
-        assert event.sequence == 0
+        assert isinstance(event.event_type, EventType)
+        assert event.to_dict()["type"] == "turn.ended"
+
+    def test_empty_record_with_no_event_type_returns_none(self) -> None:
+        """A record with no event_type anywhere can't produce a usable event.
+
+        event_type is required for to_dict() to work downstream, so this
+        is correctly treated as malformed rather than defaulted to "".
+        """
+        record = {"event_json": "{}"}
+        event = _event_from_record(record)
+        assert event is None
 
 
 class TestReplayFromSequence:

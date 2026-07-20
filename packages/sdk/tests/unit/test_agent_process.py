@@ -25,6 +25,7 @@ class FakeProvider:
     def __init__(self) -> None:
         self._on_stdout: Any = None
         self.stdin_writes: list[str] = []
+        self.reconnect_calls: list[int] = []
 
     async def start_session(self, command: str, cwd: str, on_stdout: Any) -> int:
         self._on_stdout = on_stdout
@@ -32,6 +33,10 @@ class FakeProvider:
 
     async def send_stdin(self, pid: int, data: str) -> None:
         self.stdin_writes.append(data)
+
+    async def reconnect_process(self, pid: int, on_stdout: Any) -> None:
+        self.reconnect_calls.append(pid)
+        self._on_stdout = on_stdout
 
     def inject_stdout(self, line: str) -> None:
         """Simulate a line of NDJSON output from the agent process."""
@@ -275,3 +280,86 @@ class TestTurnTimeout:
         assert len(events) == 1
         assert events[0].event_type == EventType.ERROR
         assert "0.01s" in (events[0].error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_retry_metadata_is_included_when_absolute_budget_expires(self) -> None:
+        provider, process = _started_process(turn_timeout=1.0)
+        await _start(process, provider)
+        await process._stdout_queue.put(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "api_retry",
+                    "attempt": 2,
+                    "max_retries": 10,
+                    "retry_delay_ms": 5000,
+                    "error_status": 529,
+                    "error": "overloaded",
+                }
+            )
+        )
+
+        wait_timeouts: list[float] = []
+
+        async def fake_wait_for(awaitable: Any, timeout: float) -> str:
+            wait_timeouts.append(timeout)
+            if len(wait_timeouts) == 1:
+                return await awaitable
+            awaitable.close()
+            raise asyncio.TimeoutError
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr("harnessbox.process.asyncio.wait_for", fake_wait_for)
+            events = [event async for event in process.stream_turn()]
+
+        assert [event.event_type for event in events] == [EventType.API_RETRY, EventType.ERROR]
+        timeout_event = events[-1]
+        assert timeout_event.metadata == {
+            "attempt": 2,
+            "max_retries": 10,
+            "retry_delay_ms": 5000,
+            "error_status": 529,
+            "error": "overloaded",
+        }
+        assert "attempt 2/10" in (timeout_event.error_message or "")
+        assert wait_timeouts[1] < wait_timeouts[0]
+
+
+# --- reattach tests ---
+
+
+class TestReattach:
+    """Regression: sandbox pause/resume orphans the stdout subscription,
+    not the remote process. reattach() must re-register a handler for the
+    pid captured at spawn time, without touching send_stdin/queue state."""
+
+    @pytest.mark.asyncio
+    async def test_reattach_reconnects_using_captured_pid(self) -> None:
+        provider, process = _started_process()
+        await _start(process, provider)
+
+        await process.reattach()
+
+        assert provider.reconnect_calls == [42]
+        assert process.is_running is True
+
+    @pytest.mark.asyncio
+    async def test_reattach_delivers_events_through_same_queue(self) -> None:
+        provider, process = _started_process()
+        await _start(process, provider)
+        await process.reattach()
+
+        provider.inject_stdout(
+            json.dumps({"type": "result", "subtype": "success", "total_cost_usd": 0.01})
+        )
+
+        events = [event async for event in process.stream_turn()]
+        assert len(events) == 1
+        assert events[0].event_type == EventType.TURN_ENDED
+
+    @pytest.mark.asyncio
+    async def test_reattach_before_start_raises(self) -> None:
+        _, process = _started_process()
+
+        with pytest.raises(RuntimeError, match="never started"):
+            await process.reattach()

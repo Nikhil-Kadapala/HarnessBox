@@ -462,7 +462,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "e2b", marker = "extra == 'e2b'", specifier = ">=1.0.0" },
+    { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.21,<2.22" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
     { name = "httpx", marker = "extra == 'client'", specifier = ">=0.25.0" },
     { name = "sse-starlette", marker = "extra == 'server'", specifier = ">=1.0.0" },

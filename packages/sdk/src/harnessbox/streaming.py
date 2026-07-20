@@ -190,6 +190,43 @@ class UniversalEvent:
             "message": msg,
         }
 
+    def to_storage_dict(self) -> dict[str, Any]:
+        """Serialize to the flat row shape StorageBackend.append_events() expects.
+
+        Distinct from to_dict(), which nests fields under "message" for the SSE
+        wire format — storage backends key rows on top-level event_id/sequence/
+        timestamp/event_type and store the rest as a flat JSON blob in
+        event_json (see EventReplay._event_from_record, the read-side inverse,
+        which expects top-level event_type/session_id/metadata/delta/cost_usd
+        inside that blob rather than nested under "message").
+        """
+        payload: dict[str, Any] = {
+            "event_id": self.event_id,
+            "sequence": self.sequence,
+            "timestamp": self.timestamp,
+            "session_id": self.session_id,
+            "event_type": self.event_type.value,
+            "item_id": self.item_id,
+            "item_kind": self.item_kind.value if self.item_kind else None,
+            "item_status": self.item_status.value if self.item_status else None,
+            "content": [
+                {k: v for k, v in c.__dict__.items() if v is not None} for c in self.content
+            ],
+            "delta": self.delta,
+            "tool_kind": self.tool_kind.value if self.tool_kind else None,
+            "cost_usd": self.cost_usd,
+            "duration_ms": self.duration_ms,
+            "error_message": self.error_message,
+            "metadata": self.metadata,
+        }
+        return {
+            "event_id": self.event_id,
+            "sequence": self.sequence,
+            "timestamp": self.timestamp,
+            "event_type": self.event_type.value,
+            "event_json": json.dumps(payload),
+        }
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "UniversalEvent":
         """Reconstruct from a to_dict() payload.

@@ -42,8 +42,12 @@ class MemoryBackend:
                 raise KeyError(f"Workspace with (remote={remote}, branch={branch}) already exists")
 
         self._workspaces[workspace_id] = workspace_record.copy()
-        self._conversations[workspace_id] = []
-        self._events[workspace_id] = []
+        # setdefault, not assign: append_events() can run before save_workspace()
+        # in the same provisioning flow (e.g. the ACTIVE runtime.state event is
+        # emitted just before the workspace record is first saved) — a plain
+        # assignment here would silently wipe events already recorded.
+        self._conversations.setdefault(workspace_id, [])
+        self._events.setdefault(workspace_id, [])
 
     async def get_workspace(self, workspace_id: str) -> dict[str, Any] | None:
         """Retrieve workspace from memory dict."""

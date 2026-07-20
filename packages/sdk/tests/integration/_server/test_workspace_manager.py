@@ -278,6 +278,7 @@ class TestWorkspacePooling:
 
             agent_mgr_instance = MockAgentManager.return_value
             agent_mgr_instance.shutdown_all = AsyncMock()
+            agent_mgr_instance.reattach_all = AsyncMock()
 
             # Create workspace
             info = await mgr.create_workspace(config, workspace_id="w-1")
@@ -296,6 +297,7 @@ class TestWorkspacePooling:
         assert result.workspace_id == "w-1"
         assert result.runtime_state == RuntimeState.ACTIVE.value
         instance.resume.assert_called_once()
+        agent_mgr_instance.shutdown_all.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_get_or_create_requires_config_when_no_match(self):
@@ -387,6 +389,7 @@ class TestResumeWorkspaceRaceCondition:
 
             agent_mgr_instance = MockAgentManager.return_value
             agent_mgr_instance.shutdown_all = AsyncMock()
+            agent_mgr_instance.reattach_all = AsyncMock()
 
             config = WorkspaceConfig(workspace=workspace)
             await mgr.create_workspace(config, workspace_id="w-race")
@@ -427,6 +430,53 @@ class TestResumeWorkspaceRaceCondition:
         assert mgr.get_workspace("w-active").runtime_state == RuntimeState.ACTIVE.value
         with pytest.raises(InvalidTransitionError):
             await mgr.resume_workspace("w-active")
+
+    @pytest.mark.asyncio
+    async def test_resume_egress_failure_does_not_publish_active_state(self) -> None:
+        """A post-connect egress failure must leave the workspace paused."""
+        from harnessbox.workspace import GitRepoConfig
+
+        mgr = WorkspaceManager()
+        workspace = GitRepoConfig(
+            remote="https://github.com/test/repo.git",
+            branch="main",
+        )
+
+        with (
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            patch("harnessbox._server.registry.AgentManager") as MockAgentManager,
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.pause = AsyncMock(return_value="paused-id")
+            instance.resume = AsyncMock()
+            instance.create_snapshot = AsyncMock(return_value="snapshot-123")
+            instance._skip_permissions = False
+            instance._cwd = "/workspace"
+            instance._workspace = workspace
+
+            agent_mgr_instance = MockAgentManager.return_value
+            agent_mgr_instance.shutdown_all = AsyncMock()
+            agent_mgr_instance.reattach_all = AsyncMock()
+
+            config = WorkspaceConfig(workspace=workspace)
+            await mgr.create_workspace(config, workspace_id="w-egress")
+            await mgr.pause_workspace("w-egress")
+
+            instance.resume.side_effect = RuntimeError("Anthropic egress not ready")
+            with (
+                patch.object(
+                    mgr.registry,
+                    "_emit_runtime_state",
+                    new_callable=AsyncMock,
+                ) as emit_state,
+                pytest.raises(RuntimeError, match="egress not ready"),
+            ):
+                await mgr.resume_workspace("w-egress")
+
+        info = mgr.get_workspace("w-egress")
+        assert info.runtime_state == RuntimeState.PAUSED.value
+        emit_state.assert_not_awaited()
 
 
 class TestConnectSandbox:

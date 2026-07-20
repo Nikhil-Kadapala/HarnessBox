@@ -49,7 +49,6 @@ from harnessbox._server.routers._models import (  # noqa: F401
     PromptRequest,
     SecurityPolicyRequest,
     SessionResponse,
-    TransitionRequest,
     WorkspaceRequest,
 )
 from harnessbox._server.storage import StorageBackend

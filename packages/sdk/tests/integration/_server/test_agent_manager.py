@@ -200,6 +200,41 @@ class TestAgentManagerTermination:
         mock_process2.stop.assert_called_once()
 
 
+class TestAgentManagerReattachAll:
+    """Regression: sandbox resume must re-attach every tracked process's
+    stdout stream, not just leave orphaned processes hanging on the next turn."""
+
+    @pytest.mark.asyncio
+    async def test_reattaches_every_tracked_process(self, mock_sandbox):
+        mgr = AgentManager(mock_sandbox)
+        mgr._agents = {
+            "conv-1": (p1 := MagicMock(reattach=AsyncMock())),
+            "conv-2": (p2 := MagicMock(reattach=AsyncMock())),
+        }
+
+        await mgr.reattach_all()
+
+        p1.reattach.assert_called_once()
+        p2.reattach.assert_called_once()
+        assert set(mgr._agents) == {"conv-1", "conv-2"}
+
+    @pytest.mark.asyncio
+    async def test_failed_reattach_drops_the_conversation(self, mock_sandbox):
+        """A process that can't be reattached (e.g. it no longer exists) is
+        dropped so the next send_message respawns it fresh via --resume."""
+        mgr = AgentManager(mock_sandbox)
+        ok_process = MagicMock(reattach=AsyncMock())
+        dead_process = MagicMock(reattach=AsyncMock(side_effect=RuntimeError("gone")))
+        mgr._agents = {"conv-ok": ok_process, "conv-dead": dead_process}
+        mgr._locks = {"conv-ok": object(), "conv-dead": object()}
+
+        await mgr.reattach_all()
+
+        assert "conv-ok" in mgr._agents
+        assert "conv-dead" not in mgr._agents
+        assert "conv-dead" not in mgr._locks
+
+
 class TestAgentManagerConversationList:
     """Test conversation listing."""
 

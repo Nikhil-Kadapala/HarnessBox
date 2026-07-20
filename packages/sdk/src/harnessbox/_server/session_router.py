@@ -87,7 +87,7 @@ class SessionRouter:
                 if self._storage:
                     try:
                         await self._storage.append_events(
-                            workspace_id, [user_prompt_event.to_dict()]
+                            workspace_id, [user_prompt_event.to_storage_dict()]
                         )
                     except Exception as e:
                         logger.error(f"Failed to persist user_prompt event: {e}")
@@ -135,7 +135,9 @@ class SessionRouter:
 
                     if self._storage:
                         try:
-                            await self._storage.append_events(workspace_id, [event.to_dict()])
+                            await self._storage.append_events(
+                                workspace_id, [event.to_storage_dict()]
+                            )
                         except Exception as e:
                             logger.error(f"Failed to persist event {event.event_id}: {e}")
 

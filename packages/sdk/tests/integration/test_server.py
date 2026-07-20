@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -336,57 +337,63 @@ class TestStopSession:
         resp = client.post("/v1/workspaces/nonexistent/stop")
         assert resp.status_code == 404
 
+    def test_stop_session_still_provisioning(
+        self, client: TestClient, manager: WorkspaceManager
+    ) -> None:
+        """Stopping a session with no live sandbox yet (sandbox_conn=None) must not 500."""
+        from harnessbox._server.registry import WorkspaceConfig
 
-class TestTransitionSession:
-    def _create_active_session(self, client: TestClient, session_id: str = "s-1") -> None:
+        manager.register_workspace(WorkspaceConfig(), workspace_id="s-starting")
+
+        resp = client.post("/v1/workspaces/s-starting/stop")
+        assert resp.status_code == 204
+
+        get_resp = client.get("/v1/workspaces/s-starting")
+        assert get_resp.json()["runtime_state"] == "dead"
+
+
+class TestRetrySession:
+    def _create_errored_session(self, client: TestClient, session_id: str = "s-err") -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock(side_effect=RuntimeError("boom"))
+            client.post("/v1/workspaces", json={"session_id": session_id})
+
+    def test_retry_reprovisions_errored_session(self, client: TestClient) -> None:
+        self._create_errored_session(client)
+        assert client.get("/v1/workspaces/s-err").json()["runtime_state"] == "error"
+
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": session_id})
+            instance.sandbox_id = "sb-retry-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
+            resp = client.post("/v1/workspaces/s-err/retry")
 
-    def test_valid_runtime_transition(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "paused"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["runtime_state"] == "paused"
+        assert resp.status_code == 202
 
-    def test_invalid_transition_returns_409(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "starting"},
-        )
+        data = client.get("/v1/workspaces/s-err").json()
+        assert data["runtime_state"] == "active"
+        assert data["error_message"] is None
+
+    def test_retry_non_error_session_returns_409(self, client: TestClient) -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
+
+        resp = client.post("/v1/workspaces/s-1/retry")
         assert resp.status_code == 409
 
-    def test_workflow_dimension_returns_400(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "workflow", "target_state": "in_review"},
-        )
-        assert resp.status_code == 400
-
-    def test_unknown_state_returns_400(self, client: TestClient) -> None:
-        self._create_active_session(client)
-        resp = client.post(
-            "/v1/workspaces/s-1/transition",
-            json={"dimension": "runtime", "target_state": "imaginary"},
-        )
-        assert resp.status_code == 400
-
-    def test_unknown_session_returns_404(self, client: TestClient) -> None:
-        resp = client.post(
-            "/v1/workspaces/nonexistent/transition",
-            json={"dimension": "runtime", "target_state": "paused"},
-        )
+    def test_retry_not_found_returns_404(self, client: TestClient) -> None:
+        resp = client.post("/v1/workspaces/nonexistent/retry")
         assert resp.status_code == 404
 
 
 class TestRemovedEndpointsGone:
-    """Phase 0 cut: PR, rename, and stats endpoints no longer exist."""
+    """Phase 0/1 cuts: PR, rename, stats, and transition endpoints no longer exist."""
 
     def test_pr_endpoints_removed(self, client: TestClient) -> None:
         assert client.post("/v1/workspaces/s-1/pr", json={"title": "t"}).status_code == 404
@@ -397,6 +404,14 @@ class TestRemovedEndpointsGone:
 
     def test_stats_endpoint_removed(self, client: TestClient) -> None:
         assert client.get("/v1/workspaces/s-1/stats").status_code == 404
+
+    def test_transition_endpoint_removed(self, client: TestClient) -> None:
+        """/transition had no remaining callers (pause/resume/retry have dedicated endpoints)."""
+        resp = client.post(
+            "/v1/workspaces/s-1/transition",
+            json={"dimension": "runtime", "target_state": "paused"},
+        )
+        assert resp.status_code == 404
 
 
 class TestWorkspaceEndpoints:
@@ -519,3 +534,67 @@ class TestServerTimeoutFields:
                 },
             )
         assert resp.status_code == 202
+
+
+class TestExportEventsJsonl:
+    """GET /v1/workspaces/{id}/events.jsonl — full durable event log export."""
+
+    async def _client_with_storage(self) -> TestClient:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        await storage.initialize()
+        mgr = await WorkspaceManager.create(storage=storage)
+        return TestClient(create_app(manager=mgr))
+
+    @pytest.mark.asyncio
+    async def test_export_returns_ndjson_of_persisted_events(self) -> None:
+        from dataclasses import replace
+
+        client = await self._client_with_storage()
+
+        # Real EventBuffer.push() assigns a fresh monotonic sequence (>= 1)
+        # per call; a bare identity echo would leave every event at
+        # sequence=0, which get_history()'s default after_sequence=0 filter
+        # excludes (sequence > after_sequence, not >=).
+        next_seq = [0]
+
+        async def _assign_sequence(event):
+            next_seq[0] += 1
+            return replace(event, sequence=next_seq[0])
+
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-export"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock(side_effect=_assign_sequence)
+            instance._event_buffer = instance.event_buffer
+            resp = client.post("/v1/workspaces", json={"session_id": "s-export"})
+            assert resp.status_code == 202
+
+        resp = client.get("/v1/workspaces/s-export/events.jsonl")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/x-ndjson")
+        assert "attachment" in resp.headers["content-disposition"]
+        assert "s-export-events.jsonl" in resp.headers["content-disposition"]
+
+        lines = [line for line in resp.text.strip().split("\n") if line]
+        assert len(lines) >= 1
+        events = [json.loads(line) for line in lines]
+        assert any(e["type"] == "runtime.state" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_export_unknown_session_returns_404(self) -> None:
+        client = await self._client_with_storage()
+        resp = client.get("/v1/workspaces/nonexistent/events.jsonl")
+        assert resp.status_code == 404
+
+    def test_export_without_storage_returns_400(self, client: TestClient) -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            client.post("/v1/workspaces", json={"session_id": "s-1"})
+
+        resp = client.get("/v1/workspaces/s-1/events.jsonl")
+        assert resp.status_code == 400

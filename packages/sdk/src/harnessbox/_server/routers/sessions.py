@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from harnessbox._server.workspace_factory import build_workspace_config
 from harnessbox._server.workspace_manager import WorkspaceManager, WorkspaceNotFoundError
-from harnessbox.lifecycle import InvalidTransitionError, RuntimeState
+from harnessbox.lifecycle import InvalidTransitionError
 from harnessbox.streaming import Attachment
 
 from ._deps import get_manager, session_response
@@ -25,7 +25,6 @@ from ._models import (
     PermissionRequest,
     PromptRequest,
     SessionResponse,
-    TransitionRequest,
 )
 
 logger = logging.getLogger("harnessbox.server")
@@ -143,39 +142,40 @@ async def resume_session(
 @router.post("/v1/workspaces/{session_id}/stop", status_code=204)
 async def stop_session(session_id: str, mgr: WorkspaceManager = Depends(get_manager)) -> Response:
     try:
-        info = mgr.get_workspace(session_id)
-    except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-
-    await info.sandbox_conn.kill()
-    info.runtime_state = RuntimeState.DEAD.value
-    return Response(status_code=204)
-
-
-@router.post("/v1/workspaces/{session_id}/transition", response_model=SessionResponse)
-async def transition_session(
-    session_id: str, req: TransitionRequest, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
-    try:
         mgr.get_workspace(session_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
-    if req.dimension != "runtime":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown dimension: {req.dimension}. Only 'runtime' is supported.",
-        )
+    await mgr.stop_workspace(session_id)
+    return Response(status_code=204)
+
+
+@router.post("/v1/workspaces/{session_id}/retry", response_model=SessionResponse, status_code=202)
+async def retry_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> SessionResponse:
+    """Retry provisioning a session stuck in ERROR. Transitions ERROR -> STARTING."""
+    try:
+        info = mgr.get_workspace(session_id)
+    except WorkspaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
 
     try:
-        RuntimeState(req.target_state)
-        info = mgr.transition_runtime(session_id, req.target_state)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Unknown state: {req.target_state}") from exc
+        config = mgr.prepare_retry(session_id)
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=409, detail=f"Cannot retry session in state: {info.runtime_state}"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return session_response(info)
+    async def _reprovision() -> None:
+        await mgr.provision_workspace(session_id, config)
+
+    background_tasks.add_task(_reprovision)
+    return session_response(mgr.get_workspace(session_id))
 
 
 @router.post("/v1/workspaces/{session_id}/prompt")
@@ -385,6 +385,39 @@ async def stream_history(
             )
 
     return EventSourceResponse(event_generator(), ping=15)
+
+
+@router.get("/v1/workspaces/{session_id}/events.jsonl")
+async def export_events_jsonl(
+    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> StreamingResponse:
+    """Export a workspace's full durable event log as newline-delimited JSON.
+
+    One JSON-encoded event per line (same shape as UniversalEvent.to_dict()),
+    ordered by sequence. Unlike /history, this is unpaginated by design — a
+    complete export, not a live-reconnect feed.
+    """
+    try:
+        mgr.get_workspace(session_id)
+    except WorkspaceNotFoundError:
+        if not mgr.storage or await mgr.storage.get_workspace(session_id) is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    if not mgr.storage:
+        raise HTTPException(
+            status_code=400,
+            detail="Storage not enabled. Event export not available.",
+        )
+
+    async def body() -> Any:
+        async for event in mgr.event_replay.get_history(session_id, limit=None):
+            yield json.dumps(event.to_dict()).encode() + b"\n"
+
+    return StreamingResponse(
+        body(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{session_id}-events.jsonl"'},
+    )
 
 
 @router.post("/v1/workspaces/{session_id}/permission")
