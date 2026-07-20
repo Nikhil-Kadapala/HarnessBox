@@ -15,6 +15,31 @@ logger = logging.getLogger("harnessbox.e2b")
 
 _DEAD_SANDBOX_SIGNALS = ("sandbox was not found", "502", "unavailable", "timeout")
 
+# After connect(), Claude's first turn may fire before sandbox egress to
+# Anthropic is usable. Probe reachability with bounded retries so resume
+# fails fast instead of hanging inside Claude's API_RETRY backoff.
+_EGRESS_PROBE_URL = "https://api.anthropic.com"
+_EGRESS_PROBE_MAX_ATTEMPTS = 5
+_EGRESS_PROBE_BASE_DELAY_S = 1.0
+_EGRESS_PROBE_MAX_DELAY_S = 8.0
+_EGRESS_PROBE_TIMEOUT_S = 5
+# HTTPError (401/404/etc.) means the host responded — egress works.
+# Any other exception means DNS/TLS/connectivity is still broken.
+# Single quotes around -c keep newlines intact under bash -c. Use double
+# quotes for the URL inside the Python source so the shell wrapper stays valid.
+_EGRESS_PROBE_CMD = (
+    "python3 -c '"
+    "import urllib.error,urllib.request,sys\n"
+    "err=None\n"
+    "try:\n"
+    f' urllib.request.urlopen("{_EGRESS_PROBE_URL}",timeout={_EGRESS_PROBE_TIMEOUT_S})\n'
+    "except urllib.error.HTTPError:\n"
+    " pass\n"
+    "except Exception as ex:\n"
+    " err=ex\n"
+    "sys.exit(0 if err is None else 1)'"
+)
+
 
 def _is_sandbox_dead(exc: Exception) -> bool:
     """Check if an E2B exception indicates the sandbox is unreachable."""
@@ -111,10 +136,68 @@ class E2BProvider:
         return sid
 
     async def resume(self, sandbox_id: str) -> None:
+        """Reconnect to a paused sandbox and wait for Anthropic egress.
+
+        E2B ``connect`` restores control-plane access quickly, but outbound
+        HTTPS from the VM can take a few seconds to come up. Claude's CLI
+        then burns its ``api_retry`` budget against ``error: unknown`` and
+        the turn looks hung. Probe egress before returning so callers do
+        not mark the workspace ACTIVE while the agent cannot talk.
+        """
         async_sandbox_cls = self._get_sdk()
         self._sandbox = await async_sandbox_cls.connect(
             sandbox_id,
             api_key=self._api_key,
+        )
+        await self._wait_for_anthropic_egress()
+
+    async def _wait_for_anthropic_egress(self) -> None:
+        """Retry HTTPS reachability to Anthropic until egress works or budget ends.
+
+        Raises:
+            RuntimeError: egress never became usable within the retry budget.
+        """
+        last_error = "unknown"
+        for attempt in range(1, _EGRESS_PROBE_MAX_ATTEMPTS + 1):
+            try:
+                result = await self.run_command(
+                    _EGRESS_PROBE_CMD,
+                    timeout=_EGRESS_PROBE_TIMEOUT_S + 2,
+                )
+            except Exception as e:
+                if _is_sandbox_dead(e):
+                    raise
+                last_error = str(e)
+                result = None
+            else:
+                if result.exit_code == 0:
+                    if attempt > 1:
+                        logger.info(
+                            "Anthropic egress ready after %d probe attempt(s)",
+                            attempt,
+                        )
+                    return
+                last_error = (result.stderr or result.stdout or "egress probe failed").strip()
+
+            if attempt == _EGRESS_PROBE_MAX_ATTEMPTS:
+                break
+
+            delay = min(
+                _EGRESS_PROBE_BASE_DELAY_S * (2 ** (attempt - 1)),
+                _EGRESS_PROBE_MAX_DELAY_S,
+            )
+            logger.warning(
+                "Anthropic egress not ready (attempt %d/%d): %s; retrying in %.1fs",
+                attempt,
+                _EGRESS_PROBE_MAX_ATTEMPTS,
+                last_error[:200],
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+        raise RuntimeError(
+            f"Sandbox egress to {_EGRESS_PROBE_URL} not ready after "
+            f"{_EGRESS_PROBE_MAX_ATTEMPTS} attempts: {last_error[:300]}"
         )
 
     async def create_snapshot(self) -> str:

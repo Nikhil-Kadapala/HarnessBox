@@ -743,12 +743,12 @@ class WorkspaceRegistry:
             else:
                 raise
         else:
-            # Sandbox reconnected in place (not recovered from snapshot): the
-            # process(es) tracked by agent_manager survived, but their stdout
-            # subscriptions did not. _recover_from_snapshot already discards
-            # process state via shutdown_all(), so reattach only applies here.
+            # Sandbox reconnected in place (not recovered from snapshot). E2B
+            # preserves the VM process, but Claude's outbound HTTP connection
+            # can remain stale after pause/resume. A fresh process started with
+            # the persisted Claude session ID is safer than reattaching stdout.
             if info.agent_manager:
-                await info.agent_manager.reattach_all()
+                await info.agent_manager.shutdown_all()
 
         info.runtime_state = RuntimeState.ACTIVE.value
         info.last_active = datetime.now(timezone.utc).isoformat()

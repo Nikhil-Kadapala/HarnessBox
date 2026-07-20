@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -163,20 +164,24 @@ class AgentProcess:
 
         A turn ends when a ``result`` message is received. The process
         stays alive for the next ``send_prompt()`` call.
+
+        Timing uses an absolute monotonic deadline from turn start. Claude
+        ``api_retry`` events intentionally do not reset the budget — otherwise
+        exponential backoff can keep a turn alive far past ``turn_timeout``.
         """
         self._turn_active = True
+        deadline = time.monotonic() + self._turn_timeout
+        last_retry: dict[str, Any] | None = None
         try:
             while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    yield self._turn_timeout_event(last_retry)
+                    return
                 try:
-                    line = await asyncio.wait_for(
-                        self._stdout_queue.get(), timeout=self._turn_timeout
-                    )
+                    line = await asyncio.wait_for(self._stdout_queue.get(), timeout=remaining)
                 except asyncio.TimeoutError:
-                    _log.warning("No output for %ss — turn timed out", self._turn_timeout)
-                    yield self._parser._make_event(
-                        EventType.ERROR,
-                        error_message=f"No output for {self._turn_timeout:g}s — turn timed out",
-                    )
+                    yield self._turn_timeout_event(last_retry)
                     return
 
                 if line is None:
@@ -185,13 +190,51 @@ class AgentProcess:
 
                 _log.debug("Turn line: %s", line[:1000])
                 for event in self._parser.parse_line(line):
-                    _log.info("Parsed event: %s (error: %s)", event.event_type, event.error_message)
+                    if event.event_type == EventType.API_RETRY:
+                        last_retry = dict(event.metadata)
+                        _log.info(
+                            "Parsed event: %s attempt=%s/%s error=%s status=%s",
+                            event.event_type,
+                            last_retry.get("attempt"),
+                            last_retry.get("max_retries"),
+                            last_retry.get("error"),
+                            last_retry.get("error_status"),
+                        )
+                    else:
+                        _log.info(
+                            "Parsed event: %s (error: %s)",
+                            event.event_type,
+                            event.error_message,
+                        )
                     yield event
                     if event.event_type in (EventType.SESSION_ENDED, EventType.TURN_ENDED):
                         if event.cost_usd is not None or event.duration_ms is not None:
                             return
         finally:
             self._turn_active = False
+
+    def _turn_timeout_event(self, last_retry: dict[str, Any] | None) -> UniversalEvent:
+        """Build the terminal ERROR when the absolute turn budget is exhausted."""
+        if last_retry:
+            attempt = last_retry.get("attempt")
+            max_retries = last_retry.get("max_retries")
+            error = last_retry.get("error")
+            error_status = last_retry.get("error_status")
+            message = (
+                f"Turn budget of {self._turn_timeout:g}s exhausted while retrying "
+                f"upstream API (attempt {attempt}/{max_retries}, "
+                f"error={error!r}, error_status={error_status!r})"
+            )
+            metadata = dict(last_retry)
+        else:
+            message = f"No output for {self._turn_timeout:g}s — turn timed out"
+            metadata = None
+        _log.warning("%s", message)
+        return self._parser._make_event(
+            EventType.ERROR,
+            error_message=message,
+            metadata=metadata,
+        )
 
     async def send_command(self, command: str, timeout: float = 10) -> dict[str, Any]:
         """Send a slash command and return collected response data.

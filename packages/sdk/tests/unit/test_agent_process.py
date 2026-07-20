@@ -281,6 +281,49 @@ class TestTurnTimeout:
         assert events[0].event_type == EventType.ERROR
         assert "0.01s" in (events[0].error_message or "")
 
+    @pytest.mark.asyncio
+    async def test_retry_metadata_is_included_when_absolute_budget_expires(self) -> None:
+        provider, process = _started_process(turn_timeout=1.0)
+        await _start(process, provider)
+        await process._stdout_queue.put(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "api_retry",
+                    "attempt": 2,
+                    "max_retries": 10,
+                    "retry_delay_ms": 5000,
+                    "error_status": 529,
+                    "error": "overloaded",
+                }
+            )
+        )
+
+        wait_timeouts: list[float] = []
+
+        async def fake_wait_for(awaitable: Any, timeout: float) -> str:
+            wait_timeouts.append(timeout)
+            if len(wait_timeouts) == 1:
+                return await awaitable
+            awaitable.close()
+            raise asyncio.TimeoutError
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr("harnessbox.process.asyncio.wait_for", fake_wait_for)
+            events = [event async for event in process.stream_turn()]
+
+        assert [event.event_type for event in events] == [EventType.API_RETRY, EventType.ERROR]
+        timeout_event = events[-1]
+        assert timeout_event.metadata == {
+            "attempt": 2,
+            "max_retries": 10,
+            "retry_delay_ms": 5000,
+            "error_status": 529,
+            "error": "overloaded",
+        }
+        assert "attempt 2/10" in (timeout_event.error_message or "")
+        assert wait_timeouts[1] < wait_timeouts[0]
+
 
 # --- reattach tests ---
 
