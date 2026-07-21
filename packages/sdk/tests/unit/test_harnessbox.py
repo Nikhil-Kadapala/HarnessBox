@@ -150,17 +150,17 @@ class TestSession:
         assert len(hb._sessions) == 2
 
     async def test_session_status_running(self, mock_provider):
-        from harnessbox.lifecycle import SessionStatus
+        from harnessbox.lifecycle import RuntimeState
 
         hb = HarnessBox(
             provider=mock_provider,
             workspace_config=WorkspaceConfig(),
         )
         session = await hb.create_session()
-        assert session.status == SessionStatus.RUNNING
+        assert session.status == RuntimeState.ACTIVE
 
     async def test_session_status_killed_after_kill(self, mock_provider):
-        from harnessbox.lifecycle import SessionStatus
+        from harnessbox.lifecycle import RuntimeState
 
         hb = HarnessBox(
             provider=mock_provider,
@@ -168,10 +168,10 @@ class TestSession:
         )
         session = await hb.create_session()
         await session.kill()
-        assert session.status == SessionStatus.KILLED
+        assert session.status == RuntimeState.DEAD
 
     async def test_session_kill_idempotent(self, mock_provider):
-        from harnessbox.lifecycle import SessionStatus
+        from harnessbox.lifecycle import RuntimeState
 
         hb = HarnessBox(
             provider=mock_provider,
@@ -180,7 +180,7 @@ class TestSession:
         session = await hb.create_session()
         await session.kill()
         await session.kill()
-        assert session.status == SessionStatus.KILLED
+        assert session.status == RuntimeState.DEAD
 
     async def test_session_run_command(self, mock_provider):
         hb = HarnessBox(
@@ -203,7 +203,7 @@ class TestSession:
         assert hasattr(gen, "__aiter__")
 
     async def test_hb_kill_shuts_down_all_sessions(self, mock_provider):
-        from harnessbox.lifecycle import SessionStatus
+        from harnessbox.lifecycle import RuntimeState
 
         hb = HarnessBox(
             provider=mock_provider,
@@ -212,12 +212,12 @@ class TestSession:
         s1 = await hb.create_session(branch="feat/a")
         s2 = await hb.create_session(branch="feat/b")
         await hb.kill()
-        assert s1.status == SessionStatus.KILLED
-        assert s2.status == SessionStatus.KILLED
+        assert s1.status == RuntimeState.DEAD
+        assert s2.status == RuntimeState.DEAD
         assert hb._sessions == {}
 
     async def test_context_manager_kills_on_exit(self, mock_provider):
-        from harnessbox.lifecycle import SessionStatus
+        from harnessbox.lifecycle import RuntimeState
 
         async with HarnessBox(
             provider=mock_provider,
@@ -225,7 +225,7 @@ class TestSession:
         ) as hb:
             session = await hb.create_session()
             assert session.sandbox_id == "mock-sandbox-123"
-        assert session.status == SessionStatus.KILLED
+        assert session.status == RuntimeState.DEAD
 
     async def test_sandbox_lock_does_not_wrap_send_message(self, mock_provider):
         """Lifecycle lock must not deadlock send_message during streaming."""

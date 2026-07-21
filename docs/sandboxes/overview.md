@@ -60,27 +60,29 @@ hb = HarnessBox(
 
 ## Lifecycle
 
-Sessions have three states:
+Sessions use a single ``RuntimeState`` vocabulary everywhere (SDK + HTTP):
 
 | Status | Description |
 |--------|-------------|
-| `running` | Active, accepting prompts and commands |
-| `sleeping` | Paused to save cost, wakes transparently on next interaction |
-| `killed` | User explicitly destroyed it, gone forever |
+| `starting` | Provisioning the sandbox |
+| `active` | Accepting prompts and commands |
+| `paused` | Suspended to save cost; wakes on next interaction |
+| `error` | Provisioning failed; can retry |
+| `dead` / `ended` | Destroyed |
 
-Sandboxes are persistent. When idle, they sleep automatically to save cost. On the next `send_message()` or `run_command()`, the sandbox wakes transparently — no manual resume needed. Sessions only reach `killed` when you explicitly call `session.kill()` or `hb.kill()`.
+Sandboxes are persistent. When idle, they pause automatically to save cost. On the next `send_message()` or `run_command()`, the sandbox wakes transparently — no manual resume needed. Sessions only reach `dead` when you explicitly call `session.kill()` or `hb.kill()`.
 
 ```python
-from harnessbox.lifecycle import SessionStatus
+from harnessbox.lifecycle import RuntimeState
 
 session = await hb.create_session()
-assert session.status == SessionStatus.RUNNING
+assert session.status == RuntimeState.ACTIVE
 
-# After idle timeout, session sleeps automatically
+# After idle timeout, session pauses automatically
 # Next interaction wakes it transparently
 
 await session.kill()
-assert session.status == SessionStatus.KILLED
+assert session.status == RuntimeState.DEAD
 ```
 
 ## Sending Prompts
@@ -179,7 +181,7 @@ async with HarnessBox(
 | `session.id` | str | Unique session identifier |
 | `session.sandbox_id` | str | Provider VM identifier |
 | `session.branch` | str | Git branch this session operates on |
-| `session.status` | SessionStatus | Current status: `running`, `sleeping`, or `killed` |
+| `session.status` | RuntimeState | Current status: `starting`, `active`, `paused`, `error`, `dead`, … |
 
 ## Related
 

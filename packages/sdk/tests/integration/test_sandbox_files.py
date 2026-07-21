@@ -96,17 +96,18 @@ class TestResolveFilesNone:
 
 class TestFilesEndToEnd:
     @pytest.mark.asyncio
-    async def test_list_files_injected_on_setup(
+    async def test_list_files_resolved_but_not_injected_on_setup(
         self, provider: MockProvider, tmp_path: Path
     ) -> None:
         f = tmp_path / "CLAUDE.md"
         f.write_text("You are helpful.", encoding="utf-8")
         sandbox = Sandbox(provider, files=[str(f)])
+        assert sandbox._files["/workspace/CLAUDE.md"] == "You are helpful."
         await sandbox.setup()
-        assert provider._files["/workspace/CLAUDE.md"] == "You are helpful."
+        assert "/workspace/CLAUDE.md" not in provider._files
 
     @pytest.mark.asyncio
-    async def test_dict_path_files_injected_on_setup(
+    async def test_dict_path_files_resolved_but_not_injected_on_setup(
         self, provider: MockProvider, tmp_path: Path
     ) -> None:
         f = tmp_path / "config.yaml"
@@ -115,5 +116,6 @@ class TestFilesEndToEnd:
             provider,
             files={"/workspace/custom/config.yaml": f},
         )
+        assert sandbox._files["/workspace/custom/config.yaml"] == "key: value"
         await sandbox.setup()
-        assert provider._files["/workspace/custom/config.yaml"] == "key: value"
+        assert "/workspace/custom/config.yaml" not in provider._files

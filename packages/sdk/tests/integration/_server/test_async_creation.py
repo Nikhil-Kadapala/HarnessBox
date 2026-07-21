@@ -159,7 +159,8 @@ class TestErrorStateLifecycle:
         )
 
         resp = session_response(info)
-        assert resp.runtime_state == "error"
+        assert resp.state == "error"
+        assert resp.workspace_id == "w-err"
         assert resp.error_message == "Sandbox quota exceeded"
 
 

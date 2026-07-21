@@ -1,4 +1,4 @@
-"""Setup pipeline — sequential step execution for sandbox provisioning."""
+"""Sandbox initialization — sequential steps for provisioning a workspace VM."""
 
 from __future__ import annotations
 
@@ -17,8 +17,16 @@ _log = logging.getLogger("harnessbox.pipeline")
 
 
 @dataclass
-class SetupContext:
-    """Mutable state carried across pipeline steps.
+class MountSpec:
+    """Filesystem or remote mount to attach during initialization."""
+
+    source: str
+    mount_path: str = "/workspace"
+
+
+@dataclass
+class InitializeContext:
+    """Mutable state carried across initialization steps.
 
     Each step reads from and writes to this context. The pipeline
     guarantees steps run in declaration order, so earlier writes
@@ -29,10 +37,11 @@ class SetupContext:
     harness_config: HarnessTypeConfig
     security_policy: SecurityPolicy | None = None
     workspace: Workspace | None = None
+    mount: MountSpec | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     timeout: int = 300
 
-    # User-provided inputs
+    # User-provided inputs (kept for future configure / power users)
     dirs: list[str] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
     system_prompt: str | None = None
@@ -44,7 +53,7 @@ class SetupContext:
     # Snapshot-based creation (skips template)
     snapshot_id: str | None = None
 
-    # Populated during execution
+    # Populated during execution (manifest kept for future configure endpoint)
     manifest: SandboxManifest | None = None
     manifest_target_dir: str = ""
     cwd: str = ""
@@ -53,42 +62,42 @@ class SetupContext:
     timings: dict[str, float] = field(default_factory=dict)
 
 
-StepFn = Callable[[SetupContext], Awaitable[None]]
+StepFn = Callable[[InitializeContext], Awaitable[None]]
 
 
 @dataclass(frozen=True)
-class SetupStep:
-    """A named step in the setup pipeline."""
+class InitializeStep:
+    """A named step in the sandbox initialization sequence."""
 
     name: str
     execute: StepFn
-    skip_if: Callable[[SetupContext], bool] | None = None
+    skip_if: Callable[[InitializeContext], bool] | None = None
 
 
-class SetupPipeline:
-    """Sequential pipeline of setup steps.
+class InitializeSandbox:
+    """Sequential initializer for sandbox provisioning.
 
     Steps execute in declaration order. Each step receives the shared
-    SetupContext. If a step raises, execution halts and the exception
+    InitializeContext. If a step raises, executionhalts and the exception
     propagates.
 
     Supports dry-run (returns step names without executing) and
     per-step timing.
     """
 
-    def __init__(self, steps: list[SetupStep]) -> None:
+    def __init__(self, steps: list[InitializeStep]) -> None:
         self._steps = list(steps)
 
     @property
-    def steps(self) -> list[SetupStep]:
-        """Return the ordered list of pipeline steps."""
+    def steps(self) -> list[InitializeStep]:
+        """Return the ordered list of initialization steps."""
         return list(self._steps)
 
     def step_names(self) -> list[str]:
         """Return ordered step names (useful for dry-run inspection)."""
         return [s.name for s in self._steps]
 
-    async def execute(self, ctx: SetupContext) -> dict[str, float]:
+    async def execute(self, ctx: InitializeContext) -> dict[str, float]:
         """Run all steps sequentially, returning per-step timings.
 
         Steps with a ``skip_if`` predicate that returns True are skipped.
@@ -109,18 +118,18 @@ class SetupPipeline:
 
         total = time.time() - total_start
         ctx.timings["_total"] = total
-        _log.info("setup_total took %.2fs", total)
+        _log.info("init_sandbox_total took %.2fs", total)
 
         return ctx.timings
 
-    def dry_run(self, ctx: SetupContext) -> list[str]:
+    def dry_run(self, ctx: InitializeContext) -> list[str]:
         """Return step names that would execute (respecting skip_if).
 
         Note: skip_if predicates are evaluated against the initial context
         without running preceding steps. Predicates should only inspect
         fields set at construction time, not fields populated during
-        execution (e.g., ctx.manifest). Extra steps with execution-dependent
-        predicates will always appear in dry_run output.
+        execution. Extra steps with execution-dependent predicates will
+        always appear in dry_run output.
         """
         result: list[str] = []
         for step in self._steps:
@@ -130,53 +139,46 @@ class SetupPipeline:
         return result
 
 
-def build_setup_pipeline(
+def initialize_sandbox(
     *,
-    extra_steps: list[SetupStep] | None = None,
-) -> SetupPipeline:
-    """Build the standard setup pipeline.
+    extra_steps: list[InitializeStep] | None = None,
+) -> InitializeSandbox:
+    """Build the standard sandbox initialization sequence.
 
-    The default pipeline is:
+    The default sequence is:
     1. create_sandbox — provision the sandbox via provider
     2. check_tools — diagnostic: which tools are pre-installed
     3. create_workspace_root — mkdir the workspace root directory
-    4. inject_workspace — git clone or mount filesystem
-    5. load_project_config — read .harnessbox.toml and merge presets
-    6. build_manifest — compute files/dirs/env to inject (pure)
-    7. create_directories — mkdir all manifest directories
-    8. inject_files — write all manifest files
-    9. set_hook_permissions — chmod hook scripts
-    10. run_setup_script — user-provided setup command
+    4. inject_env — apply env vars (already passed to provider.create; no-op log)
+    5. inject_workspace — git clone when a workspace source is present
+    6. attach_mount — mount filesystem when a mount source is present
+    7. run_setup_script — optional user-provided setup command
+
+    Does **not** write harness/agent config files (settings.json, hooks).
+    Those belong on a future configure endpoint.
 
     Extra steps are appended after the standard ones.
     """
-    steps: list[SetupStep] = [
-        SetupStep(name="create_sandbox", execute=_step_create_sandbox),
-        SetupStep(
+    steps: list[InitializeStep] = [
+        InitializeStep(name="create_sandbox", execute=_step_create_sandbox),
+        InitializeStep(
             name="check_tools",
             execute=_step_check_tools,
             skip_if=_is_mock_provider,
         ),
-        SetupStep(name="create_workspace_root", execute=_step_create_workspace_root),
-        SetupStep(
+        InitializeStep(name="create_workspace_root", execute=_step_create_workspace_root),
+        InitializeStep(name="inject_env", execute=_step_inject_env),
+        InitializeStep(
             name="inject_workspace",
             execute=_step_inject_workspace,
             skip_if=lambda ctx: ctx.workspace is None,
         ),
-        SetupStep(
-            name="load_project_config",
-            execute=_step_load_project_config,
-            skip_if=_is_mock_provider,
+        InitializeStep(
+            name="attach_mount",
+            execute=_step_attach_mount,
+            skip_if=lambda ctx: ctx.mount is None,
         ),
-        SetupStep(name="build_manifest", execute=_step_build_manifest),
-        SetupStep(name="create_directories", execute=_step_create_directories),
-        SetupStep(name="inject_files", execute=_step_inject_files),
-        SetupStep(
-            name="set_hook_permissions",
-            execute=_step_set_hook_permissions,
-            skip_if=lambda ctx: not ctx.security_policy or not ctx.harness_config.hooks_dir,
-        ),
-        SetupStep(
+        InitializeStep(
             name="run_setup_script",
             execute=_step_run_setup_script,
             skip_if=lambda ctx: ctx.setup_script is None,
@@ -186,7 +188,7 @@ def build_setup_pipeline(
     if extra_steps:
         steps.extend(extra_steps)
 
-    return SetupPipeline(steps)
+    return InitializeSandbox(steps)
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +196,11 @@ def build_setup_pipeline(
 # ---------------------------------------------------------------------------
 
 
-def _is_mock_provider(ctx: SetupContext) -> bool:
+def _is_mock_provider(ctx: InitializeContext) -> bool:
     return hasattr(ctx.provider, "_commands")
 
 
-async def _step_create_sandbox(ctx: SetupContext) -> None:
+async def _step_create_sandbox(ctx: InitializeContext) -> None:
     await ctx.provider.create(
         env_vars=ctx.env_vars or {},
         timeout=ctx.timeout,
@@ -206,7 +208,7 @@ async def _step_create_sandbox(ctx: SetupContext) -> None:
     )
 
 
-async def _step_check_tools(ctx: SetupContext) -> None:
+async def _step_check_tools(ctx: InitializeContext) -> None:
     """Diagnostic: check which tools are pre-installed in the sandbox."""
     tools = {
         "git": "git",
@@ -237,11 +239,21 @@ async def _step_check_tools(ctx: SetupContext) -> None:
         _log.info("Missing: %s", ", ".join(missing_names))
 
 
-async def _step_create_workspace_root(ctx: SetupContext) -> None:
+async def _step_create_workspace_root(ctx: InitializeContext) -> None:
     await ctx.provider.make_dir(ctx.harness_config.workspace_root)
 
 
-async def _step_inject_workspace(ctx: SetupContext) -> None:
+async def _step_inject_env(ctx: InitializeContext) -> None:
+    """Record that env vars were supplied at create time.
+
+    Provider.create already receives ctx.env_vars. This step exists so the
+    initialization sequence makes env injection an explicit, inspectable stage.
+    """
+    if ctx.env_vars:
+        _log.info("Env vars applied at create (%d keys)", len(ctx.env_vars))
+
+
+async def _step_inject_workspace(ctx: InitializeContext) -> None:
     if not ctx.workspace:
         return
     await ctx.workspace.inject(ctx.provider, ctx.harness_config.workspace_root)
@@ -249,7 +261,42 @@ async def _step_inject_workspace(ctx: SetupContext) -> None:
         ctx.cwd = f"{ctx.harness_config.workspace_root}/{ctx.workspace.clone_dir_name}"
 
 
-async def _step_build_manifest(ctx: SetupContext) -> None:
+async def _step_attach_mount(ctx: InitializeContext) -> None:
+    """Attach a filesystem/remote mount when configured.
+
+    Provider-specific mount backends (e.g. GCS/Archil) land with Phase 2 storage.
+    Until then, providers that implement ``attach_mount(source, mount_path)`` are
+    invoked; otherwise this is a no-op with a warning.
+    """
+    if not ctx.mount:
+        return
+    attach = getattr(ctx.provider, "attach_mount", None)
+    if attach is None:
+        _log.warning(
+            "Mount requested (%s → %s) but provider has no attach_mount; skipping",
+            ctx.mount.source,
+            ctx.mount.mount_path,
+        )
+        return
+    await attach(ctx.mount.source, ctx.mount.mount_path)
+    if not ctx.cwd:
+        ctx.cwd = ctx.mount.mount_path
+
+
+# ---------------------------------------------------------------------------
+# Manifest helpers retained for a future configure endpoint
+# ---------------------------------------------------------------------------
+
+
+async def build_and_inject_manifest(ctx: InitializeContext) -> None:
+    """Build harness manifest and write files (configure path, not create)."""
+    await _step_build_manifest(ctx)
+    await _step_create_directories(ctx)
+    await _step_inject_files(ctx)
+    await _step_set_hook_permissions(ctx)
+
+
+async def _step_build_manifest(ctx: InitializeContext) -> None:
     from harnessbox.config.manifest import build_manifest
 
     target_dir = ctx.cwd if ctx.cwd else ctx.harness_config.workspace_root
@@ -266,21 +313,21 @@ async def _step_build_manifest(ctx: SetupContext) -> None:
     )
 
 
-async def _step_create_directories(ctx: SetupContext) -> None:
+async def _step_create_directories(ctx: InitializeContext) -> None:
     if not ctx.manifest:
         return
     for d in ctx.manifest.dirs:
         await ctx.provider.make_dir(d)
 
 
-async def _step_inject_files(ctx: SetupContext) -> None:
+async def _step_inject_files(ctx: InitializeContext) -> None:
     if not ctx.manifest:
         return
     for path, content in ctx.manifest.files.items():
         await ctx.provider.write_file(path, content)
 
 
-async def _step_set_hook_permissions(ctx: SetupContext) -> None:
+async def _step_set_hook_permissions(ctx: InitializeContext) -> None:
     if not ctx.manifest or not ctx.harness_config.hooks_dir:
         return
     hook_path = f"{ctx.manifest_target_dir}/{ctx.harness_config.hooks_dir}/guard_bash.py"
@@ -288,19 +335,24 @@ async def _step_set_hook_permissions(ctx: SetupContext) -> None:
         await ctx.provider.run_command(f"chmod +x {hook_path}")
 
 
-async def _step_run_setup_script(ctx: SetupContext) -> None:
+async def _step_run_setup_script(ctx: InitializeContext) -> None:
     """Run user-provided setup script."""
     if not ctx.setup_script:
         return
-    result = await ctx.provider.run_command(ctx.setup_script, cwd=ctx.manifest_target_dir)
+    cwd = ctx.cwd or ctx.manifest_target_dir or ctx.harness_config.workspace_root
+    result = await ctx.provider.run_command(ctx.setup_script, cwd=cwd)
     if result.exit_code != 0:
         raise RuntimeError(f"Setup script failed (exit {result.exit_code}): {result.stderr}")
 
 
-async def _step_load_project_config(ctx: SetupContext) -> None:
-    """Load .harnessbox.toml from the workspace and merge preset values."""
+async def _step_load_project_config(ctx: InitializeContext) -> None:
+    """Load .harnessbox.toml from the workspace and merge preset values.
+
+    Retained for configure / power-user paths; not part of default initialize_sandbox().
+    """
     from harnessbox.config.project import (
         ProjectConfigError,
+        WorkspacePreset,
         load_project_config,
         merge_preset_into_context,
         register_custom_agents,
@@ -330,8 +382,6 @@ async def _step_load_project_config(ctx: SetupContext) -> None:
     if not ctx.allow_project_setup_script:
         effective_preset_script = None
 
-    from harnessbox.config.project import WorkspacePreset
-
     merge_preset = WorkspacePreset(
         setup_script=effective_preset_script,
         env=project_config.workspace.env,
@@ -351,3 +401,10 @@ async def _step_load_project_config(ctx: SetupContext) -> None:
     ctx.files = files
     ctx.dirs = dirs
     ctx.setup_script = setup_script
+
+
+# Backwards-compatible aliases (deprecated — remove after callers migrate)
+SetupContext = InitializeContext
+SetupStep = InitializeStep
+SetupPipeline = InitializeSandbox
+build_setup_pipeline = initialize_sandbox

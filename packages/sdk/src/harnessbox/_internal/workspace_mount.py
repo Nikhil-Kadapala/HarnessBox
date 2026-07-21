@@ -1,4 +1,4 @@
-"""WorkspaceMount — file resolution (setup-time) and git facade (runtime)."""
+"""WorkspaceMount — init-time content sources and git facade (runtime)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harnessbox.config.harness import HarnessTypeConfig
-from harnessbox.config.pipeline import SetupContext
+from harnessbox.config.pipeline import InitializeContext, MountSpec
 from harnessbox.providers import SandboxProvider
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.workspace import Workspace
@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
 
 class WorkspaceMount:
-    """Combines setup-time file resolution with runtime git operations.
+    """Combines init-time content sources with runtime git operations.
 
-    Setup-time: resolves local files and system prompt into sandbox paths.
+    Init-time: carries workspace (git) / mount / env into InitializeContext.
     Runtime: delegates git operations to the underlying GitRepoConfig workspace.
     """
 
@@ -33,9 +33,11 @@ class WorkspaceMount:
         dirs: list[str] | None = None,
         setup_script: str | None = None,
         cwd: str | None = None,
+        mount: MountSpec | None = None,
     ) -> None:
         self._harness_config = harness_config
         self._workspace = workspace
+        self._mount_spec = mount
         self._system_prompt_content = self._resolve_prompt(system_prompt)
         self._files = self._resolve_files(files, harness_config.workspace_root)
         self._env_vars = dict(env_vars) if env_vars else {}
@@ -118,12 +120,13 @@ class WorkspaceMount:
         security_policy: SecurityPolicy | None,
         timeout: int,
         snapshot_id: str | None = None,
-    ) -> SetupContext:
-        return SetupContext(
+    ) -> InitializeContext:
+        return InitializeContext(
             provider=provider,
             harness_config=self._harness_config,
             security_policy=security_policy,
             workspace=self._workspace,
+            mount=self._mount_spec,
             env_vars=self._env_vars,
             timeout=timeout,
             dirs=self._dirs,
@@ -134,8 +137,8 @@ class WorkspaceMount:
             snapshot_id=snapshot_id,
         )
 
-    def sync_from_setup_context(self, ctx: SetupContext) -> None:
-        """Sync back state that setup pipeline may have changed."""
+    def sync_from_setup_context(self, ctx: InitializeContext) -> None:
+        """Sync back state that initialization may have changed."""
         if ctx.cwd:
             self._cwd = ctx.cwd
 

@@ -713,3 +713,7 @@ Internet → Auth Gateway (validates JWT/API key, routes by user)
 **Context:** Currently, CostMetrics lives in `sandbox._cost_metrics` (in-memory only). To persist, write cost data to `_storage` backend (already exists for event replay) or add a new `CostStorage` backend. The `SessionManager` in `session.py` can serialize cost_metrics when a session ends and load it on restore.
 
 **Depends on:** Cost tracking implementation (per-session aggregates), storage backend design.
+
+
+
+

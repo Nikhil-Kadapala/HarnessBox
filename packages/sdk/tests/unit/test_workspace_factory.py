@@ -64,14 +64,8 @@ class TestInjectHostEnvVars:
 
 
 class TestInjectHostCredentialFiles:
-    def test_returns_gcloud_adc(self) -> None:
-        expected = {"/root/.config/gcloud/application_default_credentials.json": "/tmp/adc.json"}
-        with patch(
-            "harnessbox.credentials.build_gcloud_credential_files",
-            return_value=expected,
-        ):
-            result = inject_host_credential_files()
-        assert result == expected
+    def test_returns_empty_on_slim_create(self) -> None:
+        assert inject_host_credential_files() == {}
 
 
 class TestGetGitAuthToken:
@@ -225,7 +219,7 @@ class TestBuildWorkspaceConfig:
         assert config.session_timeout == 540  # max(600 - 60, 0)
         assert config.timeout == 600
 
-    def test_security_policy_construction(self) -> None:
+    def test_security_policy_ignored_on_slim_create(self) -> None:
         from harnessbox.server import SecurityPolicyRequest
 
         req = self._make_request(
@@ -237,15 +231,9 @@ class TestBuildWorkspaceConfig:
         with (
             patch("harnessbox._server.workspace_factory.inject_host_env_vars"),
             patch(
-                "harnessbox._server.workspace_factory.inject_host_credential_files",
-                return_value={},
-            ),
-            patch(
                 "harnessbox._server.workspace_factory.extract_provider_key",
                 return_value=None,
             ),
         ):
             config = build_workspace_config(req)
-        assert config.security_policy is not None
-        assert config.security_policy.denied_tools == ["bash"]
-        assert config.security_policy.deny_network is True
+        assert config.security_policy is None

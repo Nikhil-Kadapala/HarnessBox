@@ -1,4 +1,5 @@
 import type { SessionCard, SessionResponse } from "@/types";
+import { workspaceIdOf, workspaceStateOf } from "@/types";
 
 export function extractRepoName(workspaceName?: string): string | undefined {
   if (!workspaceName) return undefined;
@@ -10,10 +11,11 @@ export function extractRepoName(workspaceName?: string): string | undefined {
 }
 
 export function transformSessionResponseToCard(session: SessionResponse): SessionCard {
+  const id = workspaceIdOf(session);
   return {
-    id: session.session_id,
-    title: session.workspace_name || session.session_id.slice(0, 8),
-    status: session.runtime_state,
+    id,
+    title: session.workspace_name || id.slice(0, 8),
+    status: workspaceStateOf(session),
     harness: session.harness,
     repository: extractRepoName(session.workspace_name),
     branch: session.branch,

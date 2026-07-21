@@ -69,6 +69,8 @@ class WorkspaceConfig:
     system_prompt: str | Path | None = None
     security_policy: SecurityPolicy | None = None
     workspace: Workspace | None = None
+    mount: Any = None  # MountSpec | None — avoid circular import at type level
+    project_id: str | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     files: dict[str, str | Path] | list[str | Path] | None = None
     dirs: list[str] = field(default_factory=list)
@@ -104,6 +106,8 @@ class WorkspaceInstance:
     base_branch: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
+    project_id: str | None = None
+    mount_path: str | None = None
 
     def to_record(self, config: WorkspaceConfig | None = None) -> dict[str, Any]:
         """Serialize to storage format (primitives only)."""
@@ -220,6 +224,8 @@ class WorkspaceRegistry:
             harness=config.harness,
             workspace_name=workspace_name,
             base_branch=base_branch,
+            project_id=config.project_id,
+            mount_path=getattr(config.mount, "mount_path", None) if config.mount else None,
         )
 
         self._workspaces[wid] = info
@@ -262,6 +268,7 @@ class WorkspaceRegistry:
                 event_handler=event_handler,
                 session_timeout=0,
                 snapshot_id=config.snapshot_id,
+                mount=config.mount,
             )
             await sandbox.setup()
 

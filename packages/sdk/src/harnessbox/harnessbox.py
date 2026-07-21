@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Coroutine, Literal, overload
 
-from harnessbox.lifecycle import RuntimeState, SessionStatus, to_session_status
+from harnessbox.lifecycle import RuntimeState
 from harnessbox.providers import CommandResult, SandboxProvider
 from harnessbox.sandbox import Sandbox
 from harnessbox.security.policy import SecurityPolicy
@@ -67,9 +67,9 @@ class Session:
         return self._sandbox.sandbox_id
 
     @property
-    def status(self) -> SessionStatus:
-        """User-facing session status: running, sleeping, or killed."""
-        return to_session_status(self._sandbox.state)
+    def status(self) -> RuntimeState:
+        """Current workspace/sandbox lifecycle state."""
+        return self._sandbox.state
 
     @overload
     def send_message(
