@@ -14,9 +14,9 @@ from harnessbox._internal.session import SandboxSession
 from harnessbox._internal.workspace_mount import WorkspaceMount
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
 from harnessbox.config.pipeline import (
+    FileSystemSpec,
     InitializeContext,
     InitializeSandbox,
-    MountSpec,
     initialize_sandbox,
 )
 from harnessbox.cost import CostMetrics
@@ -78,7 +78,7 @@ class Sandbox:
         api_key: str | None = None,
         template: str | None = None,
         workspace: Workspace | None = None,
-        mount: MountSpec | None = None,
+        file_system: FileSystemSpec | None = None,
         setup_script: str | None = None,
         event_handler: EventHandler | None = None,
         skip_permissions: bool = False,
@@ -146,7 +146,7 @@ class Sandbox:
             dirs=dirs,
             setup_script=setup_script,
             cwd=cwd,
-            mount=mount,
+            file_system=file_system,
         )
 
         # Lifecycle collaborator
@@ -363,7 +363,7 @@ class Sandbox:
 
         Uses a sequential initializer:
         create sandbox -> check tools -> workspace root -> inject env ->
-        optional git inject -> optional mount -> optional setup script -> ACTIVE.
+        optional setup_git -> optional mount_fs -> optional setup script -> ACTIVE.
 
         Does not write harness/agent config files; that belongs on configure.
         """

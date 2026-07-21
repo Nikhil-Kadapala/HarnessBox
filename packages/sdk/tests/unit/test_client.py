@@ -247,6 +247,9 @@ class TestCreateWorkspace:
         }
         assert "remote" not in body
         assert "workspace" not in body
+        assert "model" not in body
+        assert "workspace_id" not in body
+        assert "project_id" not in body
 
     @pytest.mark.asyncio
     @respx.mock

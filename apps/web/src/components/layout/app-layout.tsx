@@ -38,7 +38,7 @@ export function AppLayout() {
   }, []);
 
   const handleCreateSession = useCallback(
-    (config: CreateSessionRequest) => {
+    async (config: CreateSessionRequest) => {
       const mergedEnv = { ...config.env_vars };
       for (const k of appStorage.apiKeys) {
         if (k.name && k.value && !(k.name in mergedEnv)) {
@@ -46,11 +46,13 @@ export function AppLayout() {
         }
       }
 
-      const sessionId = crypto.randomUUID();
-      manager.createSession({ ...config, env_vars: mergedEnv, session_id: sessionId });
-
       handleCloseSheet();
-      navigate({ to: "/session/$sessionId", params: { sessionId } });
+      try {
+        const sessionId = await manager.createSession({ ...config, env_vars: mergedEnv });
+        navigate({ to: "/session/$sessionId", params: { sessionId } });
+      } catch (err) {
+        console.error("Failed to create session", err);
+      }
     },
     [manager, handleCloseSheet, navigate],
   );

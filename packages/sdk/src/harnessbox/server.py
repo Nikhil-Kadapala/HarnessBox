@@ -49,6 +49,8 @@ from harnessbox._server.routers._models import (  # noqa: F401
     CreateSessionRequest,
     CreateWorkspaceRequestParams,
     CreateWorkspaceResponseParams,
+    FileSystemParams,
+    GitCredentials,
     GitCredentialsParams,
     GitSourceParams,
     MountSourceParams,

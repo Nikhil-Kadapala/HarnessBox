@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from harnessbox._server.workspace_factory import (
+    ENV_VAR_KEYS,
     build_workspace_config,
     convert_ssh_to_https,
     extract_provider_key,
@@ -16,51 +17,38 @@ from harnessbox._server.workspace_factory import (
 
 
 class TestInjectHostEnvVars:
-    def test_adds_claude_vars(self) -> None:
+    def test_merges_env_var_keys_from_host(self) -> None:
         env: dict[str, str] = {}
-        with (
-            patch(
-                "harnessbox.credentials.build_claude_env_vars",
-                return_value={"ANTHROPIC_API_KEY": "sk-test"},
-            ),
-            patch(
-                "harnessbox.credentials.build_gcloud_env_vars",
-                return_value={},
-            ),
+        with patch.dict(
+            "os.environ", {"ANTHROPIC_API_KEY": "sk-test", "OPENAI_API_KEY": ""}, clear=False
         ):
             inject_host_env_vars(env)
         assert env["ANTHROPIC_API_KEY"] == "sk-test"
+        assert "OPENAI_API_KEY" not in env
 
     def test_does_not_overwrite_existing(self) -> None:
         env: dict[str, str] = {"ANTHROPIC_API_KEY": "user-provided"}
-        with (
-            patch(
-                "harnessbox.credentials.build_claude_env_vars",
-                return_value={"ANTHROPIC_API_KEY": "from-host"},
-            ),
-            patch(
-                "harnessbox.credentials.build_gcloud_env_vars",
-                return_value={},
-            ),
-        ):
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "from-host"}, clear=False):
             inject_host_env_vars(env)
         assert env["ANTHROPIC_API_KEY"] == "user-provided"
 
-    def test_injects_from_host_env(self) -> None:
+    def test_injects_openai_from_host_env(self) -> None:
         env: dict[str, str] = {}
-        with (
-            patch(
-                "harnessbox.credentials.build_claude_env_vars",
-                return_value={},
-            ),
-            patch(
-                "harnessbox.credentials.build_gcloud_env_vars",
-                return_value={},
-            ),
-            patch.dict("os.environ", {"OPENAI_API_KEY": "oai-key"}, clear=False),
-        ):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "oai-key"}, clear=False):
             inject_host_env_vars(env)
         assert env["OPENAI_API_KEY"] == "oai-key"
+
+    def test_does_not_call_claude_or_gcloud_builders(self) -> None:
+        env: dict[str, str] = {}
+        with (
+            patch("harnessbox.credentials.build_claude_env_vars") as claude,
+            patch("harnessbox.credentials.build_gcloud_env_vars") as gcloud,
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            inject_host_env_vars(env)
+        claude.assert_not_called()
+        gcloud.assert_not_called()
+        assert ENV_VAR_KEYS  # sanity: keys tuple still defined
 
 
 class TestInjectHostCredentialFiles:
@@ -170,6 +158,8 @@ class TestBuildWorkspaceConfig:
         assert config.provider == "e2b"
         assert config.api_key == "test-key"
         assert config.workspace is None
+        assert config.project_id is None
+        assert config.model is None
 
     def test_with_workspace(self) -> None:
         from harnessbox.server import WorkspaceRequest
@@ -237,3 +227,34 @@ class TestBuildWorkspaceConfig:
         ):
             config = build_workspace_config(req)
         assert config.security_policy is None
+
+    def test_file_system_maps_to_spec(self) -> None:
+        from harnessbox.server import FileSystemParams
+
+        req = self._make_request(
+            file_system=FileSystemParams(source="gs://bucket/path", mount_path="/data")
+        )
+        with (
+            patch("harnessbox._server.workspace_factory.inject_host_env_vars"),
+            patch(
+                "harnessbox._server.workspace_factory.extract_provider_key",
+                return_value=None,
+            ),
+        ):
+            config = build_workspace_config(req)
+        assert config.file_system is not None
+        assert config.file_system.source == "gs://bucket/path"
+        assert config.file_system.mount_path == "/data"
+
+    def test_ignores_legacy_model_and_project_id(self) -> None:
+        req = self._make_request(model="claude-opus", project_id="proj-1")
+        with (
+            patch("harnessbox._server.workspace_factory.inject_host_env_vars"),
+            patch(
+                "harnessbox._server.workspace_factory.extract_provider_key",
+                return_value=None,
+            ),
+        ):
+            config = build_workspace_config(req)
+        assert config.model is None
+        assert config.project_id is None

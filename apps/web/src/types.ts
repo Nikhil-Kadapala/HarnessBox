@@ -106,26 +106,33 @@ export interface SecurityPolicyConfig {
   credential_guards?: boolean | string[];
 }
 
-export interface GitCredentialsParams {
+export interface GitCredentials {
   type?: string;
   token?: string;
+  /** Accepted but unused until SSH clone auth is wired. */
   ssh_key?: string;
 }
+
+/** @deprecated Use GitCredentials */
+export type GitCredentialsParams = GitCredentials;
 
 export interface GitSourceParams {
   repo_url: string;
   branch?: string;
-  credentials?: GitCredentialsParams;
+  credentials?: GitCredentials;
   clone_depth?: number;
   clone_dir_name?: string;
 }
 
-export interface MountSourceParams {
+export interface FileSystemParams {
   source: string;
   mount_path?: string;
 }
 
-/** @deprecated Prefer git/mount on CreateWorkspaceRequestParams */
+/** @deprecated Use FileSystemParams */
+export type MountSourceParams = FileSystemParams;
+
+/** @deprecated Prefer git/file_system on CreateWorkspaceRequestParams */
 export interface WorkspaceConfig {
   remote: string;
   branch?: string;
@@ -136,19 +143,19 @@ export interface WorkspaceConfig {
 }
 
 export interface CreateWorkspaceRequestParams {
-  workspace_id?: string;
   provider: string;
-  model?: string;
   env_vars: Record<string, string>;
   skip_permissions: boolean;
   sandbox_timeout?: number;
   session_timeout?: number;
   template?: string;
-  project_id?: string;
   git?: GitSourceParams;
-  mount?: MountSourceParams;
-  /** @deprecated legacy create body */
+  file_system?: FileSystemParams;
+  /** @deprecated legacy create body — ignored by server for identity */
   session_id?: string;
+  workspace_id?: string;
+  project_id?: string;
+  model?: string;
   security_policy?: SecurityPolicyConfig;
   workspace?: WorkspaceConfig;
 }
@@ -172,12 +179,13 @@ export interface CreateWorkspaceResponseParams {
   branch?: string;
   base_branch?: string;
   remote?: string;
-  mount_path?: string;
+  file_system_path?: string;
   total_cost_usd?: number;
   error_message?: string;
-  /** @deprecated legacy fields — prefer workspace_id / state */
+  /** @deprecated legacy fields — prefer workspace_id / state / file_system_path */
   session_id?: string;
   runtime_state?: string;
+  mount_path?: string;
 }
 
 /** @deprecated Use CreateWorkspaceResponseParams */

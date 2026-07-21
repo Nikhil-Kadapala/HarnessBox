@@ -23,6 +23,13 @@ def client(manager: WorkspaceManager) -> TestClient:
     return TestClient(app)
 
 
+def _create_and_id(client: TestClient, body: dict[str, object] | None = None) -> str:
+    """POST create and return the server-minted workspace_id."""
+    resp = client.post("/v1/workspaces", json=body or {})
+    assert resp.status_code == 202
+    return resp.json()["workspace_id"]
+
+
 class TestCreateSession:
     def test_create_session(self, client: TestClient) -> None:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
@@ -40,13 +47,36 @@ class TestCreateSession:
 
         assert resp.status_code == 202
         data = resp.json()
-        assert (data.get("workspace_id") or data.get("session_id")) == "test-1"
+        # Server mints workspace_id — client session_id is ignored
+        assert data["workspace_id"] != "test-1"
+        assert data["workspace_id"]  # non-empty uuid
         assert data["harness"] == "claude-code"
         assert (data.get("state") or data.get("runtime_state")) == "starting"
+        assert data.get("project_id") is None
 
+        workspace_id = data["workspace_id"]
         # Background task completes provisioning (TestClient runs them synchronously)
-        get_resp = client.get("/v1/workspaces/test-1")
+        get_resp = client.get(f"/v1/workspaces/{workspace_id}")
         assert (get_resp.json().get("state") or get_resp.json().get("runtime_state")) == "active"
+
+    def test_create_ignores_client_workspace_id(self, client: TestClient) -> None:
+        with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-1"
+            instance.event_buffer = MagicMock()
+            instance.event_buffer.push = AsyncMock()
+            instance._event_buffer = instance.event_buffer
+
+            resp = client.post(
+                "/v1/workspaces/create",
+                json={"workspace_id": "client-minted", "session_id": "also-ignored"},
+            )
+
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["workspace_id"] not in ("client-minted", "also-ignored")
+        assert data.get("project_id") is None
 
 
 class TestListSessions:
@@ -59,8 +89,8 @@ class TestListSessions:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
-            client.post("/v1/workspaces", json={"session_id": "s-2"})
+            client.post("/v1/workspaces", json={})
+            client.post("/v1/workspaces", json={})
 
         resp = client.get("/v1/workspaces")
         assert resp.status_code == 200
@@ -73,11 +103,12 @@ class TestGetSession:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            create = client.post("/v1/workspaces", json={})
+            wid = create.json()["workspace_id"]
 
-        resp = client.get("/v1/workspaces/s-1")
+        resp = client.get(f"/v1/workspaces/{wid}")
         assert resp.status_code == 200
-        assert (resp.json().get("workspace_id") or resp.json().get("session_id")) == "s-1"
+        assert resp.json()["workspace_id"] == wid
 
     def test_get_not_found(self, client: TestClient) -> None:
         resp = client.get("/v1/workspaces/nonexistent")
@@ -90,12 +121,13 @@ class TestDestroySession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            create = client.post("/v1/workspaces", json={})
+            wid = create.json()["workspace_id"]
 
-        resp = client.delete("/v1/workspaces/s-1")
+        resp = client.delete(f"/v1/workspaces/{wid}")
         assert resp.status_code == 204
 
-        resp = client.get("/v1/workspaces/s-1")
+        resp = client.get(f"/v1/workspaces/{wid}")
         assert resp.status_code == 404
 
     def test_destroy_not_found(self, client: TestClient) -> None:
@@ -251,9 +283,9 @@ class TestPromptSession:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.post("/v1/workspaces/s-1/prompt", json={})
+        resp = client.post(f"/v1/workspaces/{wid}/prompt", json={})
         assert resp.status_code == 422
 
 
@@ -264,9 +296,9 @@ class TestPauseSession:
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-paused-1")
             instance.create_snapshot = AsyncMock(return_value="snap-1")
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.post("/v1/workspaces/s-1/pause")
+        resp = client.post(f"/v1/workspaces/{wid}/pause")
         assert resp.status_code == 200
         assert (resp.json().get("state") or resp.json().get("runtime_state")) == "paused"
         instance.create_snapshot.assert_called_once()
@@ -280,12 +312,12 @@ class TestPauseSession:
             instance.setup = AsyncMock()
             instance.pause = AsyncMock(return_value="sb-1")
             instance.create_snapshot = AsyncMock(return_value="snap-1")
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
         # Pause first
-        client.post("/v1/workspaces/s-1/pause")
+        client.post(f"/v1/workspaces/{wid}/pause")
         # Pause again should fail
-        resp = client.post("/v1/workspaces/s-1/pause")
+        resp = client.post(f"/v1/workspaces/{wid}/pause")
         assert resp.status_code == 409
 
     def test_pause_not_found(self, client: TestClient) -> None:
@@ -301,10 +333,10 @@ class TestResumeSession:
             instance.pause = AsyncMock(return_value="sb-paused-1")
             instance.create_snapshot = AsyncMock(return_value="snap-1")
             instance.resume = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        client.post("/v1/workspaces/s-1/pause")
-        resp = client.post("/v1/workspaces/s-1/resume")
+        client.post(f"/v1/workspaces/{wid}/pause")
+        resp = client.post(f"/v1/workspaces/{wid}/resume")
         assert resp.status_code == 200
         assert (resp.json().get("state") or resp.json().get("runtime_state")) == "active"
 
@@ -312,9 +344,9 @@ class TestResumeSession:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.post("/v1/workspaces/s-1/resume")
+        resp = client.post(f"/v1/workspaces/{wid}/resume")
         assert resp.status_code == 409
 
     def test_resume_not_found(self, client: TestClient) -> None:
@@ -328,9 +360,9 @@ class TestStopSession:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
             instance.kill = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.post("/v1/workspaces/s-1/stop")
+        resp = client.post(f"/v1/workspaces/{wid}/stop")
         assert resp.status_code == 204
 
     def test_stop_not_found(self, client: TestClient) -> None:
@@ -353,17 +385,17 @@ class TestStopSession:
 
 
 class TestRetrySession:
-    def _create_errored_session(self, client: TestClient, session_id: str = "s-err") -> None:
+    def _create_errored_session(self, client: TestClient) -> str:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock(side_effect=RuntimeError("boom"))
-            client.post("/v1/workspaces", json={"session_id": session_id})
+            return _create_and_id(client)
 
     def test_retry_reprovisions_errored_session(self, client: TestClient) -> None:
-        self._create_errored_session(client)
+        wid = self._create_errored_session(client)
         assert (
-            client.get("/v1/workspaces/s-err").json().get("state")
-            or client.get("/v1/workspaces/s-err").json().get("runtime_state")
+            client.get(f"/v1/workspaces/{wid}").json().get("state")
+            or client.get(f"/v1/workspaces/{wid}").json().get("runtime_state")
         ) == "error"
 
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
@@ -373,11 +405,11 @@ class TestRetrySession:
             instance.event_buffer = MagicMock()
             instance.event_buffer.push = AsyncMock()
             instance._event_buffer = instance.event_buffer
-            resp = client.post("/v1/workspaces/s-err/retry")
+            resp = client.post(f"/v1/workspaces/{wid}/retry")
 
         assert resp.status_code == 202
 
-        data = client.get("/v1/workspaces/s-err").json()
+        data = client.get(f"/v1/workspaces/{wid}").json()
         assert (data.get("state") or data.get("runtime_state")) == "active"
         assert data["error_message"] is None
 
@@ -385,9 +417,9 @@ class TestRetrySession:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.post("/v1/workspaces/s-1/retry")
+        resp = client.post(f"/v1/workspaces/{wid}/retry")
         assert resp.status_code == 409
 
     def test_retry_not_found_returns_404(self, client: TestClient) -> None:
@@ -573,14 +605,15 @@ class TestExportEventsJsonl:
             instance.event_buffer = MagicMock()
             instance.event_buffer.push = AsyncMock(side_effect=_assign_sequence)
             instance._event_buffer = instance.event_buffer
-            resp = client.post("/v1/workspaces", json={"session_id": "s-export"})
+            resp = client.post("/v1/workspaces", json={})
             assert resp.status_code == 202
+            wid = resp.json()["workspace_id"]
 
-        resp = client.get("/v1/workspaces/s-export/events.jsonl")
+        resp = client.get(f"/v1/workspaces/{wid}/events.jsonl")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/x-ndjson")
         assert "attachment" in resp.headers["content-disposition"]
-        assert "s-export-events.jsonl" in resp.headers["content-disposition"]
+        assert f"{wid}-events.jsonl" in resp.headers["content-disposition"]
 
         lines = [line for line in resp.text.strip().split("\n") if line]
         assert len(lines) >= 1
@@ -597,7 +630,7 @@ class TestExportEventsJsonl:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
             instance.setup = AsyncMock()
-            client.post("/v1/workspaces", json={"session_id": "s-1"})
+            wid = _create_and_id(client)
 
-        resp = client.get("/v1/workspaces/s-1/events.jsonl")
+        resp = client.get(f"/v1/workspaces/{wid}/events.jsonl")
         assert resp.status_code == 400

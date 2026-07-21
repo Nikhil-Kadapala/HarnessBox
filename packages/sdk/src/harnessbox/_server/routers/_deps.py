@@ -29,7 +29,7 @@ def workspace_response(info: Any) -> CreateWorkspaceResponseParams:
         branch=info.branch,
         base_branch=info.base_branch,
         remote=info.remote,
-        mount_path=getattr(info, "mount_path", None),
+        file_system_path=getattr(info, "file_system_path", None),
         total_cost_usd=info.total_cost_usd,
         error_message=info.error_message,
     )

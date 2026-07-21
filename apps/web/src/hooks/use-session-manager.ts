@@ -145,56 +145,68 @@ export function useSessionManager() {
   );
 
   const createSessionOptimistic = useCallback(
-    (config: CreateSessionRequest) => {
-      const sessionId = config.workspace_id || config.session_id || crypto.randomUUID();
+    async (config: CreateSessionRequest): Promise<string> => {
       const conns = connectionsRef.current;
+      // Temporary key until the server returns the minted workspace_id.
+      const pendingKey = `pending-${crypto.randomUUID()}`;
+      const signal = conns.start(`create-${pendingKey}`);
 
-      const entry: SessionEntry = {
-        id: sessionId,
-        harness: "claude-code",
-        status: "creating",
-        runtimeState: "creating",
-        createdAt: new Date().toISOString(),
-        events: [],
-        error: null,
-        workspaceName: config.git?.clone_dir_name || config.workspace?.clone_dir_name,
-        branch: config.git?.branch || config.workspace?.branch,
-        remote: config.git?.repo_url || config.workspace?.remote,
-      };
-      dispatch({ type: "add_session", entry });
-      setActiveSessionId(sessionId);
+      try {
+        const {
+          workspace_id: _wid,
+          session_id: _sid,
+          project_id: _pid,
+          model: _model,
+          ...createBody
+        } = config;
+        const res = await apiCreateSession(createBody, signal);
+        const sessionId = workspaceIdOf(res);
+        if (!sessionId) {
+          throw new Error("Server did not return a workspace_id");
+        }
 
-      const signal = conns.start(`create-${sessionId}`);
+        if (conns.isDestroyed(sessionId)) {
+          conns.cleanup(`create-${pendingKey}`);
+          return sessionId;
+        }
 
-      apiCreateSession({ ...config, workspace_id: sessionId, session_id: sessionId }, signal)
-        .then((res) => {
-          conns.cleanup(`create-${sessionId}`);
+        const entry: SessionEntry = {
+          id: sessionId,
+          harness: "claude-code",
+          status: "creating",
+          runtimeState: workspaceStateOf(res) || "creating",
+          createdAt: res.created_at || new Date().toISOString(),
+          events: [],
+          error: null,
+          workspaceName: res.workspace_name || config.git?.clone_dir_name || config.workspace?.clone_dir_name,
+          branch: res.branch || config.git?.branch || config.workspace?.branch,
+          remote: res.remote || config.git?.repo_url || config.workspace?.remote,
+        };
+        dispatch({ type: "add_session", entry });
+        setActiveSessionId(sessionId);
 
-          if (conns.isDestroyed(sessionId)) return;
-
-          dispatch({
-            type: "update_metadata",
-            sessionId,
-            metadata: {
-              workspaceName: res.workspace_name,
-              branch: res.branch,
-              baseBranch: res.base_branch,
-              remote: res.remote,
-              runtimeState: workspaceStateOf(res),
-            },
-          });
-          dispatch({ type: "set_status", sessionId, status: "active" });
-
-          reconnectSession(sessionId);
-        })
-        .catch((err) => {
-          conns.cleanup(`create-${sessionId}`);
-          if (err instanceof DOMException && err.name === "AbortError") return;
-          const message = err instanceof Error ? err.message : "Failed to create session";
-          dispatch({ type: "set_error", sessionId, error: message });
+        conns.cleanup(`create-${pendingKey}`);
+        dispatch({
+          type: "update_metadata",
+          sessionId,
+          metadata: {
+            workspaceName: res.workspace_name,
+            branch: res.branch,
+            baseBranch: res.base_branch,
+            remote: res.remote,
+            runtimeState: workspaceStateOf(res),
+          },
         });
 
-      return sessionId;
+        reconnectSession(sessionId);
+        return sessionId;
+      } catch (err) {
+        conns.cleanup(`create-${pendingKey}`);
+        if (err instanceof DOMException && err.name === "AbortError") {
+          throw err;
+        }
+        throw err instanceof Error ? err : new Error("Failed to create session");
+      }
     },
     [reconnectSession],
   );
