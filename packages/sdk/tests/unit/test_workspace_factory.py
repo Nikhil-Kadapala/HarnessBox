@@ -19,7 +19,9 @@ from harnessbox._server.workspace_factory import (
 class TestInjectHostEnvVars:
     def test_merges_env_var_keys_from_host(self) -> None:
         env: dict[str, str] = {}
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test", "OPENAI_API_KEY": ""}, clear=False):
+        with patch.dict(
+            "os.environ", {"ANTHROPIC_API_KEY": "sk-test", "OPENAI_API_KEY": ""}, clear=False
+        ):
             inject_host_env_vars(env)
         assert env["ANTHROPIC_API_KEY"] == "sk-test"
         assert "OPENAI_API_KEY" not in env
