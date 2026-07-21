@@ -361,7 +361,10 @@ class TestRetrySession:
 
     def test_retry_reprovisions_errored_session(self, client: TestClient) -> None:
         self._create_errored_session(client)
-        assert (client.get("/v1/workspaces/s-err").json().get("state") or client.get("/v1/workspaces/s-err").json().get("runtime_state")) == "error"
+        assert (
+            client.get("/v1/workspaces/s-err").json().get("state")
+            or client.get("/v1/workspaces/s-err").json().get("runtime_state")
+        ) == "error"
 
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value

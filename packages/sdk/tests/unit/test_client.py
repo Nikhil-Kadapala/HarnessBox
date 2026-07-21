@@ -207,7 +207,9 @@ class TestCreateWorkspace:
     @pytest.mark.asyncio
     @respx.mock
     async def test_already_active_returns_immediately(self) -> None:
-        respx.post(f"{_BASE}/v1/workspaces/create").mock(return_value=Response(200, json=_SESSION_ACTIVE))
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
+            return_value=Response(200, json=_SESSION_ACTIVE)
+        )
 
         async with HarnessBoxClient(_BASE) as client:
             ws = await client.create_workspace(

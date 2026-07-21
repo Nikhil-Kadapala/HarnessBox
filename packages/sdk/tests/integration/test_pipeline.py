@@ -225,7 +225,9 @@ class TestInitializeSandboxFactory:
         async def custom(ctx: InitializeContext) -> None:
             pass
 
-        pipeline = initialize_sandbox(extra_steps=[InitializeStep(name="custom_step", execute=custom)])
+        pipeline = initialize_sandbox(
+            extra_steps=[InitializeStep(name="custom_step", execute=custom)]
+        )
         names = pipeline.step_names()
         assert names[-1] == "custom_step"
 
