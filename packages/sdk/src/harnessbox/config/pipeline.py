@@ -17,11 +17,15 @@ _log = logging.getLogger("harnessbox.pipeline")
 
 
 @dataclass
-class MountSpec:
-    """Filesystem or remote mount to attach during initialization."""
+class FileSystemSpec:
+    """Filesystem or remote volume to attach during initialization."""
 
     source: str
     mount_path: str = "/workspace"
+
+
+# Back-compat alias
+MountSpec = FileSystemSpec
 
 
 @dataclass
@@ -37,7 +41,7 @@ class InitializeContext:
     harness_config: HarnessTypeConfig
     security_policy: SecurityPolicy | None = None
     workspace: Workspace | None = None
-    mount: MountSpec | None = None
+    file_system: FileSystemSpec | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     timeout: int = 300
 
@@ -150,8 +154,8 @@ def initialize_sandbox(
     2. check_tools — diagnostic: which tools are pre-installed
     3. create_workspace_root — mkdir the workspace root directory
     4. inject_env — apply env vars (already passed to provider.create; no-op log)
-    5. inject_workspace — git clone when a workspace source is present
-    6. attach_mount — mount filesystem when a mount source is present
+    5. setup_git — git clone when a workspace source is present (sets cwd to clone dir)
+    6. mount_fs — attach filesystem when a file_system source is present
     7. run_setup_script — optional user-provided setup command
 
     Does **not** write harness/agent config files (settings.json, hooks).
@@ -169,14 +173,14 @@ def initialize_sandbox(
         InitializeStep(name="create_workspace_root", execute=_step_create_workspace_root),
         InitializeStep(name="inject_env", execute=_step_inject_env),
         InitializeStep(
-            name="inject_workspace",
-            execute=_step_inject_workspace,
+            name="setup_git",
+            execute=_step_setup_git,
             skip_if=lambda ctx: ctx.workspace is None,
         ),
         InitializeStep(
-            name="attach_mount",
-            execute=_step_attach_mount,
-            skip_if=lambda ctx: ctx.mount is None,
+            name="mount_fs",
+            execute=_step_mount_fs,
+            skip_if=lambda ctx: ctx.file_system is None,
         ),
         InitializeStep(
             name="run_setup_script",
@@ -253,7 +257,11 @@ async def _step_inject_env(ctx: InitializeContext) -> None:
         _log.info("Env vars applied at create (%d keys)", len(ctx.env_vars))
 
 
-async def _step_inject_workspace(ctx: InitializeContext) -> None:
+async def _step_setup_git(ctx: InitializeContext) -> None:
+    """Clone the git workspace and set agent cwd to the clone directory.
+
+    When git is present, clone-dir cwd always wins over any request ``cwd``.
+    """
     if not ctx.workspace:
         return
     await ctx.workspace.inject(ctx.provider, ctx.harness_config.workspace_root)
@@ -261,26 +269,26 @@ async def _step_inject_workspace(ctx: InitializeContext) -> None:
         ctx.cwd = f"{ctx.harness_config.workspace_root}/{ctx.workspace.clone_dir_name}"
 
 
-async def _step_attach_mount(ctx: InitializeContext) -> None:
-    """Attach a filesystem/remote mount when configured.
+async def _step_mount_fs(ctx: InitializeContext) -> None:
+    """Attach a filesystem/remote volume when configured.
 
     Provider-specific mount backends (e.g. GCS/Archil) land with Phase 2 storage.
     Until then, providers that implement ``attach_mount(source, mount_path)`` are
     invoked; otherwise this is a no-op with a warning.
     """
-    if not ctx.mount:
+    if not ctx.file_system:
         return
     attach = getattr(ctx.provider, "attach_mount", None)
     if attach is None:
         _log.warning(
-            "Mount requested (%s → %s) but provider has no attach_mount; skipping",
-            ctx.mount.source,
-            ctx.mount.mount_path,
+            "File system requested (%s → %s) but provider has no attach_mount; skipping",
+            ctx.file_system.source,
+            ctx.file_system.mount_path,
         )
         return
-    await attach(ctx.mount.source, ctx.mount.mount_path)
+    await attach(ctx.file_system.source, ctx.file_system.mount_path)
     if not ctx.cwd:
-        ctx.cwd = ctx.mount.mount_path
+        ctx.cwd = ctx.file_system.mount_path
 
 
 # ---------------------------------------------------------------------------

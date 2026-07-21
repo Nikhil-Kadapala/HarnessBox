@@ -42,11 +42,11 @@ async def create_workspace(
     background_tasks: BackgroundTasks,
     mgr: WorkspaceManager = Depends(get_manager),
 ) -> CreateWorkspaceResponseParams:
-    """Create a workspace (slim provision: VM + tools + env + optional git/mount)."""
+    """Create a workspace (slim provision: VM + tools + env + optional git/file_system)."""
     try:
         config = build_workspace_config(req)
-        workspace_id = getattr(req, "workspace_id", None) or getattr(req, "session_id", None)
-        info = mgr.register_workspace(config, workspace_id=workspace_id)
+        # Server always mints workspace_id — ignore any client-supplied id.
+        info = mgr.register_workspace(config)
     except Exception as exc:
         logger.exception("Failed to register workspace")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

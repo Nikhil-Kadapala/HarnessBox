@@ -7,6 +7,41 @@
 
 Deferred items. Post-adoption features informed by real usage data.
 
+## Deferred from eng review (2026-07-21) — post Phase 0–4
+
+Captured during `/plan-eng-review` of workspace create API cleanup despite freeze,
+so the hole is not only in the plan file.
+
+### Model selection after slim create (configure / create-session)
+
+**What:** Restore model selection after `model` was removed from
+`CreateWorkspaceRequestParams` — via `POST /v1/workspaces/{id}/configure` and/or
+the later create-session flow; wire web `defaultModel` settings to that path.
+
+**Why:** Settings UI already stores `defaultModel`, but slim create no longer
+accepts `model`. Without a follow-up API, model prefs are UI-only theater and
+agents always use harness CLI defaults.
+
+**Pros:**
+- Closes the gap deliberately left by D10 (drop model from create now)
+- Lets dashboard model prefs actually affect the agent
+- Keeps create slim (VM + git/fs + env) vs configure (harness knobs)
+
+**Cons:**
+- Another endpoint / session-create surface to design
+- Until it ships, no per-workspace model override on the wire
+
+**Context:** Locked in plan
+`~/.cursor/plans/workspace_create_api_cleanup_a1b2c3d4.plan.md`. Do not put
+`model` back on create. Prefer configure or create-session. Web:
+`apps/web/src/components/settings/settings-panel.tsx` (`defaultModel`).
+
+**Depends on / blocked by:** Workspace create API cleanup PR; optionally after
+Phase 2 GCS mount. User intent: handle in “create session” work, not this PR.
+
+**When to fix:** After Reduce & Rebuild Phases 0–4 thaw, or bundled with
+session/configure UX — whichever comes first.
+
 ## Known Issues (from PR #32 code review — add tests if these areas mutate)
 
 ### ~~1. `git_create_branch` fails for existing remote branches~~ ✅ FIXED

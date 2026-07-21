@@ -72,6 +72,16 @@ Sessions use a single ``RuntimeState`` vocabulary everywhere (SDK + HTTP):
 
 Sandboxes are persistent. When idle, they pause automatically to save cost. On the next `send_message()` or `run_command()`, the sandbox wakes transparently — no manual resume needed. Sessions only reach `dead` when you explicitly call `session.kill()` or `hb.kill()`.
 
+### HTTP create (server API)
+
+`POST /v1/workspaces/create` is a slim create surface:
+
+- Server always mints `workspace_id` (client ids ignored); `project_id` is always `null` until a Project API exists.
+- Optional `git` (+ `GitCredentials`) and `file_system` (`FileSystemParams`) — response uses `file_system_path`.
+- `model` is not accepted on create (deferred to session/configure).
+- Host env merge is `ENV_VAR_KEYS` setdefault only — no Claude/GCP auto-inject helpers.
+- `GitCredentials.type=ssh` / `ssh_key` are accepted but not yet wired into clone auth.
+
 ```python
 from harnessbox.lifecycle import RuntimeState
 

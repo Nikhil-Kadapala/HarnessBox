@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from harnessbox.config.harness import get_harness_type
@@ -216,8 +218,8 @@ class TestInitializeSandboxFactory:
             "check_tools",
             "create_workspace_root",
             "inject_env",
-            "inject_workspace",
-            "attach_mount",
+            "setup_git",
+            "mount_fs",
             "run_setup_script",
         ]
 
@@ -311,8 +313,8 @@ class TestInitializeSandboxFactory:
             await pipeline.execute(ctx)
 
     @pytest.mark.asyncio
-    async def test_pipeline_skips_workspace_when_none(self):
-        """inject_workspace step is skipped when no workspace configured."""
+    async def test_pipeline_skips_git_and_fs_when_none(self):
+        """setup_git / mount_fs steps are skipped when not configured."""
         provider = MockProvider()
         ctx = InitializeContext(
             provider=provider,
@@ -321,8 +323,30 @@ class TestInitializeSandboxFactory:
         pipeline = initialize_sandbox()
         result = pipeline.dry_run(ctx)
 
-        assert "inject_workspace" not in result
-        assert "attach_mount" not in result
+        assert "setup_git" not in result
+        assert "mount_fs" not in result
+
+    @pytest.mark.asyncio
+    async def test_setup_git_sets_cwd_to_clone_dir(self):
+        """When git is present, agent cwd is the clone dir (request cwd ignored)."""
+        from unittest.mock import AsyncMock
+
+        provider = MockProvider()
+        workspace = MagicMock()
+        workspace.clone_dir_name = "tokyo"
+        workspace.inject = AsyncMock()
+        ctx = InitializeContext(
+            provider=provider,
+            harness_config=get_harness_type("claude-code"),
+            workspace=workspace,
+            cwd="/workspace/other",
+        )
+        pipeline = initialize_sandbox()
+        # Only run setup_git-relevant path: dry_run would skip nothing for workspace
+        await pipeline.execute(ctx)
+
+        assert ctx.cwd == "/workspace/tokyo"
+        workspace.inject.assert_awaited_once()
 
 
 class TestSandboxDryRun:
@@ -338,7 +362,7 @@ class TestSandboxDryRun:
         assert "create_sandbox" in steps
         assert "inject_env" in steps
         assert "build_manifest" not in steps
-        assert "inject_workspace" not in steps  # no workspace configured
+        assert "setup_git" not in steps  # no workspace configured
 
     def test_dry_run_includes_setup_script_when_configured(self):
         from harnessbox.sandbox import Sandbox

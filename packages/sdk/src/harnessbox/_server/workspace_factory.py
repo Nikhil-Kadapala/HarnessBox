@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     )
 
 from harnessbox._server.registry import WorkspaceConfig
-from harnessbox.config.pipeline import MountSpec
+from harnessbox.config.pipeline import FileSystemSpec
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +40,12 @@ ENV_VAR_KEYS: tuple[str, ...] = (
 
 
 def inject_host_env_vars(env_vars: dict[str, str]) -> None:
-    """Auto-inject available host credentials into the sandbox env.
+    """Merge selected host env keys into the sandbox env via setdefault.
 
-    User-provided env vars always take priority (not overwritten).
+    User-provided env vars always take priority (not overwritten). Does not
+    call Claude/GCP credential builders — callers must supply those explicitly
+    or rely on ``ENV_VAR_KEYS`` already present on the host.
     """
-    from harnessbox.credentials import build_claude_env_vars, build_gcloud_env_vars
-
-    claude_envs = build_claude_env_vars()
-    for k, v in claude_envs.items():
-        env_vars.setdefault(k, v)
-
-    gcloud_envs = build_gcloud_env_vars()
-    for k, v in gcloud_envs.items():
-        env_vars.setdefault(k, v)
-
     for key in ENV_VAR_KEYS:
         if key not in env_vars:
             val = os.environ.get(key, "").strip()
@@ -64,8 +56,8 @@ def inject_host_env_vars(env_vars: dict[str, str]) -> None:
 def inject_host_credential_files() -> dict[str, str]:
     """Deprecated — create no longer injects credential files.
 
-    Retained so older call sites/tests import without breaking. Prefer mount
-    or upload for file-based credentials.
+    Retained so older call sites/tests import without breaking. Prefer
+    file_system or upload for file-based credentials.
     """
     return {}
 
@@ -134,7 +126,7 @@ def _normalize_create_request(
     from harnessbox._server.routers._models import (
         CreateSessionRequest,
         CreateWorkspaceRequestParams,
-        GitCredentialsParams,
+        GitCredentials,
         GitSourceParams,
     )
 
@@ -147,7 +139,7 @@ def _normalize_create_request(
     if git is None and workspace is not None:
         creds = None
         if workspace.auth_token:
-            creds = GitCredentialsParams(type="token", token=workspace.auth_token)
+            creds = GitCredentials(type="token", token=workspace.auth_token)
         git = GitSourceParams(
             repo_url=workspace.remote,
             branch=workspace.branch,
@@ -156,11 +148,12 @@ def _normalize_create_request(
             clone_dir_name=workspace.clone_dir_name,
         )
 
+    file_system = getattr(req, "file_system", None) or getattr(req, "mount", None)
+
     assert isinstance(req, CreateSessionRequest)
     return CreateWorkspaceRequestParams(
         provider=req.provider,
         api_key=req.api_key,
-        model=req.model,
         env_vars=dict(req.env_vars),
         setup_script=req.setup_script,
         cwd=req.cwd,
@@ -168,10 +161,8 @@ def _normalize_create_request(
         session_timeout=req.session_timeout,
         skip_permissions=req.skip_permissions,
         template=req.template,
-        workspace_id=req.workspace_id or req.session_id,
-        project_id=req.project_id,
         git=git,
-        mount=req.mount,
+        file_system=file_system,
     )
 
 
@@ -180,8 +171,9 @@ def build_workspace_config(
 ) -> WorkspaceConfig:
     """Transform an HTTP create request into a fully-resolved WorkspaceConfig.
 
-    Slim create: env injection + optional git clone and/or mount.
-    Does not write harness/agent files or host credential files.
+    Slim create: ENV_VAR_KEYS host merge + optional git clone and/or file_system.
+    Does not write harness/agent files or host credential files. Always leaves
+    ``project_id`` / ``model`` unset (null) — those belong on later APIs.
     """
     normalized = _normalize_create_request(req)
 
@@ -224,11 +216,11 @@ def build_workspace_config(
         remote_label = remote
         branch_label = branch
 
-    mount_spec = None
-    if normalized.mount:
-        mount_spec = MountSpec(
-            source=normalized.mount.source,
-            mount_path=normalized.mount.mount_path,
+    file_system_spec = None
+    if normalized.file_system:
+        file_system_spec = FileSystemSpec(
+            source=normalized.file_system.source,
+            mount_path=normalized.file_system.mount_path,
         )
 
     session_timeout = normalized.session_timeout
@@ -246,7 +238,7 @@ def build_workspace_config(
         provider=normalized.provider,
         api_key=api_key,
         harness="claude-code",
-        model=normalized.model,
+        model=None,
         env_vars=env_vars,
         files=None,
         setup_script=normalized.setup_script,
@@ -256,8 +248,8 @@ def build_workspace_config(
         template=normalized.template,
         security_policy=None,
         workspace=workspace,
-        mount=mount_spec,
-        project_id=normalized.project_id,
+        file_system=file_system_spec,
+        project_id=None,
         session_timeout=session_timeout,
         branch_label=branch_label,
         remote_label=remote_label,

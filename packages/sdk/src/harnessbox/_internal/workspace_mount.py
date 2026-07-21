@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harnessbox.config.harness import HarnessTypeConfig
-from harnessbox.config.pipeline import InitializeContext, MountSpec
+from harnessbox.config.pipeline import FileSystemSpec, InitializeContext
 from harnessbox.providers import SandboxProvider
 from harnessbox.security.policy import SecurityPolicy
 from harnessbox.workspace import Workspace
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class WorkspaceMount:
     """Combines init-time content sources with runtime git operations.
 
-    Init-time: carries workspace (git) / mount / env into InitializeContext.
+    Init-time: carries workspace (git) / file_system / env into InitializeContext.
     Runtime: delegates git operations to the underlying GitRepoConfig workspace.
     """
 
@@ -33,11 +33,11 @@ class WorkspaceMount:
         dirs: list[str] | None = None,
         setup_script: str | None = None,
         cwd: str | None = None,
-        mount: MountSpec | None = None,
+        file_system: FileSystemSpec | None = None,
     ) -> None:
         self._harness_config = harness_config
         self._workspace = workspace
-        self._mount_spec = mount
+        self._file_system = file_system
         self._system_prompt_content = self._resolve_prompt(system_prompt)
         self._files = self._resolve_files(files, harness_config.workspace_root)
         self._env_vars = dict(env_vars) if env_vars else {}
@@ -126,7 +126,7 @@ class WorkspaceMount:
             harness_config=self._harness_config,
             security_policy=security_policy,
             workspace=self._workspace,
-            mount=self._mount_spec,
+            file_system=self._file_system,
             env_vars=self._env_vars,
             timeout=timeout,
             dirs=self._dirs,

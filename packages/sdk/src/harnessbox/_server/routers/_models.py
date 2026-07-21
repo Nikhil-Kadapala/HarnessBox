@@ -5,8 +5,12 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class GitCredentialsParams(BaseModel):
-    """How to authenticate with a git remote."""
+class GitCredentials(BaseModel):
+    """How to authenticate with a git remote.
+
+    ``type=ssh`` / ``ssh_key`` are accepted on the wire but not yet wired into
+    clone auth (token / gh only). Prefer ``type=token`` or ``type=gh``.
+    """
 
     type: str = "token"
     """Auth method: ``token``, ``gh``, or ``ssh``."""
@@ -15,7 +19,7 @@ class GitCredentialsParams(BaseModel):
     """Personal access token or equivalent (for ``type=token``)."""
 
     ssh_key: str | None = None
-    """Private SSH key material (for ``type=ssh``)."""
+    """Private SSH key material (for ``type=ssh``). Unused until SSH auth lands."""
 
 
 class GitSourceParams(BaseModel):
@@ -23,24 +27,29 @@ class GitSourceParams(BaseModel):
 
     repo_url: str
     branch: str = "main"
-    credentials: GitCredentialsParams | None = None
+    credentials: GitCredentials | None = None
     clone_depth: int = 1
     clone_dir_name: str | None = None
 
 
-class MountSourceParams(BaseModel):
-    """Filesystem or remote mount to attach during workspace create."""
+class FileSystemParams(BaseModel):
+    """Filesystem or remote volume to attach during workspace create."""
 
     source: str
     mount_path: str = "/workspace"
+    """Path inside the sandbox where the volume is attached."""
 
 
 class CreateWorkspaceRequestParams(BaseModel):
-    """Request body for ``POST /v1/workspaces/create``."""
+    """Request body for ``POST /v1/workspaces/create``.
+
+    Identity fields (``workspace_id``, ``project_id``, ``model``) are not
+    accepted — the server mints ``workspace_id``; ``project_id`` stays null
+    until a Project API exists; model belongs on a future session/configure path.
+    """
 
     provider: str = "e2b"
     api_key: str | None = None
-    model: str | None = None
     env_vars: dict[str, str] = {}
     setup_script: str | None = None
     cwd: str | None = None
@@ -48,10 +57,8 @@ class CreateWorkspaceRequestParams(BaseModel):
     session_timeout: int = 900
     skip_permissions: bool = False
     template: str | None = None
-    workspace_id: str | None = None
-    project_id: str | None = None
     git: GitSourceParams | None = None
-    mount: MountSourceParams | None = None
+    file_system: FileSystemParams | None = None
 
 
 class CreateWorkspaceResponseParams(BaseModel):
@@ -66,7 +73,7 @@ class CreateWorkspaceResponseParams(BaseModel):
     branch: str | None = None
     base_branch: str | None = None
     remote: str | None = None
-    mount_path: str | None = None
+    file_system_path: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
 
@@ -120,6 +127,10 @@ class PermissionRequest(BaseModel):
 # Deprecated aliases (pre-workspace-API-unify). Prefer *Params names above.
 # ---------------------------------------------------------------------------
 
+# Back-compat type aliases for older imports
+GitCredentialsParams = GitCredentials
+MountSourceParams = FileSystemParams
+
 
 class SecurityPolicyRequest(BaseModel):
     """Deprecated — configure belongs on a future endpoint, not create."""
@@ -153,7 +164,9 @@ class CreateSessionRequest(BaseModel):
     """Deprecated alias accepting the legacy create body shape.
 
     Prefer :class:`CreateWorkspaceRequestParams`. Still accepted so older
-    clients can migrate; mapped to the new shape in the factory.
+    clients can migrate; mapped to the new shape in the factory. Client-supplied
+    ``session_id`` / ``workspace_id`` / ``project_id`` / ``model`` are ignored
+    at the HTTP boundary (server mints identity).
     """
 
     provider: str = "e2b"
@@ -171,7 +184,8 @@ class CreateSessionRequest(BaseModel):
     workspace: WorkspaceRequest | None = None
     project_id: str | None = None
     git: GitSourceParams | None = None
-    mount: MountSourceParams | None = None
+    file_system: FileSystemParams | None = None
+    mount: FileSystemParams | None = None  # legacy alias for file_system
     workspace_id: str | None = None
 
 

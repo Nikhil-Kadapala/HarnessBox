@@ -47,7 +47,7 @@ class WorkspaceInfo:
     branch: str | None = None
     base_branch: str | None = None
     remote: str | None = None
-    mount_path: str | None = None
+    file_system_path: str | None = None
     project_id: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
@@ -56,6 +56,11 @@ class WorkspaceInfo:
     def runtime_state(self) -> str:
         """Alias for ``state`` (legacy name)."""
         return self.state
+
+    @property
+    def mount_path(self) -> str | None:
+        """Deprecated alias for ``file_system_path``."""
+        return self.file_system_path
 
 
 class WorkspaceCreationError(Exception):
@@ -123,7 +128,6 @@ class HarnessBoxClient:
         git_token: str | None = None,
         mount_source: str | None = None,
         mount_path: str = "/workspace",
-        project_id: str | None = None,
         env_vars: dict[str, str] | None = None,
     ) -> WorkspaceInfo:
         """Create a workspace and wait until it becomes ACTIVE.
@@ -136,15 +140,13 @@ class HarnessBoxClient:
             payload["api_key"] = provider_api_key
         if env_vars:
             payload["env_vars"] = env_vars
-        if project_id is not None:
-            payload["project_id"] = project_id
         if remote is not None:
             git: dict[str, Any] = {"repo_url": remote, "branch": branch}
             if git_token is not None:
                 git["credentials"] = {"type": "token", "token": git_token}
             payload["git"] = git
         if mount_source is not None:
-            payload["mount"] = {"source": mount_source, "mount_path": mount_path}
+            payload["file_system"] = {"source": mount_source, "mount_path": mount_path}
 
         resp = await self._client.post("/v1/workspaces/create", json=payload)
         if resp.status_code not in (200, 201, 202):
@@ -330,7 +332,7 @@ def _parse_workspace_info(data: dict[str, Any]) -> WorkspaceInfo:
         branch=data.get("branch"),
         base_branch=data.get("base_branch"),
         remote=data.get("remote"),
-        mount_path=data.get("mount_path"),
+        file_system_path=data.get("file_system_path") or data.get("mount_path"),
         project_id=data.get("project_id"),
         total_cost_usd=data.get("total_cost_usd", 0.0),
         error_message=data.get("error_message"),

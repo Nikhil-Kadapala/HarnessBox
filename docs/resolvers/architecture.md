@@ -15,7 +15,7 @@ This resolver contains the architectural design of HarnessBox, including its pub
 
 **Internal orchestration (Sandbox, used by WorkspaceManager and server):**
 1. **Construct** — `Sandbox(client="e2b", harness="claude-code", security_policy=..., workspace=...)`
-2. **Setup** — `await sandbox.setup()` via `initialize_sandbox()`: create VM, check tools, workspace root, env, optional git/mount, optional setup script (no harness file injection)
+2. **Setup** — `await sandbox.setup()` via `initialize_sandbox()`: create VM, check tools, workspace root, env, optional `setup_git` / `mount_fs`, optional setup script (no harness file injection)
 3. **Execute** — `await sandbox.run_prompt(prompt)` streams agent output (text or typed events), or `await sandbox.start_interactive_session()` for PTY
 4. **End** — `await sandbox.end()` commits/pushes workspace changes, destroys sandbox
 
@@ -50,7 +50,10 @@ All SDK source lives under `packages/sdk/src/harnessbox/`.
 - **Credentials never as env vars** — Git auth tokens use `git credential helper`, not environment variables.
 - **Manifest is pure computation** — `build_manifest()` takes config and returns a `SandboxManifest`. No I/O.
 - **Fail-open hook guard** — PreToolUse hooks exit 0 on errors, prioritizing availability over strict blocking.
-- **Setup script runs after content inject** — Optional user setup_script runs after git clone / mount. Harness/agent files are not written during create (configure is a follow-up).
+- **Setup script runs after content inject** — Optional user setup_script runs after `setup_git` / `mount_fs`. Harness/agent files are not written during create (configure is a follow-up).
+- **Server-minted workspace identity** — HTTP create always mints `workspace_id` (uuid4); client-supplied ids are ignored. `project_id` stays null until a Project API exists. `model` is not accepted on create.
+- **Git cwd wins** — When git is present, agent cwd is `/workspace/<clone_dir_name>` regardless of request `cwd`.
+- **GitCredentials SSH fields** — `type=ssh` / `ssh_key` are accepted on the wire but not wired into clone auth yet (token / gh only).
 
 ## Extension Points
 
