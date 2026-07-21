@@ -27,12 +27,20 @@ async with HarnessBox(
 
 ## Install
 
-```bash
-pip install harnessbox
+Three install shapes — pick the one that matches how you run:
 
-# With E2B provider
+```bash
+# In-process SDK (your process talks to E2B directly)
 pip install "harnessbox[e2b]"
+
+# HTTP client only (cloud or self-hosted API — never installs e2b)
+pip install "harnessbox[client]"
+
+# Server host (local server or apps/api — holds the provider key)
+pip install "harnessbox[server,e2b]"
 ```
+
+`pip install harnessbox` alone is the zero-dependency core (protocols + types).
 
 ## Quickstart
 
@@ -341,7 +349,7 @@ packages/sdk/src/harnessbox/
   sandbox.py                    # internal sandbox orchestration
   workspace.py                  # Workspace protocol, GitRepoConfig
   providers.py                  # SandboxProvider protocol
-  lifecycle.py                  # SessionStatus & RuntimeState transition map
+  lifecycle.py                  # RuntimeState transition map
   streaming.py                  # UniversalEvent, StreamParser
   events.py                     # EventBuffer (SSE replay)
   server.py                     # HTTP/SSE transport

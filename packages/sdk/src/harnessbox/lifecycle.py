@@ -1,6 +1,7 @@
 """Workspace lifecycle state machine for sandboxed workspaces.
 
-RuntimeState tracks sandbox infrastructure (is the VM running?).
+RuntimeState is the single status vocabulary used by the public SDK, HTTP API,
+and internal WorkspaceManager orchestration.
 """
 
 from __future__ import annotations
@@ -8,26 +9,11 @@ from __future__ import annotations
 from enum import Enum
 
 
-class SessionStatus(str, Enum):
-    """User-facing session status.
-
-    Users see only three states:
-    - RUNNING: actively doing work, accepting prompts
-    - SLEEPING: paused to save cost, wakes transparently on next interaction
-    - KILLED: user explicitly destroyed it, gone forever
-    """
-
-    RUNNING = "running"
-    SLEEPING = "sleeping"
-    KILLED = "killed"
-
-
 class RuntimeState(str, Enum):
-    """Internal sandbox infrastructure states.
+    """Sandbox / workspace lifecycle states.
 
-    These are internal orchestration states used by WorkspaceManager and Sandbox
-    for lifecycle management. Users never see these directly — they are mapped to
-    SessionStatus (running/sleeping/killed) at the public API boundary.
+    Used everywhere — SDK Session.status, HTTP ``state`` field, and internal
+    WorkspaceManager transitions.
     """
 
     STARTING = "starting"
@@ -37,22 +23,6 @@ class RuntimeState(str, Enum):
     ENDED = "ended"
     DEAD = "dead"
     ERROR = "error"
-
-
-_RUNTIME_TO_STATUS: dict[RuntimeState, SessionStatus] = {
-    RuntimeState.STARTING: SessionStatus.RUNNING,
-    RuntimeState.ACTIVE: SessionStatus.RUNNING,
-    RuntimeState.PAUSED: SessionStatus.SLEEPING,
-    RuntimeState.DYING: SessionStatus.KILLED,
-    RuntimeState.ENDED: SessionStatus.KILLED,
-    RuntimeState.DEAD: SessionStatus.KILLED,
-    RuntimeState.ERROR: SessionStatus.KILLED,
-}
-
-
-def to_session_status(state: RuntimeState) -> SessionStatus:
-    """Map internal RuntimeState to user-facing SessionStatus."""
-    return _RUNTIME_TO_STATUS[state]
 
 
 VALID_RUNTIME_TRANSITIONS: dict[RuntimeState, frozenset[RuntimeState]] = {

@@ -8,10 +8,12 @@ Install with ``pip install harnessbox[server]`` for dependencies.
 Endpoints:
     GET    /v1/workspace/name              — generate workspace name
     GET    /v1/workspace/detect            — detect repo from path
-    POST   /v1/workspaces                  — create workspace
+    POST   /v1/workspaces/create           — create workspace (slim provision)
+    POST   /v1/workspaces                  — deprecated alias for create
     GET    /v1/workspaces                  — list workspaces
     GET    /v1/workspaces/{id}             — get workspace info
     DELETE /v1/workspaces/{id}             — destroy workspace
+    POST   /v1/workspaces/{id}/files       — upload a file into the sandbox
     GET    /v1/workspaces/{id}/conversations — list conversations
     POST   /v1/workspaces/{id}/prompt      — send prompt, SSE response
     GET    /v1/workspaces/{id}/events      — subscribe to live events (SSE)
@@ -45,10 +47,16 @@ from harnessbox._server.routers import (
 from harnessbox._server.routers._models import (  # noqa: F401
     AttachmentPayload,
     CreateSessionRequest,
+    CreateWorkspaceRequestParams,
+    CreateWorkspaceResponseParams,
+    GitCredentialsParams,
+    GitSourceParams,
+    MountSourceParams,
     PermissionRequest,
     PromptRequest,
     SecurityPolicyRequest,
     SessionResponse,
+    UploadFileParams,
     WorkspaceRequest,
 )
 from harnessbox._server.storage import StorageBackend

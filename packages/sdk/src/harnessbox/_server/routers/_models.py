@@ -2,39 +2,41 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class SecurityPolicyRequest(BaseModel):
-    """Request body for configuring a sandbox security policy."""
+class GitCredentialsParams(BaseModel):
+    """How to authenticate with a git remote."""
 
-    denied_tools: list[str] = []
-    denied_bash_patterns: list[str] = []
-    deny_network: bool = False
-    credential_guards: bool | list[str] = True
+    type: str = "token"
+    """Auth method: ``token``, ``gh``, or ``ssh``."""
 
-    @field_validator("credential_guards", mode="before")
-    @classmethod
-    def _coerce_guards(cls, v: object) -> bool | list[str]:
-        if isinstance(v, (bool, list)):
-            return v
-        if isinstance(v, str):
-            return [v]
-        return True
+    token: str | None = None
+    """Personal access token or equivalent (for ``type=token``)."""
+
+    ssh_key: str | None = None
+    """Private SSH key material (for ``type=ssh``)."""
 
 
-class WorkspaceRequest(BaseModel):
-    """Request body for git workspace configuration (remote, branch, auth)."""
+class GitSourceParams(BaseModel):
+    """Git repository to clone during workspace create."""
 
-    remote: str
+    repo_url: str
     branch: str = "main"
-    auth_token: str | None = None
+    credentials: GitCredentialsParams | None = None
     clone_depth: int = 1
     clone_dir_name: str | None = None
 
 
-class CreateSessionRequest(BaseModel):
-    """Request body for creating a new sandbox workspace session."""
+class MountSourceParams(BaseModel):
+    """Filesystem or remote mount to attach during workspace create."""
+
+    source: str
+    mount_path: str = "/workspace"
+
+
+class CreateWorkspaceRequestParams(BaseModel):
+    """Request body for ``POST /v1/workspaces/create``."""
 
     provider: str = "e2b"
     api_key: str | None = None
@@ -46,24 +48,48 @@ class CreateSessionRequest(BaseModel):
     session_timeout: int = 900
     skip_permissions: bool = False
     template: str | None = None
-    session_id: str | None = None
-    security_policy: SecurityPolicyRequest | None = None
-    workspace: WorkspaceRequest | None = None
+    workspace_id: str | None = None
+    project_id: str | None = None
+    git: GitSourceParams | None = None
+    mount: MountSourceParams | None = None
 
 
-class SessionResponse(BaseModel):
-    """Response body containing session metadata and state."""
+class CreateWorkspaceResponseParams(BaseModel):
+    """Response body for workspace create/list/get/lifecycle endpoints."""
 
-    session_id: str
-    harness: str
-    runtime_state: str
+    workspace_id: str
+    state: str
     created_at: str
+    harness: str = "claude-code"
+    project_id: str | None = None
     workspace_name: str | None = None
     branch: str | None = None
     base_branch: str | None = None
     remote: str | None = None
+    mount_path: str | None = None
     total_cost_usd: float = 0.0
     error_message: str | None = None
+
+
+class UploadFileParams(BaseModel):
+    """Upload a file into an existing workspace sandbox."""
+
+    path: str
+    """Absolute path inside the sandbox (e.g. ``/workspace/notes.md``)."""
+
+    content: str | None = None
+    """UTF-8 text content. Mutually exclusive with ``content_b64``."""
+
+    content_b64: str | None = Field(default=None, max_length=14_000_000)
+    """Base64-encoded binary content. Mutually exclusive with ``content``."""
+
+    @model_validator(mode="after")
+    def _require_content(self) -> UploadFileParams:
+        if self.content is None and self.content_b64 is None:
+            raise ValueError("Provide content or content_b64")
+        if self.content is not None and self.content_b64 is not None:
+            raise ValueError("Provide only one of content or content_b64")
+        return self
 
 
 class AttachmentPayload(BaseModel):
@@ -88,3 +114,67 @@ class PermissionRequest(BaseModel):
 
     request_id: str
     behavior: str = "allow"
+
+
+# ---------------------------------------------------------------------------
+# Deprecated aliases (pre-workspace-API-unify). Prefer *Params names above.
+# ---------------------------------------------------------------------------
+
+
+class SecurityPolicyRequest(BaseModel):
+    """Deprecated — configure belongs on a future endpoint, not create."""
+
+    denied_tools: list[str] = []
+    denied_bash_patterns: list[str] = []
+    deny_network: bool = False
+    credential_guards: bool | list[str] = True
+
+    @field_validator("credential_guards", mode="before")
+    @classmethod
+    def _coerce_guards(cls, v: object) -> bool | list[str]:
+        if isinstance(v, (bool, list)):
+            return v
+        if isinstance(v, str):
+            return [v]
+        return True
+
+
+class WorkspaceRequest(BaseModel):
+    """Deprecated — use GitSourceParams."""
+
+    remote: str
+    branch: str = "main"
+    auth_token: str | None = None
+    clone_depth: int = 1
+    clone_dir_name: str | None = None
+
+
+class CreateSessionRequest(BaseModel):
+    """Deprecated alias accepting the legacy create body shape.
+
+    Prefer :class:`CreateWorkspaceRequestParams`. Still accepted so older
+    clients can migrate; mapped to the new shape in the factory.
+    """
+
+    provider: str = "e2b"
+    api_key: str | None = None
+    model: str | None = None
+    env_vars: dict[str, str] = {}
+    setup_script: str | None = None
+    cwd: str | None = None
+    sandbox_timeout: int = 1800
+    session_timeout: int = 900
+    skip_permissions: bool = False
+    template: str | None = None
+    session_id: str | None = None
+    security_policy: SecurityPolicyRequest | None = None
+    workspace: WorkspaceRequest | None = None
+    project_id: str | None = None
+    git: GitSourceParams | None = None
+    mount: MountSourceParams | None = None
+    workspace_id: str | None = None
+
+
+# Response alias used by older call sites
+SessionResponse = CreateWorkspaceResponseParams
+WorkspaceParams = CreateWorkspaceResponseParams

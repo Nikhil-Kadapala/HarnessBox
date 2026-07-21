@@ -31,9 +31,9 @@ from harnessbox.streaming import EventType, UniversalEvent
 _BASE = "http://localhost:8000"
 
 _SESSION_STARTING = {
-    "session_id": "ws-1",
+    "workspace_id": "ws-1",
     "harness": "claude-code",
-    "runtime_state": "starting",
+    "state": "starting",
     "created_at": "2026-01-01T00:00:00Z",
     "workspace_name": "brave-otter",
     "branch": "brave-otter",
@@ -43,7 +43,7 @@ _SESSION_STARTING = {
     "error_message": None,
 }
 
-_SESSION_ACTIVE = {**_SESSION_STARTING, "runtime_state": "active"}
+_SESSION_ACTIVE = {**_SESSION_STARTING, "state": "active"}
 
 _ACTIVE_STATE_EVENT = json.dumps(
     {
@@ -52,7 +52,7 @@ _ACTIVE_STATE_EVENT = json.dumps(
         "message": {
             "event_id": "ev-1",
             "sequence": 1,
-            "session_id": "ws-1",
+            "workspace_id": "ws-1",
             "metadata": {"runtime_state": "active"},
         },
     }
@@ -93,7 +93,7 @@ class TestWorkspaceInfo:
         ws = WorkspaceInfo(
             workspace_id="ws-1",
             harness="claude-code",
-            runtime_state="active",
+            state="active",
             created_at="2026-01-01T00:00:00Z",
             remote="https://github.com/org/repo",
             branch="brave-otter",
@@ -188,7 +188,7 @@ class TestUniversalEventFromDict:
             "message": {
                 "event_id": "ev-1",
                 "sequence": 0,
-                "session_id": "ws-1",
+                "workspace_id": "ws-1",
             },
         }
         event = UniversalEvent.from_dict(data)
@@ -207,7 +207,7 @@ class TestCreateWorkspace:
     @pytest.mark.asyncio
     @respx.mock
     async def test_already_active_returns_immediately(self) -> None:
-        respx.post(f"{_BASE}/v1/workspaces").mock(return_value=Response(200, json=_SESSION_ACTIVE))
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(return_value=Response(200, json=_SESSION_ACTIVE))
 
         async with HarnessBoxClient(_BASE) as client:
             ws = await client.create_workspace(
@@ -227,7 +227,7 @@ class TestCreateWorkspace:
             captured.append(json.loads(request.content))
             return Response(200, json=_SESSION_ACTIVE)
 
-        respx.post(f"{_BASE}/v1/workspaces").mock(side_effect=capture)
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
 
         async with HarnessBoxClient(_BASE) as client:
             await client.create_workspace(
@@ -238,19 +238,19 @@ class TestCreateWorkspace:
 
         body = captured[0]
         assert body["provider"] == "e2b"
-        # Git config is nested under `workspace`, not at top level.
-        assert body["workspace"] == {
-            "remote": "https://github.com/org/repo",
+        # Git config is nested under `git` (CreateWorkspaceRequestParams).
+        assert body["git"] == {
+            "repo_url": "https://github.com/org/repo",
             "branch": "feature-x",
         }
         assert "remote" not in body
-        assert "branch" not in body
+        assert "workspace" not in body
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_waits_for_active_via_sse(self) -> None:
         sse_body = _sse(_ACTIVE_STATE_EVENT)
-        respx.post(f"{_BASE}/v1/workspaces").mock(
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
             return_value=Response(202, json=_SESSION_STARTING)
         )
         respx.get(f"{_BASE}/v1/workspaces/ws-1/events").mock(
@@ -272,7 +272,7 @@ class TestCreateWorkspace:
     @respx.mock
     async def test_error_state_raises(self) -> None:
         sse_body = _sse(_ERROR_STATE_FLAT)
-        respx.post(f"{_BASE}/v1/workspaces").mock(
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
             return_value=Response(202, json=_SESSION_STARTING)
         )
         respx.get(f"{_BASE}/v1/workspaces/ws-1/events").mock(
@@ -295,7 +295,7 @@ class TestCreateWorkspace:
     async def test_stream_ends_before_active_raises(self) -> None:
         # Events stream closes with no ACTIVE/terminal frame; server still says
         # "starting" on the reconciling GET → must raise, not return starting.
-        respx.post(f"{_BASE}/v1/workspaces").mock(
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
             return_value=Response(202, json=_SESSION_STARTING)
         )
         respx.get(f"{_BASE}/v1/workspaces/ws-1/events").mock(
@@ -317,7 +317,7 @@ class TestCreateWorkspace:
     @pytest.mark.asyncio
     @respx.mock
     async def test_http_error_raises(self) -> None:
-        respx.post(f"{_BASE}/v1/workspaces").mock(
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
             return_value=Response(503, text="Service unavailable")
         )
 
@@ -339,7 +339,7 @@ class TestCreateWorkspace:
             captured.append(json.loads(request.content))
             return Response(200, json=_SESSION_ACTIVE)
 
-        respx.post(f"{_BASE}/v1/workspaces").mock(side_effect=capture)
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
 
         async with HarnessBoxClient(_BASE) as client:
             await client.create_workspace(
@@ -361,7 +361,7 @@ class TestCreateWorkspace:
             captured.append(json.loads(request.content))
             return Response(200, json=_SESSION_ACTIVE)
 
-        respx.post(f"{_BASE}/v1/workspaces").mock(side_effect=capture)
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
 
         async with HarnessBoxClient(_BASE) as client:
             await client.create_workspace(
@@ -532,7 +532,7 @@ class TestGetWorkspace:
         respx.get(f"{_BASE}/v1/workspaces/ws-min").mock(
             return_value=Response(
                 200,
-                json={"session_id": "ws-min", "runtime_state": "starting"},
+                json={"workspace_id": "ws-min", "state": "starting"},
             )
         )
 
@@ -573,7 +573,7 @@ class TestApiKeyHeader:
             captured_auth.append(request.headers.get("authorization", ""))
             return Response(200, json=_SESSION_ACTIVE)
 
-        respx.post(f"{_BASE}/v1/workspaces").mock(side_effect=capture)
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
 
         async with HarnessBoxClient(_BASE, api_key="my-token") as client:
             await client.create_workspace(

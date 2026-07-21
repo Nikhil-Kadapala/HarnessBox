@@ -38,10 +38,12 @@ export async function stopSession(sessionId: string): Promise<void> {
 
 function transformSessionCard(session: Record<string, unknown>): SessionCard {
   const workspaceName = (session.workspace_name as string) || undefined;
+  const id = (session.workspace_id as string) || (session.session_id as string) || "";
+  const state = (session.state as string) || (session.runtime_state as string) || "";
   return {
-    id: session.session_id as string,
-    title: workspaceName || (session.session_id as string)?.slice(0, 8) || "",
-    status: session.runtime_state as string,
+    id,
+    title: workspaceName || id.slice(0, 8) || "",
+    status: state,
     harness: session.harness as string,
     repository: extractRepoName(workspaceName),
     branch: (session.branch as string) || undefined,

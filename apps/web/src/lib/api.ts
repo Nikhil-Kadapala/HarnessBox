@@ -47,7 +47,7 @@ export async function fetchGuards(): Promise<GuardInfo[]> {
 }
 
 export async function createSession(config: CreateSessionRequest, signal?: AbortSignal): Promise<SessionResponse> {
-  return fetchJSON<SessionResponse>("/v1/workspaces", {
+  return fetchJSON<SessionResponse>("/v1/workspaces/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),

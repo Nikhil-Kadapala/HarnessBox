@@ -6,19 +6,19 @@ import pytest
 
 from harnessbox.config.harness import get_harness_type
 from harnessbox.config.pipeline import (
-    SetupContext,
-    SetupPipeline,
-    SetupStep,
-    build_setup_pipeline,
+    InitializeContext,
+    InitializeSandbox,
+    InitializeStep,
+    initialize_sandbox,
 )
 from harnessbox.security.policy import SecurityPolicy
 from tests.conftest import MockProvider
 
 
-class TestSetupContext:
+class TestInitializeContext:
     def test_defaults(self):
         provider = MockProvider()
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
         )
@@ -32,7 +32,7 @@ class TestSetupContext:
 
     def test_carries_state(self):
         provider = MockProvider()
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
             env_vars={"API_KEY": "test"},
@@ -42,57 +42,57 @@ class TestSetupContext:
         assert ctx.setup_script == "npm install"
 
 
-class TestSetupStep:
+class TestInitializeStep:
     def test_frozen(self):
-        async def noop(ctx: SetupContext) -> None:
+        async def noop(ctx: InitializeContext) -> None:
             pass
 
-        step = SetupStep(name="test", execute=noop)
+        step = InitializeStep(name="test", execute=noop)
         assert step.name == "test"
         assert step.skip_if is None
 
 
-class TestSetupPipeline:
+class TestInitializeSandbox:
     @pytest.mark.asyncio
     async def test_executes_steps_in_order(self):
         order: list[str] = []
 
-        async def step_a(ctx: SetupContext) -> None:
+        async def step_a(ctx: InitializeContext) -> None:
             order.append("a")
 
-        async def step_b(ctx: SetupContext) -> None:
+        async def step_b(ctx: InitializeContext) -> None:
             order.append("b")
 
-        async def step_c(ctx: SetupContext) -> None:
+        async def step_c(ctx: InitializeContext) -> None:
             order.append("c")
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="a", execute=step_a),
-                SetupStep(name="b", execute=step_b),
-                SetupStep(name="c", execute=step_c),
+                InitializeStep(name="a", execute=step_a),
+                InitializeStep(name="b", execute=step_b),
+                InitializeStep(name="c", execute=step_c),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
         await pipeline.execute(ctx)
 
         assert order == ["a", "b", "c"]
 
     @pytest.mark.asyncio
     async def test_records_timings(self):
-        async def noop(ctx: SetupContext) -> None:
+        async def noop(ctx: InitializeContext) -> None:
             pass
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="fast_step", execute=noop),
+                InitializeStep(name="fast_step", execute=noop),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
         timings = await pipeline.execute(ctx)
 
         assert "fast_step" in timings
@@ -104,21 +104,21 @@ class TestSetupPipeline:
     async def test_skip_if_respected(self):
         order: list[str] = []
 
-        async def step_a(ctx: SetupContext) -> None:
+        async def step_a(ctx: InitializeContext) -> None:
             order.append("a")
 
-        async def step_b(ctx: SetupContext) -> None:
+        async def step_b(ctx: InitializeContext) -> None:
             order.append("b")
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="a", execute=step_a, skip_if=lambda ctx: True),
-                SetupStep(name="b", execute=step_b),
+                InitializeStep(name="a", execute=step_a, skip_if=lambda ctx: True),
+                InitializeStep(name="b", execute=step_b),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
         await pipeline.execute(ctx)
 
         assert order == ["b"]
@@ -128,25 +128,25 @@ class TestSetupPipeline:
     async def test_error_halts_pipeline(self):
         order: list[str] = []
 
-        async def step_ok(ctx: SetupContext) -> None:
+        async def step_ok(ctx: InitializeContext) -> None:
             order.append("ok")
 
-        async def step_fail(ctx: SetupContext) -> None:
+        async def step_fail(ctx: InitializeContext) -> None:
             raise RuntimeError("boom")
 
-        async def step_after(ctx: SetupContext) -> None:
+        async def step_after(ctx: InitializeContext) -> None:
             order.append("after")
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="ok", execute=step_ok),
-                SetupStep(name="fail", execute=step_fail),
-                SetupStep(name="after", execute=step_after),
+                InitializeStep(name="ok", execute=step_ok),
+                InitializeStep(name="fail", execute=step_fail),
+                InitializeStep(name="after", execute=step_after),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
 
         with pytest.raises(RuntimeError, match="boom"):
             await pipeline.execute(ctx)
@@ -155,80 +155,77 @@ class TestSetupPipeline:
 
     @pytest.mark.asyncio
     async def test_context_state_propagates_between_steps(self):
-        async def step_write(ctx: SetupContext) -> None:
+        async def step_write(ctx: InitializeContext) -> None:
             ctx.cwd = "/workspace/myrepo"
 
-        async def step_read(ctx: SetupContext) -> None:
+        async def step_read(ctx: InitializeContext) -> None:
             assert ctx.cwd == "/workspace/myrepo"
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="write", execute=step_write),
-                SetupStep(name="read", execute=step_read),
+                InitializeStep(name="write", execute=step_write),
+                InitializeStep(name="read", execute=step_read),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
         await pipeline.execute(ctx)
 
     def test_step_names(self):
-        async def noop(ctx: SetupContext) -> None:
+        async def noop(ctx: InitializeContext) -> None:
             pass
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="a", execute=noop),
-                SetupStep(name="b", execute=noop),
-                SetupStep(name="c", execute=noop),
+                InitializeStep(name="a", execute=noop),
+                InitializeStep(name="b", execute=noop),
+                InitializeStep(name="c", execute=noop),
             ]
         )
 
         assert pipeline.step_names() == ["a", "b", "c"]
 
     def test_dry_run_respects_skip_if(self):
-        async def noop(ctx: SetupContext) -> None:
+        async def noop(ctx: InitializeContext) -> None:
             pass
 
-        pipeline = SetupPipeline(
+        pipeline = InitializeSandbox(
             [
-                SetupStep(name="always", execute=noop),
-                SetupStep(name="skipped", execute=noop, skip_if=lambda ctx: True),
-                SetupStep(
+                InitializeStep(name="always", execute=noop),
+                InitializeStep(name="skipped", execute=noop, skip_if=lambda ctx: True),
+                InitializeStep(
                     name="conditional", execute=noop, skip_if=lambda ctx: ctx.workspace is None
                 ),
             ]
         )
 
         provider = MockProvider()
-        ctx = SetupContext(provider=provider, harness_config=get_harness_type("claude-code"))
+        ctx = InitializeContext(provider=provider, harness_config=get_harness_type("claude-code"))
         result = pipeline.dry_run(ctx)
 
         assert result == ["always"]
 
 
-class TestBuildSetupPipeline:
+class TestInitializeSandboxFactory:
     def test_default_pipeline_step_names(self):
-        pipeline = build_setup_pipeline()
+        pipeline = initialize_sandbox()
         names = pipeline.step_names()
         assert names == [
             "create_sandbox",
             "check_tools",
             "create_workspace_root",
+            "inject_env",
             "inject_workspace",
-            "load_project_config",
-            "build_manifest",
-            "create_directories",
-            "inject_files",
-            "set_hook_permissions",
+            "attach_mount",
             "run_setup_script",
         ]
 
     def test_extra_steps_appended(self):
-        async def custom(ctx: SetupContext) -> None:
+        async def custom(ctx: InitializeContext) -> None:
             pass
 
-        pipeline = build_setup_pipeline(extra_steps=[SetupStep(name="custom_step", execute=custom)])
+        pipeline = initialize_sandbox(extra_steps=[InitializeStep(name="custom_step", execute=custom)])
         names = pipeline.step_names()
         assert names[-1] == "custom_step"
 
@@ -236,31 +233,35 @@ class TestBuildSetupPipeline:
     async def test_full_pipeline_with_mock_provider(self):
         """Run the full default pipeline against MockProvider."""
         provider = MockProvider()
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
             env_vars={"TEST": "1"},
         )
-        pipeline = build_setup_pipeline()
+        pipeline = initialize_sandbox()
         await pipeline.execute(ctx)
 
         assert provider._sandbox_id == "mock-sandbox-123"
         assert "/workspace" in provider._dirs
-        assert ctx.manifest is not None
-        assert ctx.manifest_target_dir == "/workspace"
+        # Slim init does not build/inject harness manifests
+        assert ctx.manifest is None
+        assert provider._files == {}
 
     @pytest.mark.asyncio
-    async def test_pipeline_with_security_policy(self):
-        """Security policy produces settings and hook files."""
+    async def test_configure_path_injects_security_files(self):
+        """Future configure path still writes settings/hooks via build_and_inject_manifest."""
+        from harnessbox.config.pipeline import build_and_inject_manifest
+
         provider = MockProvider()
         policy = SecurityPolicy(denied_tools=["WebFetch"], deny_network=True)
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
             security_policy=policy,
         )
-        pipeline = build_setup_pipeline()
-        await pipeline.execute(ctx)
+        await provider.create()
+        await provider.make_dir("/workspace")
+        await build_and_inject_manifest(ctx)
 
         assert "/workspace/.claude/settings.json" in provider._files
         assert "/workspace/.claude/hooks/guard_bash.py" in provider._files
@@ -271,12 +272,12 @@ class TestBuildSetupPipeline:
     async def test_pipeline_with_setup_script(self):
         """Setup script runs at the end."""
         provider = MockProvider()
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
             setup_script="npm install",
         )
-        pipeline = build_setup_pipeline()
+        pipeline = initialize_sandbox()
         await pipeline.execute(ctx)
 
         assert "npm install" in provider._commands
@@ -297,69 +298,29 @@ class TestBuildSetupPipeline:
 
         provider.run_command = failing_run  # type: ignore[assignment]
 
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
             setup_script="npm install",
         )
-        pipeline = build_setup_pipeline()
+        pipeline = initialize_sandbox()
 
         with pytest.raises(RuntimeError, match="Setup script failed"):
             await pipeline.execute(ctx)
 
     @pytest.mark.asyncio
-    async def test_pipeline_with_system_prompt(self):
-        """System prompt is written as CLAUDE.md."""
-        provider = MockProvider()
-        ctx = SetupContext(
-            provider=provider,
-            harness_config=get_harness_type("claude-code"),
-            system_prompt="You are a test agent.",
-        )
-        pipeline = build_setup_pipeline()
-        await pipeline.execute(ctx)
-
-        assert provider._files["/workspace/CLAUDE.md"] == "You are a test agent."
-
-    @pytest.mark.asyncio
-    async def test_pipeline_with_user_files(self):
-        """User files are injected via manifest."""
-        provider = MockProvider()
-        ctx = SetupContext(
-            provider=provider,
-            harness_config=get_harness_type("claude-code"),
-            files={"/workspace/data.json": '{"key": "value"}'},
-        )
-        pipeline = build_setup_pipeline()
-        await pipeline.execute(ctx)
-
-        assert provider._files["/workspace/data.json"] == '{"key": "value"}'
-
-    @pytest.mark.asyncio
     async def test_pipeline_skips_workspace_when_none(self):
         """inject_workspace step is skipped when no workspace configured."""
         provider = MockProvider()
-        ctx = SetupContext(
+        ctx = InitializeContext(
             provider=provider,
             harness_config=get_harness_type("claude-code"),
         )
-        pipeline = build_setup_pipeline()
+        pipeline = initialize_sandbox()
         result = pipeline.dry_run(ctx)
 
         assert "inject_workspace" not in result
-
-    @pytest.mark.asyncio
-    async def test_pipeline_skips_hooks_without_policy(self):
-        """set_hook_permissions is skipped without a security policy."""
-        provider = MockProvider()
-        ctx = SetupContext(
-            provider=provider,
-            harness_config=get_harness_type("claude-code"),
-        )
-        pipeline = build_setup_pipeline()
-        result = pipeline.dry_run(ctx)
-
-        assert "set_hook_permissions" not in result
+        assert "attach_mount" not in result
 
 
 class TestSandboxDryRun:
@@ -373,7 +334,8 @@ class TestSandboxDryRun:
         steps = sb.dry_run()
 
         assert "create_sandbox" in steps
-        assert "build_manifest" in steps
+        assert "inject_env" in steps
+        assert "build_manifest" not in steps
         assert "inject_workspace" not in steps  # no workspace configured
 
     def test_dry_run_includes_setup_script_when_configured(self):
@@ -394,7 +356,7 @@ class TestSandboxDryRun:
 
         assert "run_setup_script" not in steps
 
-    def test_dry_run_includes_hooks_with_policy(self):
+    def test_dry_run_excludes_hooks_even_with_policy(self):
         from harnessbox.sandbox import Sandbox
 
         provider = MockProvider()
@@ -405,4 +367,5 @@ class TestSandboxDryRun:
         )
         steps = sb.dry_run()
 
-        assert "set_hook_permissions" in steps
+        assert "set_hook_permissions" not in steps
+        assert "inject_files" not in steps

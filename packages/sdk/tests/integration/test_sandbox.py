@@ -45,22 +45,22 @@ class TestSetup:
         assert sb.sandbox_id == "mock-sandbox-123"
 
     @pytest.mark.asyncio
-    async def test_creates_default_dirs(self, mock_provider):
+    async def test_creates_workspace_root_only(self, mock_provider):
         sb = Sandbox(client=mock_provider, harness="claude-code")
         await sb.setup()
-        assert "/workspace/user_input" in mock_provider._dirs
-        assert "/workspace/output" in mock_provider._dirs
-        assert "/workspace/.claude" in mock_provider._dirs
-        assert "/workspace/.claude/hooks" in mock_provider._dirs
+        assert "/workspace" in mock_provider._dirs
+        # Slim init does not create harness dirs from the manifest
+        assert "/workspace/.claude" not in mock_provider._dirs
+        assert "/workspace/user_input" not in mock_provider._dirs
 
     @pytest.mark.asyncio
-    async def test_creates_user_dirs(self, mock_provider):
+    async def test_user_dirs_not_created_on_slim_setup(self, mock_provider):
         sb = Sandbox(
             client=mock_provider,
             dirs=["/workspace/custom_dir"],
         )
         await sb.setup()
-        assert "/workspace/custom_dir" in mock_provider._dirs
+        assert "/workspace/custom_dir" not in mock_provider._dirs
 
     @pytest.mark.asyncio
     async def test_writes_user_files(self, mock_provider):
@@ -69,23 +69,24 @@ class TestSetup:
             files={"/workspace/test.txt": "hello"},
         )
         await sb.setup()
-        assert mock_provider._files["/workspace/test.txt"] == "hello"
+        # Slim init does not inject files during create
+        assert "/workspace/test.txt" not in mock_provider._files
 
     @pytest.mark.asyncio
-    async def test_system_prompt_via_init(self, mock_provider):
+    async def test_system_prompt_not_injected_on_setup(self, mock_provider):
         sb = Sandbox(
             client=mock_provider, harness="claude-code", system_prompt="You are a test assistant."
         )
         await sb.setup()
-        assert mock_provider._files["/workspace/CLAUDE.md"] == "You are a test assistant."
+        assert "/workspace/CLAUDE.md" not in mock_provider._files
 
     @pytest.mark.asyncio
-    async def test_security_config_injected(self, mock_provider):
+    async def test_security_config_not_injected_on_setup(self, mock_provider):
         policy = SecurityPolicy(denied_tools=["WebFetch"], deny_network=True)
         sb = Sandbox(client=mock_provider, security_policy=policy)
         await sb.setup()
-        assert "/workspace/.claude/settings.json" in mock_provider._files
-        assert "/workspace/.claude/hooks/guard_bash.py" in mock_provider._files
+        assert "/workspace/.claude/settings.json" not in mock_provider._files
+        assert "/workspace/.claude/hooks/guard_bash.py" not in mock_provider._files
 
     @pytest.mark.asyncio
     async def test_no_security_config_without_policy(self, mock_provider):
@@ -94,13 +95,12 @@ class TestSetup:
         assert "/workspace/.claude/settings.json" not in mock_provider._files
 
     @pytest.mark.asyncio
-    async def test_hook_chmod_called(self, mock_provider):
+    async def test_hook_chmod_not_called_on_slim_setup(self, mock_provider):
         policy = SecurityPolicy()
         sb = Sandbox(client=mock_provider, security_policy=policy)
         await sb.setup()
         chmod_cmds = [c for c in mock_provider._commands if "chmod" in c]
-        assert len(chmod_cmds) == 1
-        assert "guard_bash.py" in chmod_cmds[0]
+        assert len(chmod_cmds) == 0
 
     @pytest.mark.asyncio
     async def test_env_vars_passed_to_provider(self, mock_provider):

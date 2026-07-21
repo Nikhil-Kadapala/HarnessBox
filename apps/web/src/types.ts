@@ -98,7 +98,7 @@ export interface DetectedWorkspace {
   name: string;
 }
 
-// --- Session creation ---
+// --- Workspace creation ---
 
 export interface SecurityPolicyConfig {
   denied_tools?: string[];
@@ -106,6 +106,26 @@ export interface SecurityPolicyConfig {
   credential_guards?: boolean | string[];
 }
 
+export interface GitCredentialsParams {
+  type?: string;
+  token?: string;
+  ssh_key?: string;
+}
+
+export interface GitSourceParams {
+  repo_url: string;
+  branch?: string;
+  credentials?: GitCredentialsParams;
+  clone_depth?: number;
+  clone_dir_name?: string;
+}
+
+export interface MountSourceParams {
+  source: string;
+  mount_path?: string;
+}
+
+/** @deprecated Prefer git/mount on CreateWorkspaceRequestParams */
 export interface WorkspaceConfig {
   remote: string;
   branch?: string;
@@ -115,8 +135,8 @@ export interface WorkspaceConfig {
   clone_dir_name?: string;
 }
 
-export interface CreateSessionRequest {
-  session_id?: string;
+export interface CreateWorkspaceRequestParams {
+  workspace_id?: string;
   provider: string;
   model?: string;
   env_vars: Record<string, string>;
@@ -124,9 +144,17 @@ export interface CreateSessionRequest {
   sandbox_timeout?: number;
   session_timeout?: number;
   template?: string;
+  project_id?: string;
+  git?: GitSourceParams;
+  mount?: MountSourceParams;
+  /** @deprecated legacy create body */
+  session_id?: string;
   security_policy?: SecurityPolicyConfig;
   workspace?: WorkspaceConfig;
 }
+
+/** @deprecated Use CreateWorkspaceRequestParams */
+export type CreateSessionRequest = CreateWorkspaceRequestParams;
 
 export interface PromptBody {
   prompt: string;
@@ -134,16 +162,33 @@ export interface PromptBody {
   conversation_id?: string;
 }
 
-export interface SessionResponse {
-  session_id: string;
-  harness: string;
-  runtime_state: string;
+export interface CreateWorkspaceResponseParams {
+  workspace_id: string;
+  state: string;
   created_at: string;
+  harness: string;
+  project_id?: string;
   workspace_name?: string;
   branch?: string;
   base_branch?: string;
   remote?: string;
+  mount_path?: string;
   total_cost_usd?: number;
+  error_message?: string;
+  /** @deprecated legacy fields — prefer workspace_id / state */
+  session_id?: string;
+  runtime_state?: string;
+}
+
+/** @deprecated Use CreateWorkspaceResponseParams */
+export type SessionResponse = CreateWorkspaceResponseParams;
+
+export function workspaceIdOf(s: CreateWorkspaceResponseParams): string {
+  return s.workspace_id || s.session_id || "";
+}
+
+export function workspaceStateOf(s: CreateWorkspaceResponseParams): string {
+  return s.state || s.runtime_state || "";
 }
 
 export interface SessionCard {
@@ -176,7 +221,9 @@ export type SessionStatus =
   | "failed"
   | "archived"
   | "ended"
-  | "error";
+  | "error"
+  | "dead"
+  | "dying";
 
 export interface SessionEntry {
   id: string;

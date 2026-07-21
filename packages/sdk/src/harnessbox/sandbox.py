@@ -13,7 +13,12 @@ from harnessbox._internal.runtime import InteractiveSession as InteractiveSessio
 from harnessbox._internal.session import SandboxSession
 from harnessbox._internal.workspace_mount import WorkspaceMount
 from harnessbox.config.harness import HarnessTypeConfig, get_harness_type
-from harnessbox.config.pipeline import SetupContext, SetupPipeline, build_setup_pipeline
+from harnessbox.config.pipeline import (
+    InitializeContext,
+    InitializeSandbox,
+    MountSpec,
+    initialize_sandbox,
+)
 from harnessbox.cost import CostMetrics
 from harnessbox.events import EventBuffer
 from harnessbox.lifecycle import RuntimeState
@@ -73,6 +78,7 @@ class Sandbox:
         api_key: str | None = None,
         template: str | None = None,
         workspace: Workspace | None = None,
+        mount: MountSpec | None = None,
         setup_script: str | None = None,
         event_handler: EventHandler | None = None,
         skip_permissions: bool = False,
@@ -92,14 +98,13 @@ class Sandbox:
                 system prompt location (e.g., ``/workspace/CLAUDE.md``).
             env_vars: Environment variables for the sandbox.
             dirs: Additional directories to create in the sandbox.
-            files: Generic files to inject. ``list[Path]`` = read and place
-                at ``{workspace_root}/{filename}``. ``dict[str, str|Path]`` =
-                inject at specific sandbox paths.
+            files: Generic files retained for a future configure path.
             timeout: Sandbox creation and command timeout in seconds.
             api_key: Provider API key (when using string client).
             template: Override the provider template (default: harness-aware).
             workspace: Git workspace to clone into the sandbox.
-            setup_script: Shell command to run after all files are injected.
+            mount: Optional filesystem/remote mount to attach at init.
+            setup_script: Shell command to run after content is available.
             event_handler: Receives sandbox lifecycle events.
             skip_permissions: If True, skip the agent's permission prompts
                 (safe inside isolated sandboxes, required for headless mode).
@@ -141,6 +146,7 @@ class Sandbox:
             dirs=dirs,
             setup_script=setup_script,
             cwd=cwd,
+            mount=mount,
         )
 
         # Lifecycle collaborator
@@ -334,8 +340,8 @@ class Sandbox:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def _build_setup_context(self) -> SetupContext:
-        """Build the SetupContext from Sandbox configuration.
+    def _build_setup_context(self) -> InitializeContext:
+        """Build the InitializeContext from Sandbox configuration.
 
         Pure: does not mutate Sandbox state, safe to call from dry_run().
         """
@@ -346,22 +352,20 @@ class Sandbox:
             snapshot_id=self._snapshot_id,
         )
 
-    def _build_pipeline(self) -> SetupPipeline:
-        """Build the setup pipeline for this sandbox."""
-        return build_setup_pipeline()
+    def _build_pipeline(self) -> InitializeSandbox:
+        """Build the sandbox initialization sequence."""
+        return initialize_sandbox()
 
     async def setup(self) -> None:
-        """Create the sandbox, inject all files and config.
+        """Create the sandbox VM, apply env, and optionally clone/mount content.
 
         Transitions: STARTING -> ACTIVE
 
-        Uses a sequential pipeline:
-        create sandbox -> check tools -> workspace root -> workspace inject ->
-        build manifest -> create dirs -> inject files -> hook permissions ->
-        setup script -> ACTIVE.
+        Uses a sequential initializer:
+        create sandbox -> check tools -> workspace root -> inject env ->
+        optional git inject -> optional mount -> optional setup script -> ACTIVE.
 
-        Agent behavior files (system prompt, skills, plugins) are written
-        AFTER workspace injection so they take precedence over repo contents.
+        Does not write harness/agent config files; that belongs on configure.
         """
         ctx = self._build_setup_context()
         pipeline = self._build_pipeline()
@@ -372,9 +376,9 @@ class Sandbox:
         await self._session.activate()
 
     def dry_run(self) -> list[str]:
-        """Return the list of setup steps that would execute.
+        """Return the list of init steps that would execute.
 
-        Useful for testing and debugging the setup sequence without
+        Useful for testing and debugging the init sequence without
         actually provisioning a sandbox.
         """
         ctx = self._build_setup_context()

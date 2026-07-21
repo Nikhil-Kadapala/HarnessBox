@@ -10,10 +10,10 @@ from harnessbox.config.harness import (
     register_harness_type,
 )
 from harnessbox.config.pipeline import (
-    SetupContext,
-    SetupPipeline,
-    SetupStep,
-    build_setup_pipeline,
+    InitializeContext,
+    InitializeSandbox,
+    InitializeStep,
+    initialize_sandbox,
 )
 from harnessbox.cost import CostMetrics, ModelCost, parse_cost_data
 from harnessbox.credentials import (
@@ -36,8 +36,6 @@ from harnessbox.lifecycle import (
     VALID_RUNTIME_TRANSITIONS,
     InvalidTransitionError,
     RuntimeState,
-    SessionStatus,
-    to_session_status,
     validate_runtime_transition,
 )
 from harnessbox.process import AgentProcess
@@ -116,11 +114,9 @@ __all__ = [
     "InvalidTransitionError",
     "SecurityPolicy",
     "RuntimeState",
-    "SessionStatus",
     "VALID_RUNTIME_TRANSITIONS",
     "build_settings",
     "merge_guard_sets",
-    "to_session_status",
     "validate_runtime_transition",
     # Streaming
     "Attachment",
@@ -158,10 +154,10 @@ __all__ = [
     "Sandbox",
     "SandboxDeadError",
     "SandboxProvider",
-    "SetupContext",
-    "SetupPipeline",
-    "SetupStep",
-    "build_setup_pipeline",
+    "InitializeContext",
+    "InitializeSandbox",
+    "InitializeStep",
+    "initialize_sandbox",
     "get_harness_type",
     "list_harness_types",
     "register_harness_type",

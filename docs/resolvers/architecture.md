@@ -4,18 +4,18 @@ This resolver contains the architectural design of HarnessBox, including its pub
 
 ## Core Flow
 
-`HarnessBox` is the public SDK entry point. `Sandbox` is the internal orchestrator.
+`HarnessBox` is the public SDK entry point. `Sandbox` is the internal orchestrator. Lifecycle status is a single `RuntimeState` enum everywhere (SDK + HTTP).
 
 **Public API (for SDK users):**
 1. **Construct** — `HarnessBox(provider="e2b", harness="claude-code", secrets=..., workspace_config=...)`
-2. **Create Session** — `session = await hb.create_session(branch="feat/x")` provisions sandbox, injects config, clones workspace, runs setup
+2. **Create Session** — `session = await hb.create_session(branch="feat/x")` provisions sandbox, clones workspace when configured, runs setup
 3. **Execute** — `async for event in session.send_message(prompt)` or `await session.run_command(cmd)`
 4. **Snapshot** — `snapshot = await hb.save_snapshot()` / `HarnessBox.create_from_snapshot(id)`
 5. **Kill** — `await hb.kill()` destroys all sessions
 
 **Internal orchestration (Sandbox, used by WorkspaceManager and server):**
 1. **Construct** — `Sandbox(client="e2b", harness="claude-code", security_policy=..., workspace=...)`
-2. **Setup** — `await sandbox.setup()` creates the sandbox, builds a manifest of files/dirs/env vars, injects them, clones the git workspace, runs the setup script
+2. **Setup** — `await sandbox.setup()` via `initialize_sandbox()`: create VM, check tools, workspace root, env, optional git/mount, optional setup script (no harness file injection)
 3. **Execute** — `await sandbox.run_prompt(prompt)` streams agent output (text or typed events), or `await sandbox.start_interactive_session()` for PTY
 4. **End** — `await sandbox.end()` commits/pushes workspace changes, destroys sandbox
 
@@ -50,7 +50,7 @@ All SDK source lives under `packages/sdk/src/harnessbox/`.
 - **Credentials never as env vars** — Git auth tokens use `git credential helper`, not environment variables.
 - **Manifest is pure computation** — `build_manifest()` takes config and returns a `SandboxManifest`. No I/O.
 - **Fail-open hook guard** — PreToolUse hooks exit 0 on errors, prioritizing availability over strict blocking.
-- **Setup script runs after workspace inject** — Agent config files overlay on top of cloned repo contents.
+- **Setup script runs after content inject** — Optional user setup_script runs after git clone / mount. Harness/agent files are not written during create (configure is a follow-up).
 
 ## Extension Points
 

@@ -40,13 +40,13 @@ class TestCreateSession:
 
         assert resp.status_code == 202
         data = resp.json()
-        assert data["session_id"] == "test-1"
+        assert (data.get("workspace_id") or data.get("session_id")) == "test-1"
         assert data["harness"] == "claude-code"
-        assert data["runtime_state"] == "starting"
+        assert (data.get("state") or data.get("runtime_state")) == "starting"
 
         # Background task completes provisioning (TestClient runs them synchronously)
         get_resp = client.get("/v1/workspaces/test-1")
-        assert get_resp.json()["runtime_state"] == "active"
+        assert (get_resp.json().get("state") or get_resp.json().get("runtime_state")) == "active"
 
 
 class TestListSessions:
@@ -77,7 +77,7 @@ class TestGetSession:
 
         resp = client.get("/v1/workspaces/s-1")
         assert resp.status_code == 200
-        assert resp.json()["session_id"] == "s-1"
+        assert (resp.json().get("workspace_id") or resp.json().get("session_id")) == "s-1"
 
     def test_get_not_found(self, client: TestClient) -> None:
         resp = client.get("/v1/workspaces/nonexistent")
@@ -268,7 +268,7 @@ class TestPauseSession:
 
         resp = client.post("/v1/workspaces/s-1/pause")
         assert resp.status_code == 200
-        assert resp.json()["runtime_state"] == "paused"
+        assert (resp.json().get("state") or resp.json().get("runtime_state")) == "paused"
         instance.create_snapshot.assert_called_once()
         instance.pause.assert_called_once()
 
@@ -306,7 +306,7 @@ class TestResumeSession:
         client.post("/v1/workspaces/s-1/pause")
         resp = client.post("/v1/workspaces/s-1/resume")
         assert resp.status_code == 200
-        assert resp.json()["runtime_state"] == "active"
+        assert (resp.json().get("state") or resp.json().get("runtime_state")) == "active"
 
     def test_resume_non_paused_returns_409(self, client: TestClient) -> None:
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
@@ -349,7 +349,7 @@ class TestStopSession:
         assert resp.status_code == 204
 
         get_resp = client.get("/v1/workspaces/s-starting")
-        assert get_resp.json()["runtime_state"] == "dead"
+        assert (get_resp.json().get("state") or get_resp.json().get("runtime_state")) == "dead"
 
 
 class TestRetrySession:
@@ -361,7 +361,7 @@ class TestRetrySession:
 
     def test_retry_reprovisions_errored_session(self, client: TestClient) -> None:
         self._create_errored_session(client)
-        assert client.get("/v1/workspaces/s-err").json()["runtime_state"] == "error"
+        assert (client.get("/v1/workspaces/s-err").json().get("state") or client.get("/v1/workspaces/s-err").json().get("runtime_state")) == "error"
 
         with patch("harnessbox._server.registry.Sandbox") as MockSandbox:
             instance = MockSandbox.return_value
@@ -375,7 +375,7 @@ class TestRetrySession:
         assert resp.status_code == 202
 
         data = client.get("/v1/workspaces/s-err").json()
-        assert data["runtime_state"] == "active"
+        assert (data.get("state") or data.get("runtime_state")) == "active"
         assert data["error_message"] is None
 
     def test_retry_non_error_session_returns_409(self, client: TestClient) -> None:

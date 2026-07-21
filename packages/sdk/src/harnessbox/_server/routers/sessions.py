@@ -1,4 +1,4 @@
-"""Session endpoints — CRUD, lifecycle, prompting, and event streaming for workspaces."""
+"""Workspace endpoints — CRUD, lifecycle, prompting, upload, and event streaming."""
 
 from __future__ import annotations
 
@@ -19,12 +19,14 @@ from harnessbox._server.workspace_manager import WorkspaceManager, WorkspaceNotF
 from harnessbox.lifecycle import InvalidTransitionError
 from harnessbox.streaming import Attachment
 
-from ._deps import get_manager, session_response
+from ._deps import get_manager, workspace_response
 from ._models import (
     CreateSessionRequest,
+    CreateWorkspaceRequestParams,
+    CreateWorkspaceResponseParams,
     PermissionRequest,
     PromptRequest,
-    SessionResponse,
+    UploadFileParams,
 )
 
 logger = logging.getLogger("harnessbox.server")
@@ -34,158 +36,206 @@ router = APIRouter(tags=["sessions"])
 _NON_PROMPTABLE_RUNTIME = frozenset({"dead", "ended", "dying"})
 
 
-@router.post("/v1/workspaces", response_model=SessionResponse, status_code=202)
-async def create_session(
-    req: CreateSessionRequest,
+@router.post("/v1/workspaces/create", response_model=CreateWorkspaceResponseParams, status_code=202)
+async def create_workspace(
+    req: CreateWorkspaceRequestParams | CreateSessionRequest,
     background_tasks: BackgroundTasks,
     mgr: WorkspaceManager = Depends(get_manager),
-) -> SessionResponse:
+) -> CreateWorkspaceResponseParams:
+    """Create a workspace (slim provision: VM + tools + env + optional git/mount)."""
     try:
         config = build_workspace_config(req)
-        info = mgr.register_workspace(config, workspace_id=req.session_id)
+        workspace_id = getattr(req, "workspace_id", None) or getattr(req, "session_id", None)
+        info = mgr.register_workspace(config, workspace_id=workspace_id)
     except Exception as exc:
-        logger.exception("Failed to register session")
+        logger.exception("Failed to register workspace")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     async def _provision() -> None:
         await mgr.provision_workspace(info.workspace_id, config)
 
     background_tasks.add_task(_provision)
-    return session_response(info)
+    return workspace_response(info)
 
 
-@router.get("/v1/workspaces", response_model=list[SessionResponse])
-async def list_sessions(mgr: WorkspaceManager = Depends(get_manager)) -> list[SessionResponse]:
-    return [session_response(s) for s in mgr.list_workspaces()]
+@router.post("/v1/workspaces", response_model=CreateWorkspaceResponseParams, status_code=202)
+async def create_workspace_legacy(
+    req: CreateSessionRequest,
+    background_tasks: BackgroundTasks,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> CreateWorkspaceResponseParams:
+    """Deprecated: use POST /v1/workspaces/create."""
+    return await create_workspace(req, background_tasks, mgr)
 
 
-@router.get("/v1/workspaces/{session_id}", response_model=SessionResponse)
-async def get_session(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
+@router.get("/v1/workspaces", response_model=list[CreateWorkspaceResponseParams])
+async def list_workspaces(
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> list[CreateWorkspaceResponseParams]:
+    return [workspace_response(s) for s in mgr.list_workspaces()]
+
+
+@router.get("/v1/workspaces/{workspace_id}", response_model=CreateWorkspaceResponseParams)
+async def get_workspace(
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> CreateWorkspaceResponseParams:
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
-    return session_response(info)
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
+    return workspace_response(info)
 
 
-@router.delete("/v1/workspaces/{session_id}", status_code=204)
-async def destroy_session(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
+@router.delete("/v1/workspaces/{workspace_id}", status_code=204)
+async def destroy_workspace(
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
 ) -> Response:
     try:
-        await mgr.destroy_workspace(session_id)
+        await mgr.destroy_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
     return Response(status_code=204)
 
 
-@router.get("/v1/workspaces/{session_id}/conversations")
+@router.post("/v1/workspaces/{workspace_id}/files", status_code=204)
+async def upload_workspace_file(
+    workspace_id: str,
+    req: UploadFileParams,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> Response:
+    """Upload a file to a path inside the workspace sandbox."""
+    try:
+        info = mgr.get_workspace(workspace_id)
+    except WorkspaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
+
+    if info.sandbox_conn is None:
+        raise HTTPException(status_code=409, detail="Workspace has no active sandbox")
+
+    if req.content is not None:
+        content = req.content
+    else:
+        assert req.content_b64 is not None
+        content = base64.b64decode(req.content_b64).decode("utf-8", errors="replace")
+
+    try:
+        await info.sandbox_conn.write_file(req.path, content)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@router.get("/v1/workspaces/{workspace_id}/conversations")
 async def list_conversations(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
 ) -> dict[str, Any]:
     """List conversations for a workspace."""
     try:
-        mgr.get_workspace(session_id)
+        mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
 
     if mgr.storage:
-        conversations = await mgr.storage.get_conversations(workspace_id=session_id)
+        conversations = await mgr.storage.get_conversations(workspace_id=workspace_id)
         return {"conversations": conversations}
     return {"conversations": []}
 
 
-@router.post("/v1/workspaces/{session_id}/pause", response_model=SessionResponse)
-async def pause_session(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
+@router.post("/v1/workspaces/{workspace_id}/pause", response_model=CreateWorkspaceResponseParams)
+async def pause_workspace(
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> CreateWorkspaceResponseParams:
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
 
     try:
-        await mgr.pause_workspace(session_id)
+        await mgr.pause_workspace(workspace_id)
     except InvalidTransitionError as exc:
         raise HTTPException(
-            status_code=409, detail=f"Cannot pause session in state: {info.runtime_state}"
+            status_code=409, detail=f"Cannot pause workspace in state: {info.runtime_state}"
         ) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return session_response(mgr.get_workspace(session_id))
+    return workspace_response(mgr.get_workspace(workspace_id))
 
 
-@router.post("/v1/workspaces/{session_id}/resume", response_model=SessionResponse)
-async def resume_session(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
-) -> SessionResponse:
+@router.post("/v1/workspaces/{workspace_id}/resume", response_model=CreateWorkspaceResponseParams)
+async def resume_workspace(
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> CreateWorkspaceResponseParams:
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
 
     try:
-        await mgr.resume_workspace(session_id)
+        await mgr.resume_workspace(workspace_id)
     except InvalidTransitionError as exc:
         raise HTTPException(
-            status_code=409, detail=f"Cannot resume session in state: {info.runtime_state}"
+            status_code=409, detail=f"Cannot resume workspace in state: {info.runtime_state}"
         ) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return session_response(mgr.get_workspace(session_id))
+    return workspace_response(mgr.get_workspace(workspace_id))
 
 
-@router.post("/v1/workspaces/{session_id}/stop", status_code=204)
-async def stop_session(session_id: str, mgr: WorkspaceManager = Depends(get_manager)) -> Response:
+@router.post("/v1/workspaces/{workspace_id}/stop", status_code=204)
+async def stop_workspace(
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
+) -> Response:
     try:
-        mgr.get_workspace(session_id)
+        mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
 
-    await mgr.stop_workspace(session_id)
+    await mgr.stop_workspace(workspace_id)
     return Response(status_code=204)
 
 
-@router.post("/v1/workspaces/{session_id}/retry", response_model=SessionResponse, status_code=202)
-async def retry_session(
-    session_id: str,
+@router.post(
+    "/v1/workspaces/{workspace_id}/retry",
+    response_model=CreateWorkspaceResponseParams,
+    status_code=202,
+)
+async def retry_workspace(
+    workspace_id: str,
     background_tasks: BackgroundTasks,
     mgr: WorkspaceManager = Depends(get_manager),
-) -> SessionResponse:
-    """Retry provisioning a session stuck in ERROR. Transitions ERROR -> STARTING."""
+) -> CreateWorkspaceResponseParams:
+    """Retry provisioning a workspace stuck in ERROR. Transitions ERROR -> STARTING."""
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
 
     try:
-        config = mgr.prepare_retry(session_id)
+        config = mgr.prepare_retry(workspace_id)
     except InvalidTransitionError as exc:
         raise HTTPException(
-            status_code=409, detail=f"Cannot retry session in state: {info.runtime_state}"
+            status_code=409, detail=f"Cannot retry workspace in state: {info.runtime_state}"
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     async def _reprovision() -> None:
-        await mgr.provision_workspace(session_id, config)
+        await mgr.provision_workspace(workspace_id, config)
 
     background_tasks.add_task(_reprovision)
-    return session_response(mgr.get_workspace(session_id))
+    return workspace_response(mgr.get_workspace(workspace_id))
 
 
-@router.post("/v1/workspaces/{session_id}/prompt")
+@router.post("/v1/workspaces/{workspace_id}/prompt")
 async def prompt_session(
-    session_id: str, req: PromptRequest, mgr: WorkspaceManager = Depends(get_manager)
+    workspace_id: str, req: PromptRequest, mgr: WorkspaceManager = Depends(get_manager)
 ) -> EventSourceResponse:
     from harnessbox.config.harness import list_harness_types
 
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
@@ -218,7 +268,7 @@ async def prompt_session(
         size = len(raw)
 
         if size >= 1024 * 1024:
-            att_dir = Path.home() / ".harnessbox" / "attachments" / session_id
+            att_dir = Path.home() / ".harnessbox" / "attachments" / workspace_id
             att_dir.mkdir(parents=True, exist_ok=True)
             safe_name = Path(att.filename).name or "attachment"
             file_path = att_dir / f"{att_id}_{safe_name}"
@@ -245,11 +295,11 @@ async def prompt_session(
             )
 
     async def event_generator() -> Any:
-        logger.info("SSE stream started for session %s", session_id)
+        logger.info("SSE stream started for session %s", workspace_id)
         event_count = 0
         try:
             async for event in mgr.prompt(
-                session_id,
+                workspace_id,
                 req.prompt,
                 harness=req.harness,
                 conversation_id=req.conversation_id,
@@ -268,20 +318,20 @@ async def prompt_session(
                     id=str(event.sequence),
                 )
         except RuntimeError as exc:
-            logger.error("Stream error for session %s: %s", session_id, exc)
+            logger.error("Stream error for session %s: %s", workspace_id, exc)
             yield ServerSentEvent(
                 data=json.dumps({"event_type": "error", "error_message": str(exc)}),
                 event="message",
             )
-        logger.info("SSE stream ended for session %s (%d events)", session_id, event_count)
+        logger.info("SSE stream ended for session %s (%d events)", workspace_id, event_count)
         yield ServerSentEvent(data="[DONE]", event="message")
 
     return EventSourceResponse(event_generator())
 
 
-@router.get("/v1/workspaces/{session_id}/events")
+@router.get("/v1/workspaces/{workspace_id}/events")
 async def stream_events(
-    session_id: str, request: Request, mgr: WorkspaceManager = Depends(get_manager)
+    workspace_id: str, request: Request, mgr: WorkspaceManager = Depends(get_manager)
 ) -> EventSourceResponse:
     """Subscribe to live events from an active or provisioning session (SSE).
 
@@ -290,7 +340,7 @@ async def stream_events(
     to wait for creation to complete without polling.
     """
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
@@ -302,7 +352,7 @@ async def stream_events(
             if last_seq is not None:
                 live_buffer = info.sandbox_conn.event_buffer
                 async for event in mgr.event_replay.replay_then_live(
-                    session_id, last_seq, live_buffer
+                    workspace_id, last_seq, live_buffer
                 ):
                     yield ServerSentEvent(
                         data=json.dumps(event.to_dict()),
@@ -347,9 +397,9 @@ async def stream_events(
     return EventSourceResponse(event_generator(), ping=15)
 
 
-@router.get("/v1/workspaces/{session_id}/history")
+@router.get("/v1/workspaces/{workspace_id}/history")
 async def stream_history(
-    session_id: str,
+    workspace_id: str,
     after_sequence: int = 0,
     limit: int = 500,
     conversation_id: str | None = None,
@@ -357,7 +407,7 @@ async def stream_history(
 ) -> EventSourceResponse:
     """Stream historical events from storage via EventReplay."""
     try:
-        mgr.get_workspace(session_id)
+        mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError:
         if not mgr.storage:
             raise HTTPException(
@@ -373,7 +423,7 @@ async def stream_history(
 
     async def event_generator() -> Any:
         async for event in mgr.event_replay.get_history(
-            session_id,
+            workspace_id,
             after_sequence=after_sequence,
             limit=limit,
             conversation_id=conversation_id,
@@ -387,9 +437,9 @@ async def stream_history(
     return EventSourceResponse(event_generator(), ping=15)
 
 
-@router.get("/v1/workspaces/{session_id}/events.jsonl")
+@router.get("/v1/workspaces/{workspace_id}/events.jsonl")
 async def export_events_jsonl(
-    session_id: str, mgr: WorkspaceManager = Depends(get_manager)
+    workspace_id: str, mgr: WorkspaceManager = Depends(get_manager)
 ) -> StreamingResponse:
     """Export a workspace's full durable event log as newline-delimited JSON.
 
@@ -398,9 +448,9 @@ async def export_events_jsonl(
     complete export, not a live-reconnect feed.
     """
     try:
-        mgr.get_workspace(session_id)
+        mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError:
-        if not mgr.storage or await mgr.storage.get_workspace(session_id) is None:
+        if not mgr.storage or await mgr.storage.get_workspace(workspace_id) is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
     if not mgr.storage:
@@ -410,22 +460,22 @@ async def export_events_jsonl(
         )
 
     async def body() -> Any:
-        async for event in mgr.event_replay.get_history(session_id, limit=None):
+        async for event in mgr.event_replay.get_history(workspace_id, limit=None):
             yield json.dumps(event.to_dict()).encode() + b"\n"
 
     return StreamingResponse(
         body(),
         media_type="application/x-ndjson",
-        headers={"Content-Disposition": f'attachment; filename="{session_id}-events.jsonl"'},
+        headers={"Content-Disposition": f'attachment; filename="{workspace_id}-events.jsonl"'},
     )
 
 
-@router.post("/v1/workspaces/{session_id}/permission")
+@router.post("/v1/workspaces/{workspace_id}/permission")
 async def respond_permission(
-    session_id: str, req: PermissionRequest, mgr: WorkspaceManager = Depends(get_manager)
+    workspace_id: str, req: PermissionRequest, mgr: WorkspaceManager = Depends(get_manager)
 ) -> dict[str, str]:
     try:
-        info = mgr.get_workspace(session_id)
+        info = mgr.get_workspace(workspace_id)
     except WorkspaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
     agent_process = info.sandbox_conn._agent_process

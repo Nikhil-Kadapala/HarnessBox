@@ -1,8 +1,7 @@
 """Workspace configuration factory — server-specific config construction.
 
-Consolidates credential injection, git auth resolution, provider key extraction,
-and workspace naming logic that transforms an HTTP request into a fully-resolved
-WorkspaceConfig for WorkspaceRegistry.create_workspace().
+Transforms an HTTP create request into a fully-resolved WorkspaceConfig for
+WorkspaceRegistry.create_workspace().
 """
 
 from __future__ import annotations
@@ -16,9 +15,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from harnessbox._server.routers._models import CreateSessionRequest
+    from harnessbox._server.routers._models import (
+        CreateSessionRequest,
+        CreateWorkspaceRequestParams,
+    )
 
 from harnessbox._server.registry import WorkspaceConfig
+from harnessbox.config.pipeline import MountSpec
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +40,9 @@ ENV_VAR_KEYS: tuple[str, ...] = (
 
 
 def inject_host_env_vars(env_vars: dict[str, str]) -> None:
-    """Auto-inject ALL available host credentials into the sandbox.
+    """Auto-inject available host credentials into the sandbox env.
 
-    1. Builds Claude Code auth environment (Bedrock, Vertex, or direct API key)
-    2. Builds gcloud project/region config
-    3. Injects all detected API keys from host environment
-    4. User-provided env vars always take priority (not overwritten)
+    User-provided env vars always take priority (not overwritten).
     """
     from harnessbox.credentials import build_claude_env_vars, build_gcloud_env_vars
 
@@ -62,10 +62,12 @@ def inject_host_env_vars(env_vars: dict[str, str]) -> None:
 
 
 def inject_host_credential_files() -> dict[str, str]:
-    """Auto-inject credential files (e.g., gcloud ADC) for sandbox use."""
-    from harnessbox.credentials import build_gcloud_credential_files
+    """Deprecated — create no longer injects credential files.
 
-    return build_gcloud_credential_files()
+    Retained so older call sites/tests import without breaking. Prefer mount
+    or upload for file-based credentials.
+    """
+    return {}
 
 
 def get_git_auth_token() -> str | None:
@@ -116,12 +118,7 @@ def extract_provider_key(provider: str, env_vars: dict[str, str]) -> str | None:
 
 
 def convert_ssh_to_https(url: str) -> str:
-    """Convert SSH URLs to HTTPS URLs for git clone in sandboxes.
-
-    Handles formats:
-    - git@github.com:user/repo.git -> https://github.com/user/repo.git
-    - git@gitlab.com:user/repo.git -> https://gitlab.com/user/repo.git
-    """
+    """Convert SSH URLs to HTTPS URLs for git clone in sandboxes."""
     ssh_pattern = r"^git@([^:]+):(.+)$"
     match = re.match(ssh_pattern, url)
     if match:
@@ -130,85 +127,138 @@ def convert_ssh_to_https(url: str) -> str:
     return url
 
 
-def build_workspace_config(req: CreateSessionRequest) -> WorkspaceConfig:
-    """Transform an HTTP CreateSessionRequest into a fully-resolved WorkspaceConfig.
+def _normalize_create_request(
+    req: CreateWorkspaceRequestParams | CreateSessionRequest,
+) -> CreateWorkspaceRequestParams:
+    """Normalize legacy CreateSessionRequest into CreateWorkspaceRequestParams."""
+    from harnessbox._server.routers._models import (
+        CreateSessionRequest,
+        CreateWorkspaceRequestParams,
+        GitCredentialsParams,
+        GitSourceParams,
+    )
 
-    Handles: credential injection, git auth resolution, security policy construction,
-    workspace naming, and timeout clamping.
+    if type(req).__name__ == "CreateWorkspaceRequestParams":
+        return req  # type: ignore[return-value]
+
+    # Legacy CreateSessionRequest (or hybrid body)
+    git = getattr(req, "git", None)
+    workspace = getattr(req, "workspace", None)
+    if git is None and workspace is not None:
+        creds = None
+        if workspace.auth_token:
+            creds = GitCredentialsParams(type="token", token=workspace.auth_token)
+        git = GitSourceParams(
+            repo_url=workspace.remote,
+            branch=workspace.branch,
+            credentials=creds,
+            clone_depth=workspace.clone_depth,
+            clone_dir_name=workspace.clone_dir_name,
+        )
+
+    assert isinstance(req, CreateSessionRequest)
+    return CreateWorkspaceRequestParams(
+        provider=req.provider,
+        api_key=req.api_key,
+        model=req.model,
+        env_vars=dict(req.env_vars),
+        setup_script=req.setup_script,
+        cwd=req.cwd,
+        sandbox_timeout=req.sandbox_timeout,
+        session_timeout=req.session_timeout,
+        skip_permissions=req.skip_permissions,
+        template=req.template,
+        workspace_id=req.workspace_id or req.session_id,
+        project_id=req.project_id,
+        git=git,
+        mount=req.mount,
+    )
+
+
+def build_workspace_config(
+    req: CreateWorkspaceRequestParams | CreateSessionRequest,
+) -> WorkspaceConfig:
+    """Transform an HTTP create request into a fully-resolved WorkspaceConfig.
+
+    Slim create: env injection + optional git clone and/or mount.
+    Does not write harness/agent files or host credential files.
     """
-    from harnessbox.security.policy import SecurityPolicy
+    normalized = _normalize_create_request(req)
 
-    env_vars = dict(req.env_vars)
+    env_vars = dict(normalized.env_vars)
     inject_host_env_vars(env_vars)
     logger.info("Injected env vars: %s", list(env_vars.keys()))
 
-    credential_files: dict[str, str | Path] = dict(inject_host_credential_files())
-    if "/root/.config/gcloud/application_default_credentials.json" in credential_files:
-        env_vars.setdefault(
-            "GOOGLE_APPLICATION_CREDENTIALS",
-            "/root/.config/gcloud/application_default_credentials.json",
-        )
-
-    api_key = req.api_key or extract_provider_key(req.provider, env_vars)
-
-    security_policy = None
-    if req.security_policy:
-        security_policy = SecurityPolicy(
-            denied_tools=req.security_policy.denied_tools,
-            denied_bash_patterns=req.security_policy.denied_bash_patterns,
-            deny_network=req.security_policy.deny_network,
-            credential_guards=req.security_policy.credential_guards,
-        )
+    api_key = normalized.api_key or extract_provider_key(normalized.provider, env_vars)
 
     workspace = None
-    if req.workspace:
+    remote_label = ""
+    branch_label = ""
+    if normalized.git:
         from harnessbox.names import generate_workspace_name
         from harnessbox.workspace import GitRepoConfig
 
-        clone_dir_name = req.workspace.clone_dir_name
+        git = normalized.git
+        clone_dir_name = git.clone_dir_name
         if clone_dir_name is None:
             clone_dir_name = generate_workspace_name()
 
-        base_branch = req.workspace.branch
+        base_branch = git.branch
         branch = clone_dir_name if base_branch == "main" else base_branch
 
-        auth_token = req.workspace.auth_token
-        if not auth_token:
+        auth_token: str | None = None
+        if git.credentials and git.credentials.token:
+            auth_token = git.credentials.token
+        elif git.credentials is None or git.credentials.type in ("token", "gh"):
             auth_token = get_git_auth_token()
 
+        remote = convert_ssh_to_https(git.repo_url)
         workspace = GitRepoConfig(
-            remote=req.workspace.remote,
+            remote=remote,
             branch=branch,
             base_branch=base_branch,
             auth_token=auth_token,
-            clone_depth=req.workspace.clone_depth,
+            clone_depth=git.clone_depth,
             clone_dir_name=clone_dir_name,
         )
+        remote_label = remote
+        branch_label = branch
 
-    session_timeout = req.session_timeout
-    sandbox_timeout = req.sandbox_timeout
+    mount_spec = None
+    if normalized.mount:
+        mount_spec = MountSpec(
+            source=normalized.mount.source,
+            mount_path=normalized.mount.mount_path,
+        )
+
+    session_timeout = normalized.session_timeout
+    sandbox_timeout = normalized.sandbox_timeout
     if session_timeout >= sandbox_timeout:
         session_timeout = max(sandbox_timeout - 60, 0)
         logger.warning(
             "session_timeout (%d) >= sandbox_timeout (%d), clamped to %d",
-            req.session_timeout,
+            normalized.session_timeout,
             sandbox_timeout,
             session_timeout,
         )
 
     return WorkspaceConfig(
-        provider=req.provider,
+        provider=normalized.provider,
         api_key=api_key,
         harness="claude-code",
-        model=req.model,
+        model=normalized.model,
         env_vars=env_vars,
-        files=credential_files or None,
-        setup_script=req.setup_script,
-        cwd=req.cwd,
+        files=None,
+        setup_script=normalized.setup_script,
+        cwd=normalized.cwd,
         timeout=sandbox_timeout,
-        skip_permissions=req.skip_permissions,
-        template=req.template,
-        security_policy=security_policy,
+        skip_permissions=normalized.skip_permissions,
+        template=normalized.template,
+        security_policy=None,
         workspace=workspace,
+        mount=mount_spec,
+        project_id=normalized.project_id,
         session_timeout=session_timeout,
+        branch_label=branch_label,
+        remote_label=remote_label,
     )

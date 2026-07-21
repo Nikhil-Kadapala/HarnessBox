@@ -22,6 +22,7 @@ import type {
   SessionStatus,
   UniversalEvent,
 } from "@/types";
+import { workspaceIdOf, workspaceStateOf } from "@/types";
 
 export function useSessionManager() {
   const [sessions, dispatch] = useReducer(sessionsReducer, new Map<string, SessionEntry>());
@@ -40,14 +41,16 @@ export function useSessionManager() {
       .then((serverSessions) => {
         const activeSessions: string[] = [];
         for (const s of serverSessions) {
-          if (s.runtime_state !== "dead" && s.runtime_state !== "ended") {
+          const state = workspaceStateOf(s);
+          const id = workspaceIdOf(s);
+          if (state !== "dead" && state !== "ended") {
             dispatch({
               type: "add_session",
               entry: {
-                id: s.session_id,
+                id,
                 harness: s.harness,
-                status: (s.runtime_state as SessionStatus) || "active",
-                runtimeState: s.runtime_state,
+                status: (state as SessionStatus) || "active",
+                runtimeState: state,
                 createdAt: s.created_at,
                 events: [],
                 error: null,
@@ -57,12 +60,12 @@ export function useSessionManager() {
                 remote: s.remote,
               },
             });
-            activeSessions.push(s.session_id);
+            activeSessions.push(id);
           }
         }
         if (serverSessions.length > 0) {
-          const active = serverSessions.find((s) => s.runtime_state === "active");
-          if (active) setActiveSessionId(active.session_id);
+          const active = serverSessions.find((s) => workspaceStateOf(s) === "active");
+          if (active) setActiveSessionId(workspaceIdOf(active));
         }
 
         // Replay events for all active sessions.
@@ -143,7 +146,7 @@ export function useSessionManager() {
 
   const createSessionOptimistic = useCallback(
     (config: CreateSessionRequest) => {
-      const sessionId = config.session_id || crypto.randomUUID();
+      const sessionId = config.workspace_id || config.session_id || crypto.randomUUID();
       const conns = connectionsRef.current;
 
       const entry: SessionEntry = {
@@ -154,16 +157,16 @@ export function useSessionManager() {
         createdAt: new Date().toISOString(),
         events: [],
         error: null,
-        workspaceName: config.workspace?.clone_dir_name,
-        branch: config.workspace?.branch,
-        remote: config.workspace?.remote,
+        workspaceName: config.git?.clone_dir_name || config.workspace?.clone_dir_name,
+        branch: config.git?.branch || config.workspace?.branch,
+        remote: config.git?.repo_url || config.workspace?.remote,
       };
       dispatch({ type: "add_session", entry });
       setActiveSessionId(sessionId);
 
       const signal = conns.start(`create-${sessionId}`);
 
-      apiCreateSession({ ...config, session_id: sessionId }, signal)
+      apiCreateSession({ ...config, workspace_id: sessionId, session_id: sessionId }, signal)
         .then((res) => {
           conns.cleanup(`create-${sessionId}`);
 
@@ -177,7 +180,7 @@ export function useSessionManager() {
               branch: res.branch,
               baseBranch: res.base_branch,
               remote: res.remote,
-              runtimeState: res.runtime_state,
+              runtimeState: workspaceStateOf(res),
             },
           });
           dispatch({ type: "set_status", sessionId, status: "active" });
