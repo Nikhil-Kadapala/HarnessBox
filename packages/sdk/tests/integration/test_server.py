@@ -23,7 +23,7 @@ def client(manager: WorkspaceManager) -> TestClient:
     return TestClient(app)
 
 
-def _create_and_id(client: TestClient, body: dict | None = None) -> str:
+def _create_and_id(client: TestClient, body: dict[str, object] | None = None) -> str:
     """POST create and return the server-minted workspace_id."""
     resp = client.post("/v1/workspaces", json=body or {})
     assert resp.status_code == 202
