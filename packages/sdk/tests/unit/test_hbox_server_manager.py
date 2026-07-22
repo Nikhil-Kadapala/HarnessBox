@@ -61,10 +61,14 @@ def test_ensure_attaches_when_pid_alive_and_probe_ok(tmp_path: Path) -> None:
     probe = _ProbeScript([True])
     spawned: list[Any] = []
 
+    def _spawn(*a: Any, **k: Any) -> _FakeProc:
+        spawned.append((a, k))
+        return _FakeProc(99)
+
     mgr = ServerManager(
         home=tmp_path,
         probe_fn=probe,
-        spawn_fn=lambda *a, **k: spawned.append((a, k)) or _FakeProc(99),
+        spawn_fn=_spawn,
         pid_alive_fn=lambda pid: pid == 4242,
     )
 

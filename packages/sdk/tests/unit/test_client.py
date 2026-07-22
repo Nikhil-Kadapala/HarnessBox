@@ -10,6 +10,7 @@ a client-side invention, or green tests prove nothing about the server.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 import respx
@@ -726,7 +727,7 @@ class TestGitCredentialWireShapes:
     @pytest.mark.asyncio
     @respx.mock
     async def test_type_gh_omits_token(self) -> None:
-        bodies: list[dict] = []
+        bodies: list[dict[str, Any]] = []
 
         def capture(request, route):  # type: ignore[no-untyped-def]
             bodies.append(json.loads(request.content))
@@ -748,7 +749,7 @@ class TestGitCredentialWireShapes:
     @pytest.mark.asyncio
     @respx.mock
     async def test_type_token_includes_pat(self) -> None:
-        bodies: list[dict] = []
+        bodies: list[dict[str, Any]] = []
 
         def capture(request, route):  # type: ignore[no-untyped-def]
             bodies.append(json.loads(request.content))
