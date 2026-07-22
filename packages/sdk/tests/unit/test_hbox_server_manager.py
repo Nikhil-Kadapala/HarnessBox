@@ -236,6 +236,7 @@ def test_find_free_port_skips_occupied() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
         holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
         occupied = holder.getsockname()[1]
         # Prefer the occupied port; should advance to a free one
         free = find_free_port("127.0.0.1", occupied, tries=5)
