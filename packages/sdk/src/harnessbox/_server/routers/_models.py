@@ -46,10 +46,13 @@ class CreateWorkspaceRequestParams(BaseModel):
     Identity fields (``workspace_id``, ``project_id``, ``model``) are not
     accepted — the server mints ``workspace_id``; ``project_id`` stays null
     until a Project API exists; model belongs on a future session/configure path.
+    ``harness`` selects the agent type stored on the workspace (default
+    ``claude-code`` when omitted).
     """
 
     provider: str = "e2b"
     api_key: str | None = None
+    harness: str = "claude-code"
     env_vars: dict[str, str] = {}
     setup_script: str | None = None
     cwd: str | None = None
@@ -171,6 +174,7 @@ class CreateSessionRequest(BaseModel):
 
     provider: str = "e2b"
     api_key: str | None = None
+    harness: str = "claude-code"
     model: str | None = None
     env_vars: dict[str, str] = {}
     setup_script: str | None = None

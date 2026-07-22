@@ -23,24 +23,19 @@ async with HarnessBox(
         print(event.delta or "", end="")
 ```
 
-`HarnessBox` is the sole public API — provision sandboxes, manage workspaces, run agent sessions. Zero runtime dependencies.
+`HarnessBox` is the sole public API — provision sandboxes, manage workspaces, run agent sessions. Provider SDKs are optional extras.
 
 ## Install
 
-Three install shapes — pick the one that matches how you run:
-
 ```bash
-# In-process SDK (your process talks to E2B directly)
+# SDK + interactive CLI (hbox) + local server deps
+pip install harnessbox
+
+# + E2B sandbox provider
 pip install "harnessbox[e2b]"
-
-# HTTP client only (cloud or self-hosted API — never installs e2b)
-pip install "harnessbox[client]"
-
-# Server host (local server or apps/api — holds the provider key)
-pip install "harnessbox[server,e2b]"
 ```
 
-`pip install harnessbox` alone is the zero-dependency core (protocols + types).
+Then run `hbox` for the interactive shell, or `harnessbox serve` for a standalone API server.
 
 ## Quickstart
 
@@ -185,8 +180,10 @@ Think of it like SQLite vs Postgres. SQLite is embedded — no server, works gre
 The server is the SDK running as a long-lived process that accepts HTTP connections. Same features, accessible over the network.
 
 ```bash
-# Self-hosted
-pip install "harnessbox[server]"
+# Self-hosted (server deps are in the base install)
+pip install harnessbox
+# For sandboxes:
+pip install "harnessbox[e2b]"
 harnessbox serve --port 8080
 
 # Or with Docker
@@ -250,7 +247,7 @@ policy = SecurityPolicy(
 | **Branch-based pooling** | Same (remote, branch) reuses existing workspace. |
 | **Security policies** | Credential guards, tool deny lists, network blocking. |
 | **Git workflows** | Clone, commit, push on exit. Branch creation from base. |
-| **Zero dependencies** | Stdlib only at runtime. Provider SDKs are optional extras. |
+| **Provider extras** | E2B (and future backends) via `harnessbox[e2b]`. Base install includes CLI + server deps. |
 | **Any provider** | E2B, Docker, Daytona, EC2. Protocol-based extensibility. |
 
 ## API Reference

@@ -157,9 +157,36 @@ class TestBuildWorkspaceConfig:
             config = build_workspace_config(req)
         assert config.provider == "e2b"
         assert config.api_key == "test-key"
+        assert config.harness == "claude-code"
         assert config.workspace is None
         assert config.project_id is None
         assert config.model is None
+
+    def test_harness_from_request(self) -> None:
+        req = self._make_request(harness="codex")
+        with (
+            patch("harnessbox._server.workspace_factory.inject_host_env_vars"),
+            patch(
+                "harnessbox._server.workspace_factory.extract_provider_key",
+                return_value="test-key",
+            ),
+        ):
+            config = build_workspace_config(req)
+        assert config.harness == "codex"
+
+    def test_default_harness_when_omitted_on_params(self) -> None:
+        from harnessbox._server.routers._models import CreateWorkspaceRequestParams
+
+        req = CreateWorkspaceRequestParams(provider="e2b")
+        with (
+            patch("harnessbox._server.workspace_factory.inject_host_env_vars"),
+            patch(
+                "harnessbox._server.workspace_factory.extract_provider_key",
+                return_value="test-key",
+            ),
+        ):
+            config = build_workspace_config(req)
+        assert config.harness == "claude-code"
 
     def test_with_workspace(self) -> None:
         from harnessbox.server import WorkspaceRequest

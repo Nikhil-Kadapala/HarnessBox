@@ -306,6 +306,16 @@ class E2BProvider:
         except Exception as e:
             if _is_sandbox_dead(e):
                 raise SandboxDeadError(str(e)) from e
+            # E2B raises CommandExitException on non-zero exit. The provider
+            # contract returns CommandResult so callers can probe expected
+            # failures (e.g. ``git rev-parse`` before creating a branch).
+            exit_code = getattr(e, "exit_code", None)
+            if isinstance(exit_code, int):
+                return CommandResult(
+                    exit_code=exit_code,
+                    stdout=getattr(e, "stdout", None) or "",
+                    stderr=getattr(e, "stderr", None) or "",
+                )
             raise
         return CommandResult(
             exit_code=result.exit_code,
