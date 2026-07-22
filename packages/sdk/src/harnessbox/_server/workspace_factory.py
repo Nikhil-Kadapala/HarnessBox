@@ -154,6 +154,7 @@ def _normalize_create_request(
     return CreateWorkspaceRequestParams(
         provider=req.provider,
         api_key=req.api_key,
+        harness=req.harness,
         env_vars=dict(req.env_vars),
         setup_script=req.setup_script,
         cwd=req.cwd,
@@ -237,7 +238,7 @@ def build_workspace_config(
     return WorkspaceConfig(
         provider=normalized.provider,
         api_key=api_key,
-        harness="claude-code",
+        harness=normalized.harness or "claude-code",
         model=None,
         env_vars=env_vars,
         files=None,

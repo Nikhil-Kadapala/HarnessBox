@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from harnessbox.lifecycle import RuntimeState
 from harnessbox.streaming import EventType, UniversalEvent
+
+# Create-wait progress hooks (D5). CLI rich UI uses these; no second SSE loop.
+OnStateCallback = Callable[[str], None]
+OnEventCallback = Callable[[dict[str, Any]], None]
 
 try:
     import httpx
@@ -125,24 +129,41 @@ class HarnessBoxClient:
         provider_api_key: str | None = None,
         timeout: float = 120.0,
         *,
+        harness: str = "claude-code",
         git_token: str | None = None,
+        git_auth: Literal["gh", "token"] | None = None,
         mount_source: str | None = None,
         mount_path: str = "/workspace",
         env_vars: dict[str, str] | None = None,
+        on_state: OnStateCallback | None = None,
+        on_event: OnEventCallback | None = None,
     ) -> WorkspaceInfo:
         """Create a workspace and wait until it becomes ACTIVE.
 
         Issues POST /v1/workspaces/create (202), then subscribes to the events
         SSE stream until the workspace reaches ACTIVE or a terminal state.
+
+        Optional ``on_state`` / ``on_event`` hooks fire during the wait so a
+        CLI can show progress without opening a second SSE subscription.
+
+        Git credentials (D7):
+        - ``git_auth="gh"`` → ``credentials: {type: "gh"}`` (no token in request;
+          server resolves via host ``gh`` / ``GITHUB_TOKEN``).
+        - ``git_token=...`` (or ``git_auth="token"``) → ``credentials: {type: "token",
+          token: ...}``.
         """
-        payload: dict[str, Any] = {"provider": provider}
+        payload: dict[str, Any] = {"provider": provider, "harness": harness}
         if provider_api_key is not None:
             payload["api_key"] = provider_api_key
         if env_vars:
             payload["env_vars"] = env_vars
         if remote is not None:
             git: dict[str, Any] = {"repo_url": remote, "branch": branch}
-            if git_token is not None:
+            if git_auth == "gh":
+                git["credentials"] = {"type": "gh"}
+            elif git_token is not None or git_auth == "token":
+                if git_token is None:
+                    raise ValueError("git_auth='token' requires git_token")
                 git["credentials"] = {"type": "token", "token": git_token}
             payload["git"] = git
         if mount_source is not None:
@@ -160,7 +181,7 @@ class HarnessBoxClient:
 
         try:
             return await asyncio.wait_for(
-                self._wait_until_active(workspace_id, data),
+                self._wait_until_active(workspace_id, data, on_state=on_state, on_event=on_event),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
@@ -192,9 +213,15 @@ class HarnessBoxClient:
         self,
         workspace_id: str,
         initial_data: dict[str, Any],
+        *,
+        on_state: OnStateCallback | None = None,
+        on_event: OnEventCallback | None = None,
     ) -> WorkspaceInfo:
         """Subscribe to the events SSE stream until terminal or ACTIVE."""
         initial_state = initial_data.get("state") or initial_data.get("runtime_state")
+        if initial_state:
+            if on_state is not None:
+                on_state(str(initial_state))
         if initial_state == RuntimeState.ACTIVE.value:
             return _parse_workspace_info(initial_data)
 
@@ -215,30 +242,29 @@ class HarnessBoxClient:
                 except json.JSONDecodeError:
                     continue
 
-                if payload.get("type") == EventType.RUNTIME_STATE.value:
-                    meta = payload.get("message", {}).get("metadata", {})
-                    state: str = meta.get("runtime_state", "")
-                    if state == RuntimeState.ACTIVE.value:
-                        return await self.get_workspace(workspace_id)
-                    if state in _TERMINAL_STATES:
-                        err = meta.get("error_message") or "Unknown error"
-                        raise WorkspaceCreationError(
-                            f"Workspace {workspace_id!r} entered {state!r}: {err}",
-                            runtime_state=state,
-                        )
+                if not isinstance(payload, dict):
+                    continue
+                if on_event is not None:
+                    on_event(payload)
 
-                if payload.get("event_type") == EventType.RUNTIME_STATE.value:
-                    meta = payload.get("metadata", {})
-                    state = meta.get("runtime_state", "")
-                    if state in _TERMINAL_STATES:
-                        err = meta.get("error_message") or "Unknown error"
-                        raise WorkspaceCreationError(
-                            f"Workspace {workspace_id!r} entered {state!r}: {err}",
-                            runtime_state=state,
-                        )
+                state = _runtime_state_from_event(payload)
+                if not state:
+                    continue
+                if on_state is not None:
+                    on_state(state)
+                if state == RuntimeState.ACTIVE.value:
+                    return await self.get_workspace(workspace_id)
+                if state in _TERMINAL_STATES:
+                    err = _error_message_from_event(payload) or "Unknown error"
+                    raise WorkspaceCreationError(
+                        f"Workspace {workspace_id!r} entered {state!r}: {err}",
+                        runtime_state=state,
+                    )
 
         info = await self.get_workspace(workspace_id)
         if info.state == RuntimeState.ACTIVE.value:
+            if on_state is not None:
+                on_state(info.state)
             return info
         if info.state in _TERMINAL_STATES:
             raise WorkspaceCreationError(
@@ -255,6 +281,27 @@ class HarnessBoxClient:
     async def get_workspace(self, workspace_id: str) -> WorkspaceInfo:
         """Fetch current workspace state from the server."""
         resp = await self._client.get(f"/v1/workspaces/{workspace_id}")
+        resp.raise_for_status()
+        return _parse_workspace_info(resp.json())
+
+    async def list_harnesses(self) -> list[dict[str, Any]]:
+        """Return harness descriptors from ``GET /v1/harnesses``."""
+        resp = await self._client.get("/v1/harnesses")
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):
+            raise TypeError("expected list from /v1/harnesses")
+        return data
+
+    async def pause(self, workspace_id: str) -> WorkspaceInfo:
+        """Pause a workspace (``POST .../pause``)."""
+        resp = await self._client.post(f"/v1/workspaces/{workspace_id}/pause")
+        resp.raise_for_status()
+        return _parse_workspace_info(resp.json())
+
+    async def resume(self, workspace_id: str) -> WorkspaceInfo:
+        """Resume a paused workspace (``POST .../resume``)."""
+        resp = await self._client.post(f"/v1/workspaces/{workspace_id}/resume")
         resp.raise_for_status()
         return _parse_workspace_info(resp.json())
 
@@ -337,3 +384,37 @@ def _parse_workspace_info(data: dict[str, Any]) -> WorkspaceInfo:
         total_cost_usd=data.get("total_cost_usd", 0.0),
         error_message=data.get("error_message"),
     )
+
+
+def _runtime_state_from_event(payload: dict[str, Any]) -> str | None:
+    """Extract runtime_state from nested or flat SSE runtime.state payloads."""
+    if payload.get("type") == EventType.RUNTIME_STATE.value:
+        meta = payload.get("message", {})
+        if isinstance(meta, dict):
+            meta = meta.get("metadata", {})
+        if isinstance(meta, dict):
+            state = meta.get("runtime_state")
+            return str(state) if state else None
+    if payload.get("event_type") == EventType.RUNTIME_STATE.value:
+        meta = payload.get("metadata", {})
+        if isinstance(meta, dict):
+            state = meta.get("runtime_state")
+            return str(state) if state else None
+    return None
+
+
+def _error_message_from_event(payload: dict[str, Any]) -> str | None:
+    """Extract error_message from nested or flat SSE runtime.state payloads."""
+    if payload.get("type") == EventType.RUNTIME_STATE.value:
+        meta = payload.get("message", {})
+        if isinstance(meta, dict):
+            meta = meta.get("metadata", {})
+        if isinstance(meta, dict):
+            err = meta.get("error_message")
+            return str(err) if err else None
+    if payload.get("event_type") == EventType.RUNTIME_STATE.value:
+        meta = payload.get("metadata", {})
+        if isinstance(meta, dict):
+            err = meta.get("error_message")
+            return str(err) if err else None
+    return None

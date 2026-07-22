@@ -8,7 +8,17 @@ license = "MIT"
 authors = [
     { name = "Nikhil Kadapala", email = "kadapalanikhil@gmail.com" },
 ]
-dependencies = []
+# Base install = SDK + interactive CLI (hbox) + local server deps (D9).
+# Provider backends stay as extras (e.g. harnessbox[e2b]).
+dependencies = [
+    "httpx>=0.25.0",
+    "fastapi>=0.100.0",
+    "sse-starlette>=1.0.0",
+    "uvicorn>=0.20.0",
+    "tenacity>=8.0.0",
+    "rich>=13.0.0",
+    "prompt_toolkit>=3.0.0",
+]
 keywords = ["ai", "agents", "sandbox", "security", "claude-code", "e2b", "harness"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -22,6 +32,7 @@ classifiers = [
 
 [project.scripts]
 harnessbox = "harnessbox.cli:main"
+hbox = "harnessbox.hbox.app:main"
 
 [project.urls]
 Homepage = "https://github.com/Nikhil-Kadapala/HarnessBox"
@@ -29,9 +40,12 @@ Repository = "https://github.com/Nikhil-Kadapala/HarnessBox"
 Issues = "https://github.com/Nikhil-Kadapala/HarnessBox/issues"
 
 [project.optional-dependencies]
+# Sandbox provider backends only (D9).
 e2b = ["e2b>=2.21,<2.22"]
-server = ["fastapi>=0.100.0", "sse-starlette>=1.0.0", "uvicorn>=0.20.0", "tenacity>=8.0.0"]
-client = ["httpx>=0.25.0"]
+# Kept as no-op aliases so existing `pip install harnessbox[server|client|cli]` still works.
+server = []
+client = []
+cli = []
 
 [dependency-groups]
 dev = [
@@ -47,6 +61,9 @@ dev = [
     "fastapi>=0.100.0",
     "sse-starlette>=1.0.0",
     "uvicorn>=0.20.0",
+    "rich>=13.0.0",
+    "prompt_toolkit>=3.0.0",
+    "e2b>=2.21,<2.22",
 ]
 
 [build-system]

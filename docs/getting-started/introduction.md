@@ -24,7 +24,7 @@ The `SandboxProvider` protocol means you can swap E2B for another VM backend wit
 pip install harnessbox
 ```
 
-For E2B support (the default provider):
+This includes the SDK, interactive CLI (`hbox`), and local server deps. For E2B sandboxes:
 
 ```bash
 pip install harnessbox[e2b]

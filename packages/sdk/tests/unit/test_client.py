@@ -240,6 +240,7 @@ class TestCreateWorkspace:
 
         body = captured[0]
         assert body["provider"] == "e2b"
+        assert body["harness"] == "claude-code"
         # Git config is nested under `git` (CreateWorkspaceRequestParams).
         assert body["git"] == {
             "repo_url": "https://github.com/org/repo",
@@ -250,6 +251,71 @@ class TestCreateWorkspace:
         assert "model" not in body
         assert "workspace_id" not in body
         assert "project_id" not in body
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_sends_explicit_harness(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def capture(request, route):  # type: ignore[no-untyped-def]
+            captured.append(json.loads(request.content))
+            return Response(200, json={**_SESSION_ACTIVE, "harness": "codex"})
+
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
+
+        async with HarnessBoxClient(_BASE) as client:
+            ws = await client.create_workspace(
+                remote="https://github.com/org/repo",
+                branch="main",
+                harness="codex",
+            )
+
+        assert captured[0]["harness"] == "codex"
+        assert ws.harness == "codex"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_on_state_and_on_event_during_create_wait(self) -> None:
+        states: list[str] = []
+        events: list[dict[str, object]] = []
+
+        starting_event = json.dumps(
+            {
+                "type": EventType.RUNTIME_STATE.value,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {
+                    "event_id": "ev-0",
+                    "sequence": 0,
+                    "workspace_id": "ws-1",
+                    "metadata": {"runtime_state": "starting"},
+                },
+            }
+        )
+        sse_body = _sse(starting_event) + _sse(_ACTIVE_STATE_EVENT)
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(
+            return_value=Response(202, json=_SESSION_STARTING)
+        )
+        respx.get(f"{_BASE}/v1/workspaces/ws-1/events").mock(
+            return_value=Response(200, text=sse_body, headers={"content-type": "text/event-stream"})
+        )
+        respx.get(f"{_BASE}/v1/workspaces/ws-1").mock(
+            return_value=Response(200, json=_SESSION_ACTIVE)
+        )
+
+        async with HarnessBoxClient(_BASE) as client:
+            ws = await client.create_workspace(
+                remote="https://github.com/org/repo",
+                branch="main",
+                on_state=states.append,
+                on_event=events.append,
+            )
+
+        assert ws.runtime_state == RuntimeState.ACTIVE.value
+        assert states[0] == "starting"
+        assert "starting" in states
+        assert "active" in states
+        assert len(events) >= 1
+        assert events[0]["type"] == EventType.RUNTIME_STATE.value
 
     @pytest.mark.asyncio
     @respx.mock
@@ -375,6 +441,68 @@ class TestCreateWorkspace:
             )
 
         assert "api_key" not in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# HarnessBoxClient — pause / resume
+# ---------------------------------------------------------------------------
+
+
+class TestPauseResume:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_pause_returns_workspace_info(self) -> None:
+        paused = {**_SESSION_ACTIVE, "state": "paused"}
+        respx.post(f"{_BASE}/v1/workspaces/ws-1/pause").mock(
+            return_value=Response(200, json=paused)
+        )
+
+        async with HarnessBoxClient(_BASE) as client:
+            ws = await client.pause("ws-1")
+
+        assert ws.workspace_id == "ws-1"
+        assert ws.runtime_state == "paused"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_resume_returns_workspace_info(self) -> None:
+        respx.post(f"{_BASE}/v1/workspaces/ws-1/resume").mock(
+            return_value=Response(200, json=_SESSION_ACTIVE)
+        )
+
+        async with HarnessBoxClient(_BASE) as client:
+            ws = await client.resume("ws-1")
+
+        assert ws.workspace_id == "ws-1"
+        assert ws.runtime_state == "active"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_pause_409_raises(self) -> None:
+        import httpx
+
+        respx.post(f"{_BASE}/v1/workspaces/ws-1/pause").mock(
+            return_value=Response(409, json={"detail": "Cannot pause workspace in state: paused"})
+        )
+
+        async with HarnessBoxClient(_BASE) as client:
+            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                await client.pause("ws-1")
+        assert exc_info.value.response.status_code == 409
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_resume_409_raises(self) -> None:
+        import httpx
+
+        respx.post(f"{_BASE}/v1/workspaces/ws-1/resume").mock(
+            return_value=Response(409, json={"detail": "Cannot resume workspace in state: active"})
+        )
+
+        async with HarnessBoxClient(_BASE) as client:
+            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                await client.resume("ws-1")
+        assert exc_info.value.response.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -587,3 +715,61 @@ class TestApiKeyHeader:
             )
 
         assert captured_auth[0] == "Bearer my-token"
+
+
+# ---------------------------------------------------------------------------
+# Git credential wire shapes (D7)
+# ---------------------------------------------------------------------------
+
+
+class TestGitCredentialWireShapes:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_type_gh_omits_token(self) -> None:
+        bodies: list[dict] = []
+
+        def capture(request, route):  # type: ignore[no-untyped-def]
+            bodies.append(json.loads(request.content))
+            return Response(202, json=_SESSION_ACTIVE)
+
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
+
+        async with HarnessBoxClient(_BASE) as client:
+            await client.create_workspace(
+                remote="https://github.com/org/repo",
+                branch="main",
+                git_auth="gh",
+            )
+
+        creds = bodies[0]["git"]["credentials"]
+        assert creds == {"type": "gh"}
+        assert "token" not in creds
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_type_token_includes_pat(self) -> None:
+        bodies: list[dict] = []
+
+        def capture(request, route):  # type: ignore[no-untyped-def]
+            bodies.append(json.loads(request.content))
+            return Response(202, json=_SESSION_ACTIVE)
+
+        respx.post(f"{_BASE}/v1/workspaces/create").mock(side_effect=capture)
+
+        async with HarnessBoxClient(_BASE) as client:
+            await client.create_workspace(
+                remote="https://github.com/org/repo",
+                branch="main",
+                git_token="ghp_secret",
+            )
+
+        assert bodies[0]["git"]["credentials"] == {"type": "token", "token": "ghp_secret"}
+
+    @pytest.mark.asyncio
+    async def test_git_auth_token_without_value_raises(self) -> None:
+        async with HarnessBoxClient(_BASE) as client:
+            with pytest.raises(ValueError, match="git_token"):
+                await client.create_workspace(
+                    remote="https://github.com/org/repo",
+                    git_auth="token",
+                )
