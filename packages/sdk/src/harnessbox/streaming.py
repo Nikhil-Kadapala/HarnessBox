@@ -260,6 +260,47 @@ class UniversalEvent:
             raw=data,
         )
 
+    @classmethod
+    def from_storage_dict(cls, record: dict[str, Any]) -> "UniversalEvent":
+        """Reconstruct a UniversalEvent from a storage record dict.
+
+        Inverse of to_storage_dict(). Handles enum coercion for EventType, ItemKind,
+        ItemStatus, and ToolKind, and deserializes content parts, item details, and metadata.
+        """
+        event_json = record.get("event_json", "{}")
+        data = json.loads(event_json) if isinstance(event_json, str) else (event_json or {})
+
+        evt_type_raw = data.get("event_type") or record.get("event_type")
+        if not evt_type_raw:
+            raise ValueError("Record missing event_type")
+
+        content = tuple(
+            ContentPart(**part) for part in data.get("content", []) if isinstance(part, dict)
+        )
+
+        item_kind_raw = data.get("item_kind")
+        item_status_raw = data.get("item_status")
+        tool_kind_raw = data.get("tool_kind")
+
+        return cls(
+            event_id=data.get("event_id", record.get("event_id", "")),
+            sequence=data.get("sequence", record.get("sequence", 0)),
+            timestamp=data.get("timestamp", record.get("timestamp", "")),
+            session_id=data.get("session_id", ""),
+            event_type=EventType(evt_type_raw),
+            item_id=data.get("item_id"),
+            item_kind=ItemKind(item_kind_raw) if item_kind_raw else None,
+            item_status=ItemStatus(item_status_raw) if item_status_raw else None,
+            content=content,
+            delta=data.get("delta"),
+            tool_kind=ToolKind(tool_kind_raw) if tool_kind_raw else None,
+            cost_usd=data.get("cost_usd"),
+            duration_ms=data.get("duration_ms"),
+            error_message=data.get("error_message"),
+            metadata=dict(data.get("metadata", {})),
+            raw=data,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Stream parser — Claude Code NDJSON → UniversalEvent

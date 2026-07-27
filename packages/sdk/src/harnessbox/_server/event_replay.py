@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
-from harnessbox.streaming import EventType, UniversalEvent
+from harnessbox.streaming import UniversalEvent
 
 if TYPE_CHECKING:
     from harnessbox._server.storage import StorageBackend
@@ -24,24 +24,11 @@ logger = logging.getLogger(__name__)
 def _event_from_record(record: dict[str, Any]) -> UniversalEvent | None:
     """Reconstruct a UniversalEvent from a storage record dict.
 
-    event_type must be coerced back to the EventType enum, not left as the
-    raw string stored in event_json — UniversalEvent.to_dict() (used by both
-    /history and the events.jsonl export) calls event_type.value, which
-    raises AttributeError on a plain str.
+    Delegates to UniversalEvent.from_storage_dict() to properly restore
+    full event fidelity (item_id, item_kind, content, tool_kind, duration_ms, etc.).
     """
     try:
-        event_json = record.get("event_json", "{}")
-        data = json.loads(event_json) if isinstance(event_json, str) else event_json
-        return UniversalEvent(
-            event_id=data.get("event_id", record.get("event_id", "")),
-            sequence=data.get("sequence", record.get("sequence", 0)),
-            timestamp=data.get("timestamp", record.get("timestamp", "")),
-            session_id=data.get("session_id", ""),
-            event_type=EventType(data.get("event_type", record.get("event_type", ""))),
-            metadata=data.get("metadata", {}),
-            delta=data.get("delta"),
-            cost_usd=data.get("cost_usd"),
-        )
+        return UniversalEvent.from_storage_dict(record)
     except Exception as e:
         logger.warning(f"Skipping malformed stored event: {e}")
         return None

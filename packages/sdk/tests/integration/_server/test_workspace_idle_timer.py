@@ -222,6 +222,7 @@ class TestSnapshotRecovery:
         assert len(created_calls) == 1
         assert created_calls[0]["snapshot_id"] == "snap-1"
         assert info.runtime_state == RuntimeState.ACTIVE.value
+        info.sandbox_conn._transition.assert_called_with(RuntimeState.ACTIVE)
         assert info.provider_sandbox_id == "sb-new"
 
     @pytest.mark.asyncio
@@ -355,6 +356,38 @@ class TestGracefulShutdown:
         assert info.snapshot_id == "snap-1"
         sandbox_mock.create_snapshot.assert_awaited_once()
         sandbox_mock.pause.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_pause_preserves_previous_snapshot_on_error(self) -> None:
+        mgr = WorkspaceManager(auto_pause=True, pause_timeout=9999)
+        registry = mgr.registry
+
+        sandbox_mock = MagicMock()
+        sandbox_mock.create_snapshot = AsyncMock(side_effect=RuntimeError("snapshot failed"))
+        sandbox_mock.pause = AsyncMock(return_value="sb-1")
+        sandbox_mock._event_buffer = MagicMock()
+        sandbox_mock._event_buffer.close = AsyncMock()
+        sandbox_mock._event_buffer.push = AsyncMock()
+
+        info = WorkspaceInstance(
+            workspace_id="w-1",
+            remote="",
+            branch="",
+            provider="mock",
+            provider_sandbox_id="sb-1",
+            snapshot_id="snap-existing",
+            runtime_state=RuntimeState.ACTIVE.value,
+            created_at="",
+            last_active="",
+            sandbox_conn=sandbox_mock,
+        )
+        registry._workspaces["w-1"] = info
+        registry._locks["w-1"] = asyncio.Lock()
+
+        await registry.pause_workspace("w-1")
+
+        assert info.runtime_state == RuntimeState.PAUSED.value
+        assert info.snapshot_id == "snap-existing"
 
     @pytest.mark.asyncio
     async def test_graceful_shutdown_skips_paused_workspaces(self) -> None:

@@ -106,6 +106,65 @@ class TestEventFromRecord:
         event = _event_from_record(record)
         assert event is None
 
+    def test_from_storage_dict_full_fidelity(self) -> None:
+        """Verify storage deserialization restores all item and tool fields."""
+        from harnessbox.streaming import (
+            ContentPart,
+            EventType,
+            ItemKind,
+            ItemStatus,
+            ToolKind,
+            UniversalEvent,
+        )
+
+        original = UniversalEvent(
+            event_id="evt-100",
+            sequence=42,
+            timestamp="2026-07-22T12:00:00Z",
+            session_id="conv-abc",
+            event_type=EventType.ITEM_COMPLETED,
+            item_id="item-55",
+            item_kind=ItemKind.TOOL_CALL,
+            item_status=ItemStatus.COMPLETED,
+            content=(
+                ContentPart(
+                    type="tool_use",
+                    tool_name="Bash",
+                    tool_input="git status",
+                    call_id="call-1",
+                ),
+            ),
+            delta=None,
+            tool_kind=ToolKind.BASH,
+            cost_usd=0.002,
+            duration_ms=125,
+            error_message=None,
+            metadata={"source": "agent"},
+        )
+
+        storage_dict = original.to_storage_dict()
+        restored = _event_from_record(storage_dict)
+
+        assert restored is not None
+        assert restored.event_id == "evt-100"
+        assert restored.sequence == 42
+        assert restored.session_id == "conv-abc"
+        assert restored.event_type == EventType.ITEM_COMPLETED
+        assert restored.item_id == "item-55"
+        assert restored.item_kind == ItemKind.TOOL_CALL
+        assert restored.item_status == ItemStatus.COMPLETED
+        assert len(restored.content) == 1
+        assert restored.content[0].type == "tool_use"
+        assert restored.content[0].tool_name == "Bash"
+        assert restored.content[0].tool_input == "git status"
+        assert restored.tool_kind == ToolKind.BASH
+        assert restored.cost_usd == 0.002
+        assert restored.duration_ms == 125
+        assert restored.metadata == {"source": "agent"}
+
+        # to_dict() output must match original
+        assert restored.to_dict() == original.to_dict()
+
 
 class TestReplayFromSequence:
     """Tests for EventReplay.replay_from_sequence."""

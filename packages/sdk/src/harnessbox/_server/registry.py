@@ -718,11 +718,12 @@ class WorkspaceRegistry:
     async def _pause_workspace_locked(self, workspace_id: str, info: WorkspaceInstance) -> None:
         """Pause workspace internals. Caller must hold the lock."""
         assert info.sandbox_conn is not None
+        snapshot_id: str | None = None
         try:
             snapshot_id = await info.sandbox_conn.create_snapshot()
         except Exception as e:
             logger.warning(f"Failed to create snapshot for {workspace_id}: {e}")
-            snapshot_id = None
+            snapshot_id = info.snapshot_id
 
         await self._emit_runtime_state(workspace_id, RuntimeState.PAUSED.value)
 
@@ -858,6 +859,8 @@ class WorkspaceRegistry:
 
         new_sandbox_id = provider.sandbox_id
         info.provider_sandbox_id = new_sandbox_id
+        if info.sandbox_conn:
+            info.sandbox_conn._transition(RuntimeState.ACTIVE)
 
         if self._storage and new_sandbox_id:
             try:
