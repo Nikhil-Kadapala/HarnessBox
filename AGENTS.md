@@ -25,8 +25,8 @@ HarnessBox exists to make autonomous agent execution safe and legible. That same
 
 Do this when working on fresh issues or tasks:
 
-- Always create a GitHub Issue first if appropriate before starting work. If an issue is not warranted under standard development and CI/CD practice for the task, you can skip it. See [issue-tracker.md](docs/agents/issue-tracker.md) for the `gh` CLI conventions and [triage-labels.md](docs/agents/triage-labels.md) for label vocabulary.
-- Read the relevant resolver files (see [Deep-Dive Docs](#deep-dive-docs-read-on-demand)) before planning changes to an area you have not touched in this session.
+- Always create a GitHub Issue first if appropriate before starting work. If an issue is not warranted under standard development and CI/CD practice for the task, you can skip it. See [issue-tracker.md](.agents/repo-docs/issue-tracker.md) for the `gh` CLI conventions and [triage-labels.md](.agents/repo-docs/triage-labels.md) for label vocabulary.
+- Read the relevant repo-docs (see [Deep-Dive Docs](#deep-dive-docs-read-on-demand)) before planning changes to an area you have not touched in this session.
 - Use the vocabulary defined in `CONTEXT.md` (Sandbox, Workspace, Session, HarnessBox) in issue titles, branch names, tests, and code. Do not drift to synonyms.
 - For a new feature or major refactor, create a new branch or a git worktree and work there. For a small fix or cleanup, stay on the current working branch.
 - Run the full local CI check before opening a PR: `cd packages/sdk && uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`.
@@ -97,7 +97,7 @@ ALWAYS pause and ask before proceeding if:
 IMPORTANT: Prefer skill-led and retrieval-led reasoning over pre-training for any technology or workflow below. When a task matches a trigger, invoke the skill BEFORE generating code or advice.
 
 ### Documentation & Reference
-`/find-docs-with-ctx7`: external tech docs, API refs, SDK params, CLI flags, framework and migration guides | NOT: internal project code or architecture questions (read the resolvers)
+`/find-docs-with-ctx7`: external tech docs, API refs, SDK params, CLI flags, framework and migration guides | NOT: internal project code or architecture questions (read `.agents/repo-docs/`)
 
 ### Sandboxes & Infrastructure
 `/e2b`: E2B cloud sandboxes — sandbox lifecycle, templates, code-interpreter, desktop sandboxes, E2B CLI | NOT: our own `SandboxProvider` protocol (read `_providers/e2b.py` and `providers.py`)
@@ -150,7 +150,7 @@ Stripe has no installed skill — use `/find-docs-with-ctx7` for `billing.py` / 
 `/babysit`: keep a PR merge-ready — triage comments, resolve conflicts, fix CI in a loop
 `/split-to-prs`: split a large change set into small reviewable PRs
 `/canary`: post-deploy monitoring
-`/document-release`: post-ship docs sync — README, CHANGELOG, resolvers
+`/document-release`: post-ship docs sync — README, CHANGELOG, `.agents/repo-docs/`
 `/document-generate`: generate missing docs for a module or feature
 `/retro`: weekly engineering retrospective
 `/health`: code quality dashboard
@@ -168,6 +168,7 @@ Stripe has no installed skill — use `/find-docs-with-ctx7` for `billing.py` / 
 
 ### Cursor Configuration & Artifacts
 `/create-rule`, `/create-skill`, `/create-hook`, `/automate`, `/statusline`, `/update-cursor-settings`: author Cursor rules, skills, hooks, automations, and settings
+`okf-docs` (canonical: `.agents/skills/okf-docs/`; also via `.cursor/skills`, `.claude/skills`, `.codex/skills` symlinks): OKF v0.2 docs authoring — frontmatter, `docs/` bundle, `.agents/repo-docs/`. Invoke when adding/editing docs, writing OKF metadata, or migrating documentation.
 `/canvas`, `/docs-canvas`, `/pr-review-canvas`: render analytical artifacts, docs overviews, or PR walkthroughs as a Cursor Canvas
 `/diagram`, `/make-pdf`: diagrams from English or mermaid; publication-quality PDFs from markdown
 `/sdk`: the **Cursor** SDK (`@cursor/sdk` / `cursor-sdk`) | NOT: the HarnessBox Python SDK in `packages/sdk/`
@@ -207,7 +208,7 @@ Before marking any task done, confirm:
 - [ ] New logic has at least one corresponding pytest, in the right tier (`unit/`, `integration/`, `contract/`, `e2e/`)
 - [ ] Full SDK suite passes (`uv run pytest tests/ -v`)
 - [ ] Web app builds and tests pass if `apps/web/` changed (`bun run build`, `bun run test`)
-- [ ] Docs updated when behavior changed — the affected resolver, `README.md`, and `CHANGELOG.md`
+- [ ] Docs updated when behavior changed — the affected `.agents/repo-docs/` file, `README.md`, and `CHANGELOG.md`
 - [ ] PR description includes: what changed, why, and how to test it
 - [ ] No secrets, debug prints, `console.log`, or leftover `TODO`s in committed code
 
@@ -223,7 +224,7 @@ Read `CONTEXT.md` for the domain glossary before naming anything. The short vers
 
 **Monorepo**: `packages/sdk/` (Python SDK, PyPI `harnessbox`, currently 0.3.0) + `apps/web/` (React/Vite dashboard) + `apps/api/` (cloud API: Supabase auth, Stripe billing, teams) + `apps/desktop/`, `apps/site/` (stubs, `.gitkeep` only).
 
-Use this index to jump directly to files. For design rationale and extension points, see the resolvers listed at the bottom.
+Use this index to jump directly to files. For design rationale and extension points, see [`.agents/repo-docs/`](.agents/repo-docs/) listed at the bottom.
 
 ### SDK public surface (`packages/sdk/src/harnessbox/`)
 
@@ -360,14 +361,16 @@ React 19 + TanStack Router/Query + Vite 8 + Tailwind v4 (shadcn-style primitives
 
 ### Deep-Dive Docs (read on demand)
 
-Project instructions are split into resolver files to save context. Read the relevant one before doing detailed work in that area:
+When creating or editing documentation, read and follow [`.agents/skills/okf-docs/SKILL.md`](.agents/skills/okf-docs/SKILL.md) first.
 
-- **Developer Commands & Workspace Setup** → [commands.md](docs/resolvers/commands.md) when building, running, testing, or syncing dependencies.
-- **Safety, Guards & Development Rules** → [rules.md](docs/resolvers/rules.md) before touching sandbox providers, security guards, or credentials.
-- **Architecture & Module Responsibilities** → [architecture.md](docs/resolvers/architecture.md) for core flows, design decisions, and extension points (adding a provider or harness type).
-- **Coding Conventions, Commits & CI Policies** → [conventions.md](docs/resolvers/conventions.md) for formatting, test invariants, and CI recovery.
-- **Issue Tracking, Labels & Domain Language** → [issue-tracker.md](docs/agents/issue-tracker.md), [triage-labels.md](docs/agents/triage-labels.md), [domain.md](docs/agents/domain.md), and `CONTEXT.md`.
-- **Sandbox subsystem docs** → `docs/sandboxes/` (overview, security, commands, snapshots, streaming, workspaces).
+Agent deep-dives live in [`.agents/repo-docs/`](.agents/repo-docs/) (OKF-style YAML frontmatter; outside the user-facing `docs/` OKF bundle). Read the relevant file before detailed work in that area:
+
+- **Developer Commands & Workspace Setup** → [commands.md](.agents/repo-docs/commands.md) when building, running, testing, or syncing dependencies.
+- **Safety, Guards & Development Rules** → [rules.md](.agents/repo-docs/rules.md) before touching sandbox providers, security guards, or credentials.
+- **Architecture & Module Responsibilities** → [architecture.md](.agents/repo-docs/architecture.md) for core flows, design decisions, and extension points (adding a provider or harness type).
+- **Coding Conventions, Commits & CI Policies** → [conventions.md](.agents/repo-docs/conventions.md) for formatting, test invariants, and CI recovery.
+- **Issue Tracking, Labels & Domain Language** → [issue-tracker.md](.agents/repo-docs/issue-tracker.md), [triage-labels.md](.agents/repo-docs/triage-labels.md), [domain.md](.agents/repo-docs/domain.md), and `CONTEXT.md`.
+- **Sandbox subsystem docs** → `docs/sandboxes/` (overview, security, commands, snapshots, streaming, workspaces) — OKF bundle under [`docs/`](docs/index.md).
 - **User-facing docs** → `docs/getting-started/` (introduction, quickstart, how-it-works) and `docs/openapi.yaml`.
 - **Runnable examples** → `packages/sdk/examples/quickstart.py`, `packages/sdk/examples/multi_session.py`.
 

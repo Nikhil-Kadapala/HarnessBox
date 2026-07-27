@@ -1,3 +1,12 @@
+---
+type: Subsystem Doc
+title: Sandboxes
+description: "The sandbox compute primitive: create, message, command, pause, and kill."
+resource: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/sandbox.py"
+tags: [sandbox, sdk, lifecycle]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Sandboxes
 
 A sandbox is a secure, isolated cloud VM pre-configured with an AI coding agent. Each one has its own filesystem, network stack, and process space — completely isolated from other sandboxes via hardware-level virtualization. Think of it as a disposable development environment that boots in seconds, runs your agent, and tears down cleanly.

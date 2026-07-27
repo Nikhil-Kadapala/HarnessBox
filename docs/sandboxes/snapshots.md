@@ -1,3 +1,11 @@
+---
+type: Subsystem Doc
+title: Snapshots
+description: Capture and restore sandbox filesystem state across sessions.
+tags: [sandbox, lifecycle, sdk]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Snapshots
 
 Snapshots capture the sandbox's full filesystem state — all sessions' workspaces, installed packages, and agent config. Running processes do not carry over; the agent must be re-launched in any sandbox forked from a snapshot.

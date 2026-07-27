@@ -1,3 +1,12 @@
+---
+type: Subsystem Doc
+title: Streaming Events
+description: UniversalEvent stream parsing from agent NDJSON output.
+resource: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/streaming.py"
+tags: [streaming, sdk, http]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Streaming Events
 
 When you send a prompt to the agent, responses stream back as typed `UniversalEvent` objects. The SDK parses the agent's NDJSON output (Claude Code's `--output-format stream-json`) into structured events you can handle programmatically.

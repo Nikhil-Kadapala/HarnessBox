@@ -11,7 +11,9 @@ build/
 *.egg
 .env
 .DS_Store
-.claude/
+# Local Claude settings; track the skills symlink (not settings.local.json)
+.claude/*
+!.claude/skills
 .firecrawl/
 .context/
 TODOS.md
