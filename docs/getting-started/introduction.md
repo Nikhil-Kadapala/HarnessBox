@@ -1,3 +1,11 @@
+---
+type: Guide
+title: Introduction
+description: What HarnessBox is and how to install the SDK.
+tags: [sdk, agent, sandbox]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Introduction
 
 HarnessBox gives you secure, sandboxed environments for running AI coding agents. Each sandbox is an isolated cloud VM with its own filesystem, network, and process space — pre-configured with an AI agent (Claude Code, Codex, etc.), security policies, and an optional git workspace. Provision a sandbox, send prompts, stream agent output, and tear it down — all from a single Python SDK.

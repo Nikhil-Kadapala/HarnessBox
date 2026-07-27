@@ -1,3 +1,12 @@
+---
+type: Subsystem Doc
+title: Git Workspaces
+description: GitRepoConfig clone, branch, credential helper, commit, and push behavior.
+resource: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/workspace.py"
+tags: [workspace, git, sdk]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Git Workspaces
 
 A `GitRepoConfig` defines a repository to clone into the sandbox. The workspace is injected after sandbox creation — the agent starts with the repository as its working directory.

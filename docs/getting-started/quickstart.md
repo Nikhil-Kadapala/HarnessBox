@@ -1,3 +1,11 @@
+---
+type: Guide
+title: Quickstart
+description: Create a sandbox session and stream a first prompt in minutes.
+tags: [sdk, sandbox, workspace]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Quickstart
 
 ## Prerequisites

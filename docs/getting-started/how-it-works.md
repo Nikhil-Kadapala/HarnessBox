@@ -1,3 +1,11 @@
+---
+type: Guide
+title: How It Works
+description: Providers, harnesses, security, workspaces, streaming, and session lifecycle.
+tags: [sdk, lifecycle, streaming, security]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # How It Works
 
 Your code talks to the **HarnessBox SDK**, which provisions a sandbox via a provider (E2B), injects agent configuration and security policies, clones your git workspace, and starts the AI agent. Prompts and agent output stream over the provider's transport layer.

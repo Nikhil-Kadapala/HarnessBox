@@ -1,3 +1,12 @@
+---
+type: Subsystem Doc
+title: Running Commands
+description: Run shell commands in the sandbox outside the agent turn path.
+resource: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/sandbox.py"
+tags: [sandbox, sdk]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Running Commands
 
 Execute shell commands directly inside the sandbox, bypassing the AI agent. Useful for setup scripts, test runs, build commands, and verification steps.

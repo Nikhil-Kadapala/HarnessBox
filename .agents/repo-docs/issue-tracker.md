@@ -1,3 +1,12 @@
+---
+type: Repo Doc
+title: Issue Tracker (GitHub)
+description: gh CLI conventions for creating, listing, labeling, and closing GitHub issues.
+tags: [agent, ci]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
+
 # Issue tracker: GitHub
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.

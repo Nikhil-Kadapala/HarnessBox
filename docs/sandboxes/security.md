@@ -1,3 +1,12 @@
+---
+type: Subsystem Doc
+title: Security Policies
+description: SecurityPolicy, credential guards, deny rules, and PreToolUse hooks.
+resource: "https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/security/policy.py"
+tags: [security, sdk, agent]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
 # Security Policies
 
 Security policies control what the AI agent can do inside the sandbox. They restrict tool usage, shell commands, file access, and network activity — enforced at the agent configuration level and via runtime hook scripts.

@@ -1,3 +1,12 @@
+---
+type: Repo Doc
+title: Triage Labels
+description: Maps canonical triage roles to the label strings used in this repo's issue tracker.
+tags: [agent, ci]
+status: stable
+generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+---
+
 # Triage Labels
 
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
