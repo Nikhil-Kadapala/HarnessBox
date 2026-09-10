@@ -48,6 +48,8 @@ hbox
 python -m harnessbox.hbox
 ```
 
+For a full local dashboard smoke path (server + Vite + create → chat → pause → resume), see [Local Dashboard Dogfood](local-dashboard.md).
+
 ## CI Pipeline
 
 `.github/workflows/ci.yml` runs on push and PR to `main`, scoped to `packages/sdk`: lint/format/mypy/bandit/pip-audit, then pytest on Python 3.12 and 3.13. CI does not currently build `apps/web` or `apps/api`.

@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HarnessBox — AgentManager routing &amp; storage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f7f4ef;
+      --bg-elev: #fffdf9;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #d6d3d1;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+      --warn: #b45309;
+      --warn-soft: #ffedd5;
+      --code-bg: #1c1917;
+      --code-ink: #e7e5e4;
+      --shadow: 0 1px 0 rgba(28, 25, 23, 0.06), 0 12px 40px rgba(28, 25, 23, 0.06);
+      --radius: 12px;
+      --max: 52rem;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #e7f5f2 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #f5e6d3 0%, transparent 50%),
+        var(--bg);
+      font-family: "DM Sans", sans-serif;
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .wrap {
+      max-width: calc(var(--max) + 14rem);
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+      display: grid;
+      grid-template-columns: 12rem 1fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 900px) {
+      .wrap { grid-template-columns: 1fr; }
+      nav.toc { position: static; }
+    }
+
+    nav.toc {
+      position: sticky;
+      top: 1.25rem;
+      align-self: start;
+      font-size: 0.82rem;
+    }
+    nav.toc .label {
+      font-family: "IBM Plex Mono", monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-size: 0.7rem;
+      margin-bottom: 0.75rem;
+    }
+    nav.toc a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0.28rem 0;
+      border-left: 2px solid transparent;
+      padding-left: 0.65rem;
+    }
+    nav.toc a:hover { color: var(--ink); border-left-color: var(--accent); }
+
+    main { min-width: 0; max-width: var(--max); }
+
+    .eyebrow {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      margin: 0 0 0.5rem;
+    }
+    h1 {
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: clamp(1.85rem, 3vw, 2.45rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin: 0 0 0.75rem;
+      letter-spacing: -0.02em;
+    }
+    .lede {
+      font-size: 1.08rem;
+      color: var(--muted);
+      margin: 0 0 1.5rem;
+      max-width: 40rem;
+    }
+
+    .banner {
+      background: var(--warn-soft);
+      border: 1px solid #fdba74;
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+      font-size: 0.9rem;
+      color: #7c2d12;
+      margin-bottom: 2rem;
+    }
+
+    h2 {
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: 1.45rem;
+      margin: 2.5rem 0 0.75rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--line);
+    }
+    h3 {
+      font-family: "DM Sans", sans-serif;
+      font-size: 1.02rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+    }
+    p { margin: 0 0 1rem; }
+    ul, ol { margin: 0 0 1rem; padding-left: 1.25rem; }
+    li { margin-bottom: 0.35rem; }
+    strong { font-weight: 600; }
+
+    code, .mono {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.86em;
+    }
+    p code, li code, td code {
+      background: #ebe7e0;
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      margin: 0 0 1.25rem;
+      box-shadow: var(--shadow);
+    }
+
+    .card {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.2rem;
+      margin: 0 0 1.25rem;
+      box-shadow: var(--shadow);
+    }
+    .card h3 { margin-top: 0; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+      margin-bottom: 1.25rem;
+    }
+    @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .pill {
+      display: inline-block;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #115e59;
+    }
+
+    .diagram {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin: 0 0 1.25rem;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+    }
+    .diagram pre {
+      background: transparent;
+      color: var(--ink);
+      box-shadow: none;
+      padding: 0;
+      margin: 0;
+      font-size: 0.72rem;
+      line-height: 1.35;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 0 0 1.25rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.6rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+    .flow-num {
+      width: 2.2rem;
+      height: 2.2rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .flow-body { padding-top: 0.2rem; }
+    .flow-body strong { display: block; margin-bottom: 0.2rem; }
+
+    footer.meta {
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc" aria-label="Table of contents">
+      <div class="label">Contents</div>
+      <a href="#overview">Overview</a>
+      <a href="#concurrency-contract">Concurrency contract</a>
+      <a href="#identities">Identity layers</a>
+      <a href="#components">Components</a>
+      <a href="#storage">What is stored where</a>
+      <a href="#routing">Request routing</a>
+      <a href="#agent-manager">AgentManager internals</a>
+      <a href="#multi">Multi-harness / multi-conversation</a>
+      <a href="#pause">Pause, resume, recovery</a>
+      <a href="#client">Client contract today</a>
+      <a href="#files">Source map</a>
+    </nav>
+
+    <main>
+      <p class="eyebrow">INTERNAL · .agents/repo-docs</p>
+      <h1>How AgentManager stores and routes agent processes</h1>
+      <p class="lede">
+        One workspace owns one sandbox VM. Inside that VM, HarnessBox can run many
+        long-lived agent CLI processes — one per conversation. This doc explains
+        the identity model, persistence, and the exact path from an HTTP prompt
+        to the correct stdin of the right process.
+      </p>
+
+      <div class="banner">
+        <strong>Internal only.</strong> Not part of the public OKF bundle under
+        <code>docs/</code>. Aimed at engineers wiring the dashboard, CLI, or
+        multi-conversation UX.
+      </div>
+
+      <h2 id="overview">Overview</h2>
+      <p>
+        HarnessBox separates <em>compute</em> (the sandbox) from <em>agent chat
+        state</em> (conversations and CLI processes). The E2B sandbox id is only
+        how we reconnect the VM. Agent routing never uses the E2B id as a chat
+        key.
+      </p>
+
+      <div class="diagram" aria-label="Hierarchy diagram">
+        <pre>
+Workspace (workspace_id) ──────────────────────────────┐
+  │  SQLite: workspaces row                            │
+  │  In-memory: WorkspaceInstance                      │
+  │                                                    │
+  ├─ Sandbox (provider_sandbox_id)  ← E2B VM           │
+  │     filesystem, network, PIDs                      │
+  │                                                    │
+  └─ AgentManager                                      │
+        ├─ conversation A → AgentProcess (claude-code) │
+        ├─ conversation B → AgentProcess (codex)       │
+        └─ conversation C → AgentProcess (claude-code) │
+              ↑ keyed only by conversation_id          ┘
+        </pre>
+      </div>
+
+      <h2 id="concurrency-contract">Concurrency contract</h2>
+      <div class="card">
+        <h3>Many conversations, one intentionally shared workspace</h3>
+        <p>
+          Different conversations in the same workspace are intended to execute
+          in parallel. Their agent processes share the same sandbox, checkout,
+          branch, filesystem, network namespace, and installed tools.
+        </p>
+        <p style="margin:0">
+          HarnessBox serializes turns within a single conversation. It does
+          <strong>not</strong> serialize, isolate, detect, or reconcile file edits
+          and Git operations across different conversations. Callers choose when
+          parallel work is appropriate and own any resulting coordination or
+          conflicts.
+        </p>
+      </div>
+      <p>
+        Workspace lifecycle operations are a separate concern. Connect, pause,
+        snapshot, recovery, and destruction must coordinate safely with active
+        turns, but lifecycle locking must not become an implicit single-writer
+        policy for ordinary conversation turns.
+      </p>
+      <div class="banner">
+        <strong>Current implementation gap.</strong>
+        <code>SessionRouter.prompt()</code> still holds the workspace lock across
+        the complete streamed turn, which effectively serializes conversations
+        today. That behavior is not the target architecture; the lock should be
+        narrowed to sandbox lifecycle transitions while per-conversation locks
+        protect each agent process.
+      </div>
+
+      <h2 id="identities">Identity layers</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Owned by</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>workspace_id</code></td>
+            <td>HarnessBox server (minted)</td>
+            <td>Primary HTTP resource. Selects sandbox + AgentManager.</td>
+          </tr>
+          <tr>
+            <td><code>provider_sandbox_id</code></td>
+            <td>E2B</td>
+            <td>Pause/resume/connect the VM. Not sent by clients on prompt.</td>
+          </tr>
+          <tr>
+            <td><code>conversation_id</code></td>
+            <td>HarnessBox (UUID)</td>
+            <td>Stable chat thread. Keys the in-memory AgentProcess map.</td>
+          </tr>
+          <tr>
+            <td><code>agent_type</code></td>
+            <td>Stored per conversation</td>
+            <td>Harness name: <code>claude-code</code>, <code>codex</code>, …</td>
+          </tr>
+          <tr>
+            <td><code>agent_session_id</code></td>
+            <td>Agent CLI (e.g. Claude)</td>
+            <td>Native session id for <code>--resume</code> after process death.</td>
+          </tr>
+          <tr>
+            <td>event <code>session_id</code></td>
+            <td>Streaming layer</td>
+            <td>Normalized to <code>conversation_id</code> before clients see it.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="components">Components</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>WorkspaceManager</h3>
+          <p>Facade: registry + idle + session router + event replay. HTTP handlers call this.</p>
+        </div>
+        <div class="card">
+          <h3>WorkspaceRegistry</h3>
+          <p>In-memory map of <code>WorkspaceInstance</code>. Owns create/hydrate/pause/resume and attaches one <code>AgentManager</code> per live sandbox.</p>
+        </div>
+        <div class="card">
+          <h3>SessionRouter</h3>
+          <p>Prompt path: resolve conversation, upload attachments, call <code>AgentManager.send_message</code>, persist events and <code>agent_session_id</code>.</p>
+        </div>
+        <div class="card">
+          <h3>AgentManager</h3>
+          <p>Per-workspace process table: <code>conversation_id → AgentProcess</code>, with per-conversation locks. Lazy spawn; reuse across turns.</p>
+        </div>
+        <div class="card">
+          <h3>AgentProcess</h3>
+          <p>Long-lived CLI in the sandbox. JSON-line stdin prompts; NDJSON stdout; stays up between turns.</p>
+        </div>
+        <div class="card">
+          <h3>StorageBackend</h3>
+          <p>SQLite (default) or memory. Durable workspace + conversation metadata + event history. Not the live process table.</p>
+        </div>
+      </div>
+
+      <h2 id="storage">What is stored where</h2>
+
+      <h3>In memory (lost on server restart until hydrate)</h3>
+      <ul>
+        <li><code>WorkspaceInstance.sandbox_conn</code> — live <code>Sandbox</code> / provider handle</li>
+        <li><code>WorkspaceInstance.agent_manager</code> — the process map</li>
+        <li><code>AgentManager._agents</code> — <code>dict[conversation_id, AgentProcess]</code></li>
+        <li><code>AgentManager._locks</code> — serializes turns per conversation</li>
+        <li>Sandbox <code>EventBuffer</code> — recent events for SSE replay</li>
+      </ul>
+
+      <h3>Durable (SQLite <code>~/.harnessbox/sessions.db</code> by default)</h3>
+      <p><span class="pill">conversations</span> table (core columns):</p>
+      <pre>conversation_id   TEXT PRIMARY KEY
+workspace_id      TEXT  → workspaces
+agent_type        TEXT  NOT NULL   -- harness for this conversation
+title             TEXT
+last_active       TEXT  NOT NULL
+agent_session_id  TEXT              -- CLI --resume id (migration v005)</pre>
+
+      <p>
+        <strong>Active conversation</strong> is not a separate flag. It is
+        defined as the row with the latest <code>last_active</code> for that
+        workspace (<code>ORDER BY last_active DESC LIMIT 1</code>).
+      </p>
+
+      <p>
+        Events are stored under <code>workspace_id</code> (not conversation),
+        with conversation context inside event JSON / metadata. Conversation
+        rows carry the routing metadata needed to respawn the right harness.
+      </p>
+
+      <div class="card">
+        <h3>Important split</h3>
+        <p style="margin:0">
+          Storage remembers <em>which conversation / harness / Claude session</em>.
+          The running PID and stdin pipes live only in <code>AgentManager</code>.
+          After pause or process death, the next prompt respawns from storage
+          metadata — it does not revive the old Python object.
+        </p>
+      </div>
+
+      <h2 id="routing">Request routing (prompt path)</h2>
+      <p>
+        Endpoint: <code>POST /v1/workspaces/{workspace_id}/prompt</code><br />
+        Body: <code>{ prompt, harness, conversation_id?, attachments? }</code>
+      </p>
+
+      <div class="flow-step">
+        <div class="flow-num">1</div>
+        <div class="flow-body">
+          <strong>Select workspace</strong>
+          Path <code>workspace_id</code> → <code>WorkspaceRegistry.get_workspace</code>.
+          Wrong id → 404. This is the only required client identity today.
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">2</div>
+        <div class="flow-body">
+          <strong>Ensure sandbox</strong>
+          <code>ensure_sandbox</code> resumes the E2B VM if paused (via
+          <code>provider_sandbox_id</code> stored on the workspace). Still no
+          agent routing — just compute.
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">3</div>
+        <div class="flow-body">
+          <strong>Resolve conversation</strong>
+          <code>SessionRouter._resolve_conversation</code>:
+          <ul>
+            <li>If client sent <code>conversation_id</code> → load that row; use its <code>agent_type</code> and <code>agent_session_id</code> (stored harness overrides body harness).</li>
+            <li>If omitted → take active conversation (latest <code>last_active</code>), or mint a new UUID.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">4</div>
+        <div class="flow-body">
+          <strong>Delegate to AgentManager</strong>
+          <code>info.agent_manager.send_message(conversation_id, prompt, harness, agent_session_id=…)</code>.
+          Lookup / spawn process keyed by conversation id.
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">5</div>
+        <div class="flow-body">
+          <strong>Stream + persist</strong>
+          Events pushed to the sandbox event buffer and SQLite. Claude’s native
+          session id is captured from stream metadata into
+          <code>_agent_session_id</code>, then written back to the conversation
+          row at turn end.
+        </div>
+      </div>
+
+      <h2 id="agent-manager">AgentManager internals</h2>
+      <p>File: <code>packages/sdk/src/harnessbox/_server/agent_manager.py</code></p>
+
+      <h3>Lazy spawn</h3>
+      <pre>if conversation_id not in self._agents:
+    await self._spawn_agent(conversation_id, harness, agent_session_id=…)
+
+async with self._locks[conversation_id]:
+    process = self._agents[conversation_id]
+    await process.send_prompt(prompt)
+    async for event in process.stream_turn():
+        # rewrite event.session_id → conversation_id
+        # stash CLI session id in metadata["_agent_session_id"]
+        yield event</pre>
+
+      <h3>Spawn command</h3>
+      <p>
+        <code>get_harness_type(harness).build_session_command(…, session_id=agent_session_id)</code>
+        builds the CLI argv. If <code>agent_session_id</code> is set, the harness
+        typically includes <code>--resume &lt;id&gt;</code> so Claude (or peers)
+        restore history even though the OS process is new.
+      </p>
+
+      <h3>Concurrency</h3>
+      <ul>
+        <li><strong>Required invariant:</strong> turns for the <em>same</em> conversation are serialized by its asyncio lock.</li>
+        <li><strong>Required behavior:</strong> turns for <em>different</em> conversations may execute concurrently, even though they share one filesystem and Git working tree.</li>
+        <li><strong>User responsibility:</strong> HarnessBox does not prevent or merge cross-conversation file and Git conflicts.</li>
+        <li><strong>Current gap:</strong> workspace-level locking in <code>SessionRouter.prompt</code> wraps the whole turn, so prompts are effectively serialized per workspace until that lock is narrowed.</li>
+      </ul>
+
+      <h3>Session id rewriting</h3>
+      <p>
+        The CLI may emit its own session id on events. AgentManager rewrites
+        <code>event.session_id</code> to the HarnessBox <code>conversation_id</code>
+        so clients see a stable thread id, while preserving the CLI id in
+        metadata for persistence.
+      </p>
+
+      <h2 id="multi">Multi-harness / multi-conversation</h2>
+      <p>Server support is already there. Pattern:</p>
+      <pre># Conversation A — Claude on shared sandbox
+POST /v1/workspaces/ws_1/prompt
+{ "prompt": "…", "harness": "claude-code", "conversation_id": "conv_a" }
+
+# Conversation B — Codex on the SAME workspace/sandbox
+POST /v1/workspaces/ws_1/prompt
+{ "prompt": "…", "harness": "codex", "conversation_id": "conv_b" }</pre>
+
+      <p>Resulting AgentManager map:</p>
+      <pre>_agents = {
+  "conv_a": AgentProcess(claude-code …),
+  "conv_b": AgentProcess(codex …),
+}</pre>
+
+      <p>
+        Both processes share the same filesystem and network namespace of the
+        sandbox. They do <em>not</em> share chat history — that is per CLI
+        session / conversation.
+      </p>
+      <p>
+        They may run at the same time. This is intentional: one conversation may
+        explore the codebase while another implements an unrelated task on the
+        shared branch. If parallel agents edit overlapping files or manipulate
+        the same Git state, HarnessBox does not arbitrate the conflict.
+      </p>
+
+      <div class="card">
+        <h3>Harness stickiness</h3>
+        <p style="margin:0">
+          Once a conversation row exists, <code>_resolve_conversation</code>
+          prefers stored <code>agent_type</code> over a mismatched
+          <code>harness</code> in the request body. To switch harnesses, mint a
+          <em>new</em> <code>conversation_id</code> (new thread), do not reuse
+          the old one with a different harness name.
+        </p>
+      </div>
+
+      <h2 id="pause">Pause, resume, and recovery</h2>
+      <p>
+        Lifecycle coordination must account for all active conversation turns.
+        Idle pause begins only when none are active. Explicit pause, snapshot,
+        and destroy operations need bounded wait/cancel semantics; they must not
+        rely on whole-turn workspace serialization as a substitute for lifecycle
+        coordination.
+      </p>
+      <ol>
+        <li><strong>Pause workspace</strong> — may snapshot; then E2B <code>pause()</code>; store <code>provider_sandbox_id</code>; runtime → <code>PAUSED</code>.</li>
+        <li><strong>Resume</strong> — <code>Sandbox.connect(provider_sandbox_id)</code> (plus egress probe). On successful in-place resume, registry typically <code>agent_manager.shutdown_all()</code> rather than reattaching stale stdout pipes.</li>
+        <li><strong>Next prompt</strong> — resolves conversation → loads <code>agent_session_id</code> → <code>AgentManager</code> spawns a fresh process with <code>--resume</code>.</li>
+        <li><strong>Expired sandbox</strong> — recover from filesystem snapshot if available; new VM + same conversation recovery path via stored ids.</li>
+      </ol>
+      <p>
+        <code>reattach_all()</code> exists for reconnecting stdout after resume,
+        but the current pause/resume happy path prefers shutdown + respawn for
+        reliability (Claude’s outbound HTTP can go stale across pause).
+      </p>
+
+      <h2 id="client">Client contract today</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Sends</th>
+            <th>Effect</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Web dashboard</td>
+            <td><code>workspace_id</code> in URL; body <code>{ prompt, harness }</code> only</td>
+            <td>Always hits active conversation (or creates one). Multi-conversation UI not wired.</td>
+          </tr>
+          <tr>
+            <td>HTTP API</td>
+            <td>Optional <code>conversation_id</code></td>
+            <td>Full routing available to any client that passes the id.</td>
+          </tr>
+          <tr>
+            <td>Neither</td>
+            <td>E2B sandbox id / agent_session_id on prompt</td>
+            <td>Server owns those; clients should not need them for chat.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="files">Source map</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>_server/agent_manager.py</code></td>
+            <td>Process map, spawn, send_message, terminate</td>
+          </tr>
+          <tr>
+            <td><code>_server/session_router.py</code></td>
+            <td>Conversation resolve, prompt orchestration, persistence</td>
+          </tr>
+          <tr>
+            <td><code>_server/registry.py</code></td>
+            <td>WorkspaceInstance, attach AgentManager, pause/resume</td>
+          </tr>
+          <tr>
+            <td><code>_server/workspace_manager.py</code></td>
+            <td>Public facade used by routers</td>
+          </tr>
+          <tr>
+            <td><code>_server/routers/sessions.py</code></td>
+            <td><code>/prompt</code>, <code>/pause</code>, <code>/resume</code>, …</td>
+          </tr>
+          <tr>
+            <td><code>_server/routers/_models.py</code></td>
+            <td><code>PromptRequest</code> fields</td>
+          </tr>
+          <tr>
+            <td><code>process.py</code></td>
+            <td><code>AgentProcess</code> stdin/stdout protocol</td>
+          </tr>
+          <tr>
+            <td><code>_storage/sqlite.py</code> + migrations</td>
+            <td>Conversation CRUD; <code>agent_session_id</code> column</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <footer class="meta">
+        Generated for HarnessBox internal engineering · reflects
+        <code>packages/sdk</code> AgentManager / SessionRouter design as of
+        2026-07-27 · open this file in a browser from
+        <code>.agents/repo-docs/agent-manager.html</code>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
