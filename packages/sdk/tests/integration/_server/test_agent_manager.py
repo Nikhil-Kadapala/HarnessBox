@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -131,6 +132,42 @@ class TestAgentManagerConcurrent:
         assert len(mgr._agents) == 2
         assert "conv-1" in mgr._agents
         assert "conv-2" in mgr._agents
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_turns_spawn_one_agent(self, mock_sandbox):
+        """Concurrent first turns for one conversation share one process."""
+        mgr = AgentManager(mock_sandbox)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        with (
+            patch("harnessbox._server.agent_manager.AgentProcess") as MockAgentProcess,
+            patch("harnessbox._server.agent_manager.get_harness_type"),
+        ):
+            process = MockAgentProcess.return_value
+
+            async def start(*args, **kwargs):
+                started.set()
+                await release.wait()
+
+            process.start = start
+            process.send_prompt = AsyncMock()
+            process.stream_turn = lambda: _async_gen_from([])
+            process.poll_status = AsyncMock(return_value=[])
+
+            async def run(prompt):
+                async for _ in mgr.send_message("conv-1", prompt):
+                    pass
+
+            first = asyncio.create_task(run("one"))
+            await started.wait()
+            second = asyncio.create_task(run("two"))
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.gather(first, second)
+
+        assert MockAgentProcess.call_count == 1
+        assert process.send_prompt.call_count == 2
 
 
 class TestAgentManagerTermination:

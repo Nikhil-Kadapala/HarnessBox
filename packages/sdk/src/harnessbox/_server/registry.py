@@ -30,6 +30,7 @@ from harnessbox.streaming import UniversalEvent
 from harnessbox.workspace import Workspace
 
 if TYPE_CHECKING:
+    from harnessbox._server.idle import IdleOrchestrator
     from harnessbox._server.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -156,10 +157,15 @@ class WorkspaceRegistry:
     its own asyncio lock for serialized access to connection mutations.
     """
 
-    def __init__(self, storage: StorageBackend | None = None) -> None:
+    def __init__(
+        self,
+        storage: StorageBackend | None = None,
+        idle: IdleOrchestrator | None = None,
+    ) -> None:
         self._workspaces: dict[str, WorkspaceInstance] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._storage = storage
+        self._idle = idle
         self._workspace_configs: dict[str, WorkspaceConfig] = {}
 
     @property
@@ -614,7 +620,15 @@ class WorkspaceRegistry:
         async with self._ensure_lock(workspace_id):
             if info.runtime_state != RuntimeState.ACTIVE.value:
                 raise InvalidTransitionError(RuntimeState(info.runtime_state), RuntimeState.PAUSED)
-            await self._pause_workspace_locked(workspace_id, info)
+            if self._idle:
+                self._idle.begin_drain(workspace_id)
+            try:
+                if self._idle:
+                    await self._idle.wait_for_turns_idle(workspace_id)
+                await self._pause_workspace_locked(workspace_id, info)
+            finally:
+                if self._idle:
+                    self._idle.end_drain(workspace_id)
 
     async def resume_workspace(self, workspace_id: str) -> None:
         """Resume paused workspace: reconnect sandbox."""
@@ -631,15 +645,23 @@ class WorkspaceRegistry:
         """Destroy a workspace and kill its sandbox."""
         info = self.get_workspace(workspace_id)
         async with self._ensure_lock(workspace_id):
-            if info.agent_manager:
-                await info.agent_manager.shutdown_all()
+            if self._idle:
+                self._idle.begin_drain(workspace_id)
+            try:
+                if self._idle:
+                    await self._idle.wait_for_turns_idle(workspace_id)
+                if info.agent_manager:
+                    await info.agent_manager.shutdown_all()
 
-            await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
+                await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
 
-            if info.sandbox_conn:
-                await info.sandbox_conn.kill()
+                if info.sandbox_conn:
+                    await info.sandbox_conn.kill()
 
-            info.runtime_state = RuntimeState.DEAD.value
+                info.runtime_state = RuntimeState.DEAD.value
+            finally:
+                if self._idle:
+                    self._idle.end_drain(workspace_id)
 
         if self._storage:
             try:
@@ -664,15 +686,23 @@ class WorkspaceRegistry:
         """
         info = self.get_workspace(workspace_id)
         async with self._ensure_lock(workspace_id):
-            if info.agent_manager:
-                await info.agent_manager.shutdown_all()
+            if self._idle:
+                self._idle.begin_drain(workspace_id)
+            try:
+                if self._idle:
+                    await self._idle.wait_for_turns_idle(workspace_id)
+                if info.agent_manager:
+                    await info.agent_manager.shutdown_all()
 
-            await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
+                await self._emit_runtime_state(workspace_id, RuntimeState.DEAD.value)
 
-            if info.sandbox_conn:
-                await info.sandbox_conn.kill()
+                if info.sandbox_conn:
+                    await info.sandbox_conn.kill()
 
-            info.runtime_state = RuntimeState.DEAD.value
+                info.runtime_state = RuntimeState.DEAD.value
+            finally:
+                if self._idle:
+                    self._idle.end_drain(workspace_id)
 
         if self._storage:
             try:
