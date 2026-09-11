@@ -49,7 +49,7 @@ ALWAYS pause and ask before proceeding if:
 
 - Never add runtime dependencies to the SDK — provider SDKs stay optional extras (`harnessbox[e2b]`)
 - Never modify `SandboxProvider` or `Workspace` protocols without user confirmation
-- Never hardcode sandbox credentials, API keys, or tokens; never pass git auth tokens as environment variables
+- Never hardcode sandbox credentials, API keys, or tokens. Runtime credential propagation must remain explicitly allowlisted; never pass git auth tokens as environment variables.
 - Never weaken a credential guard or deny rule to make a test pass
 - Never edit or delete an existing migration file; add a new one
 - Never use broad staging (`git add .`, `git add -A`) — stage specific paths

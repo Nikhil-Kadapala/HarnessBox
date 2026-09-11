@@ -8,6 +8,8 @@ Progressive disclosure index for `.agents/repo-docs/`. These files are **outside
 * [Safety & Development Rules](rules.md) - Stop-and-clarify triggers and do-not list
 * [Coding Conventions, Commits & CI](conventions.md) - Style, tests, commits, merge policy
 * [Developer Commands](commands.md) - Local build, lint, and test commands
+* [Local Dashboard Dogfood](local-dashboard.md) - Internal server + web create → chat → pause → resume
+* [AgentManager routing (HTML)](agent-manager.html) - Process routing, shared-workspace concurrency, storage, and recovery
 
 ## Domain & tracker
 

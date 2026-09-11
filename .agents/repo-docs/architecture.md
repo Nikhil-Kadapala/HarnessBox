@@ -5,12 +5,12 @@ description: Core SDK/server flows, design invariants, extension points, and whe
 resource: https://github.com/Nikhil-Kadapala/HarnessBox/blob/main/packages/sdk/src/harnessbox/harnessbox.py
 tags: [sdk, server, architecture, lifecycle, http]
 status: stable
-generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
+generated: { by: agent/cursor, at: 2026-07-28T01:54:00Z }
 ---
 
 # Architecture & Module Map
 
-Read this when analyzing codebase structure, adding providers or harnesses, or refactoring components. For the exhaustive per-file index, prefer [`AGENTS.md`](../../AGENTS.md) — this doc focuses on flows, invariants, and extension points.
+Read this when analyzing codebase structure, adding providers or harnesses, or refactoring components. For the repository documentation map, see the [repo-docs index](index.md); this doc focuses on flows, invariants, and extension points.
 
 ## Core Flow
 
@@ -29,7 +29,7 @@ Read this when analyzing codebase structure, adding providers or harnesses, or r
 3. **Execute** — `await sandbox.send_message(prompt)` streams agent output, or `await sandbox.start_interactive_session()` for PTY
 4. **End** — teardown commits/pushes when configured and destroys the sandbox
 
-**HTTP control plane:** FastAPI (`create_app()` in `server.py`) serves `/v1/workspaces/*`. Workspace IDs are the session identity on the wire — there is no `/v1/sessions/*` tree. See [`AGENTS.md`](../../AGENTS.md) for the full route table.
+**HTTP control plane:** FastAPI (`create_app()` in `server.py`) serves `/v1/workspaces/*`. Workspace IDs are the session identity on the wire — there is no `/v1/sessions/*` tree. See the [OpenAPI specification](../../docs/openapi.yaml) for the route table.
 
 ## Module Map (summary)
 
@@ -54,6 +54,13 @@ All SDK source lives under `packages/sdk/src/harnessbox/`.
 - **Server-minted workspace identity** — HTTP create always mints `workspace_id`; client-supplied IDs are ignored. `project_id` stays null until a Project API exists.
 - **Git cwd wins** — When git is configured, agent cwd is `/workspace/<clone_dir_name>` regardless of request `cwd`.
 - **Event storage round-trip** — `UniversalEvent.to_storage_dict()` / `from_storage_dict()` keep full fidelity for `/history` and `events.jsonl`.
+- **Parallel conversations share a workspace** — Different conversations in one Workspace are intended to run concurrently against the same sandbox, checkout, branch, and filesystem. HarnessBox serializes turns within one conversation but does not isolate or reconcile file and Git conflicts across conversations; callers own that coordination.
+
+### Conversation concurrency boundary
+
+`AgentManager` owns one process and one turn lock per `conversation_id`. Workspace lifecycle coordination may briefly guard sandbox connect, pause, recovery, snapshot, and destruction, but it must not serialize complete turns from different conversations.
+
+The current `SessionRouter.prompt()` implementation still holds a workspace lock across the streamed turn, so it does **not yet satisfy this intended concurrency contract**. Treat that as an implementation gap, not as the desired single-writer policy. See [`agent-manager.html`](agent-manager.html) for the routing details.
 
 ## Extension Points
 

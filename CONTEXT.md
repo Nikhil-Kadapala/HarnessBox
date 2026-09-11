@@ -4,39 +4,55 @@
 
 **Sandbox** — A cloud VM instance (E2B, Docker, Daytona). The compute unit. One sandbox = one isolated Linux environment with filesystem, network, and installed tools.
 
-**Workspace** — A sandbox bound to a git repository. The logical unit that HarnessBox manages. A workspace has a mode (SHARED or NEW) that determines how sessions relate to sandboxes.
+**Workspace** — The durable logical computer HarnessBox manages: a repository/branch, workspace configuration, and a replaceable binding to a sandbox. A workspace can outlive a sandbox id when HarnessBox recovers it from a snapshot.
 
-**Session** — An agent conversation within a workspace. Each session = one agent process (Claude Code, Codex, etc.) + one branch or worktree. Sessions are the unit users interact with.
+**Conversation** — A durable agent chat thread within a workspace. Each conversation has its own harness type, native agent session id, and live agent process when active. Multiple conversations can execute concurrently against the same workspace filesystem.
 
-**HarnessBox** — The orchestrator. Creates workspaces, manages sessions, handles lifecycle (pause/resume/kill). The sole public API surface for both SDK and server consumers.
+**Session** — The public SDK interaction handle. In the server architecture, durable chat threads are called Conversations so they are not confused with sandbox or workspace lifecycle.
 
-## Workspace Modes
+**HarnessBox** — The orchestrator. Creates workspaces, routes conversations, and handles lifecycle (pause/resume/kill). The sole public API surface for both SDK and server consumers.
 
-**SHARED mode** — One sandbox, one cloned repo, multiple sessions. Each session gets its own git worktree (`git worktree add`) within the shared sandbox. Agents share filesystem (installed tools, dependencies) and can read each other's worktrees (intentional — enables cross-branch awareness). Sessions run as independent agent processes concurrently.
+## Conversation Concurrency
 
-**NEW mode** — Each session gets its own sandbox with its own git clone on a dedicated branch. Full isolation between sessions. No shared state.
+One workspace can run multiple conversations and harnesses in parallel inside the same sandbox. They intentionally share the same checkout, branch, filesystem, network namespace, and installed tools.
+
+HarnessBox serializes turns only within the same conversation. It does not serialize, isolate, detect, or reconcile file edits and Git operations across different conversations. Callers are responsible for coordinating concurrent work when agents touch overlapping files or repository state.
+
+This is a product contract, not an implementation detail. Workspace lifecycle operations still coordinate sandbox pause, recovery, and destruction, but must not impose whole-turn serialization across otherwise independent conversations.
 
 ## Hierarchy
 
 ```
 HarnessBox (orchestrator)
-└── Workspace (sandbox + git repo config + mode)
-    ├── Session 1 (agent process + branch/worktree)
-    ├── Session 2 (agent process + branch/worktree)
-    └── Session N
+└── Workspace (durable repo/branch + current sandbox binding)
+    ├── Conversation 1 (harness + native session id + live process)
+    ├── Conversation 2 (harness + native session id + live process)
+    └── Conversation N
 ```
 
-In SHARED mode: Workspace has 1 sandbox, N sessions share it via worktrees.
-In NEW mode: Workspace has N sandboxes, one per session.
+The live process map is replaceable runtime state. Conversation metadata is durable, and a recovered workspace keeps the same `workspace_id` and conversation ids while its `provider_sandbox_id` may change.
 
 ## Lifecycle
 
-- Workspaces auto-pause after idle timeout (no active sessions).
-- Paused workspaces resume on next session interaction.
-- Sessions are provisioned eagerly (sandbox created immediately on session creation, not on first message).
+- Workspaces auto-pause after idle timeout when no conversation turns are active.
+- Paused workspaces resume on the next interaction.
+- Pause, snapshot, recovery, and destruction coordinate with all active turns; ordinary turns in different conversations remain eligible to execute concurrently.
 
 ## Boundaries
 
 - `Sandbox` and `SandboxProvider` are internal implementation details (provider layer).
 - `WorkspaceManager` is an internal orchestration detail (server layer).
-- Users interact only with `HarnessBox`, `Session`, and configuration types.
+- SDK users interact with `HarnessBox`, `Session`, and configuration types. HTTP clients address a Workspace and optionally select a Conversation.
+
+## External Framework Review
+
+The review of [Omnigent](https://github.com/omnigent-ai/omnigent), [Omnara](https://github.com/omnara-ai/omnara), and [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) concluded that HarnessBox should adopt specific patterns, not replace its core domain model with another framework.
+
+- Keep the `Project → Workspace → Conversation` hierarchy. It is narrower and better aligned with HarnessBox than the broader external control planes.
+- Adopt an Omnigent-style harness adapter registry so Claude Code, Codex, and future harnesses share a stable lifecycle and streaming boundary.
+- Adopt Omnara-style durable state handling: atomically persist lifecycle state, turn boundaries, native agent session ids, and events so agents can resume after crashes or machine replacement.
+- Keep the existing sandbox provider protocol, adding provider registration and capability discovery without importing a full provider ecosystem.
+- Add a small optional plugin interface inspired by DeepSeek Harness for harnesses, tools, storage, and lifecycle hooks. Do not make the runtime depend on DeepSeek Harness or Cordis; DeepSeek Harness is a developer preview with compatibility-breaking changes.
+- Do not adopt the external projects' web UIs, CLIs, authentication, RBAC, cloud control planes, or broad model/provider marketplaces in the current slice.
+
+Recommended implementation order: harness adapter boundary first, durable event/state persistence second, and optional plugin hooks later.
