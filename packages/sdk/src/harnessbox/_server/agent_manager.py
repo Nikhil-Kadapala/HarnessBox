@@ -56,13 +56,16 @@ class AgentManager:
             harness: Agent type (claude-code, codex, etc.)
             agent_session_id: Claude's session_id for --resume on recovery
         """
-        if conversation_id not in self._agents:
-            await self._spawn_agent(conversation_id, harness, agent_session_id=agent_session_id)
-
-        if conversation_id not in self._locks:
-            self._locks[conversation_id] = asyncio.Lock()
-
-        async with self._locks[conversation_id]:
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            if conversation_id not in self._agents:
+                try:
+                    await self._spawn_agent(
+                        conversation_id, harness, agent_session_id=agent_session_id
+                    )
+                except Exception:
+                    self._locks.pop(conversation_id, None)
+                    raise
             process = self._agents[conversation_id]
             await process.send_prompt(prompt)
 
@@ -141,15 +144,14 @@ class AgentManager:
 
     async def terminate_agent(self, conversation_id: str) -> None:
         """Stop and remove an agent process."""
-        agent = self._agents.pop(conversation_id, None)
+        agent = self._agents.get(conversation_id)
         if not agent:
             return
 
-        if conversation_id in self._locks:
-            async with self._locks[conversation_id]:
-                await agent.stop()
-        else:
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
             await agent.stop()
+            self._agents.pop(conversation_id, None)
 
         self._locks.pop(conversation_id, None)
         logger.info(f"Terminated agent for conversation {conversation_id}")

@@ -40,12 +40,12 @@ class WorkspaceManager:
         auto_pause: bool = True,
         pause_timeout: int = 1800,
     ) -> None:
-        self._registry = WorkspaceRegistry(storage)
         self._idle = IdleOrchestrator(
             pause_timeout=pause_timeout,
             auto_pause=auto_pause,
             pause_callback=self._auto_pause_workspace,
         )
+        self._registry = WorkspaceRegistry(storage, self._idle)
         self._router = SessionRouter(self._registry, self._idle, storage)
         self._event_replay = EventReplay(storage)
 

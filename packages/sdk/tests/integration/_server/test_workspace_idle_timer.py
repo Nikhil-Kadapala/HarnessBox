@@ -155,6 +155,28 @@ class TestActiveTurnCounter:
         assert idle._active_turns["w-1"] == 1
         assert "w-1" not in idle._idle_timers
 
+    @pytest.mark.asyncio
+    async def test_wait_for_turns_idle_wakes_after_last_turn(self) -> None:
+        idle = IdleOrchestrator(auto_pause=False)
+        idle.turn_started("w-1")
+        waiter = asyncio.create_task(idle.wait_for_turns_idle("w-1"))
+        await asyncio.sleep(0)
+        assert not waiter.done()
+
+        idle.turn_ended("w-1")
+        await asyncio.wait_for(waiter, timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_turn_started_rejected_during_drain(self) -> None:
+        idle = IdleOrchestrator(auto_pause=False)
+        idle.begin_drain("w-1")
+
+        with pytest.raises(RuntimeError, match="is draining"):
+            idle.turn_started("w-1")
+
+        idle.end_drain("w-1")
+        idle.turn_started("w-1")
+
 
 # ---------------------------------------------------------------------------
 # Snapshot recovery

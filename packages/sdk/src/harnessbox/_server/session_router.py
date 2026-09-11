@@ -62,7 +62,13 @@ class SessionRouter:
             workspace_id, conversation_id, harness
         )
 
-        self._idle.turn_started(workspace_id)
+        turn_registered = False
+        admission_lock = self._registry._ensure_lock(workspace_id)
+        async with admission_lock:
+            if info.runtime_state != RuntimeState.ACTIVE.value or info.sandbox_conn is None:
+                raise RuntimeError(f"Workspace {workspace_id} is not active")
+            self._idle.turn_started(workspace_id)
+            turn_registered = True
         turn_ended_seen = False
 
         info.last_active = datetime.now(timezone.utc).isoformat()
@@ -70,106 +76,97 @@ class SessionRouter:
             await self._storage.update_workspace(workspace_id, last_active=info.last_active)
 
         try:
-            lock = self._registry._ensure_lock(workspace_id)
-            async with lock:
-                assert info.sandbox_conn is not None
+            assert info.sandbox_conn is not None
 
-                resolved_attachments = await self._upload_attachments(info, attachments or [])
+            resolved_attachments = await self._upload_attachments(info, attachments or [])
 
-                user_prompt_event = self._build_user_prompt_event(
-                    prompt, conversation_id, resolved_attachments
-                )
-                if info.sandbox_conn._event_buffer:
-                    user_prompt_event = await info.sandbox_conn._event_buffer.push(
-                        user_prompt_event
+            user_prompt_event = self._build_user_prompt_event(
+                prompt, conversation_id, resolved_attachments
+            )
+            if info.sandbox_conn._event_buffer:
+                user_prompt_event = await info.sandbox_conn._event_buffer.push(user_prompt_event)
+            yield user_prompt_event
+            if self._storage:
+                try:
+                    await self._storage.append_events(
+                        workspace_id, [user_prompt_event.to_storage_dict()]
                     )
-                yield user_prompt_event
-                if self._storage:
+                except Exception as e:
+                    logger.error(f"Failed to persist user_prompt event: {e}")
+
+            augmented_prompt = self._augment_prompt(prompt, resolved_attachments)
+
+            conversation_saved = False
+            agent_session_id: str | None = None
+            async for event in info.agent_manager.send_message(
+                conversation_id,
+                augmented_prompt,
+                harness,
+                agent_session_id=stored_agent_session_id,
+            ):
+                if (
+                    event.event_type == "error"
+                    and event.metadata.get("error_code") == "SANDBOX_DEAD"
+                ):
+                    info.runtime_state = RuntimeState.DEAD.value
+
+                if event.cost_usd is not None:
+                    info.total_cost_usd = event.cost_usd
+
+                _asi = event.metadata.get("_agent_session_id")
+                if _asi and not agent_session_id:
+                    agent_session_id = _asi
+
+                if not conversation_saved and self._storage:
+                    conversation_saved = True
                     try:
-                        await self._storage.append_events(
-                            workspace_id, [user_prompt_event.to_storage_dict()]
+                        await self._storage.save_conversation(
+                            {
+                                "conversation_id": conversation_id,
+                                "workspace_id": workspace_id,
+                                "agent_type": harness,
+                                "title": prompt[:50],
+                                "last_active": datetime.now(timezone.utc).isoformat(),
+                                "agent_session_id": agent_session_id,
+                            }
                         )
                     except Exception as e:
-                        logger.error(f"Failed to persist user_prompt event: {e}")
+                        logger.error(f"Failed to save conversation {conversation_id}: {e}")
 
-                augmented_prompt = self._augment_prompt(prompt, resolved_attachments)
+                yield event
 
-                conversation_saved = False
-                agent_session_id: str | None = None
-                async for event in info.agent_manager.send_message(
-                    conversation_id,
-                    augmented_prompt,
-                    harness,
-                    agent_session_id=stored_agent_session_id,
+                if self._storage:
+                    try:
+                        await self._storage.append_events(workspace_id, [event.to_storage_dict()])
+                    except Exception as e:
+                        logger.error(f"Failed to persist event {event.event_id}: {e}")
+
+                if event.event_type in (
+                    StreamEventType.TURN_ENDED,
+                    StreamEventType.SESSION_ENDED,
                 ):
-                    if (
-                        event.event_type == "error"
-                        and event.metadata.get("error_code") == "SANDBOX_DEAD"
-                    ):
-                        info.runtime_state = RuntimeState.DEAD.value
-
-                    if event.cost_usd is not None:
-                        info.total_cost_usd = event.cost_usd
-
-                    _asi = event.metadata.get("_agent_session_id")
-                    if _asi and not agent_session_id:
-                        agent_session_id = _asi
-
-                    if not conversation_saved and self._storage:
-                        conversation_saved = True
-                        try:
-                            await self._storage.save_conversation(
-                                {
-                                    "conversation_id": conversation_id,
-                                    "workspace_id": workspace_id,
-                                    "agent_type": harness,
-                                    "title": prompt[:50],
-                                    "last_active": datetime.now(timezone.utc).isoformat(),
-                                    "agent_session_id": agent_session_id,
-                                }
-                            )
-                        except Exception as e:
-                            logger.error(f"Failed to save conversation {conversation_id}: {e}")
-
-                    yield event
-
+                    turn_ended_seen = True
+                    info.last_active = datetime.now(timezone.utc).isoformat()
                     if self._storage:
                         try:
-                            await self._storage.append_events(
-                                workspace_id, [event.to_storage_dict()]
+                            await self._storage.update_workspace(
+                                workspace_id, last_active=info.last_active
                             )
                         except Exception as e:
-                            logger.error(f"Failed to persist event {event.event_id}: {e}")
-
-                    if event.event_type in (
-                        StreamEventType.TURN_ENDED,
-                        StreamEventType.SESSION_ENDED,
-                    ):
-                        turn_ended_seen = True
-                        info.last_active = datetime.now(timezone.utc).isoformat()
-                        if self._storage:
+                            logger.error(f"Failed to persist last_active for {workspace_id}: {e}")
+                        if agent_session_id:
                             try:
-                                await self._storage.update_workspace(
-                                    workspace_id, last_active=info.last_active
+                                await self._storage.update_conversation(
+                                    conversation_id,
+                                    agent_session_id=agent_session_id,
                                 )
                             except Exception as e:
                                 logger.error(
-                                    f"Failed to persist last_active for {workspace_id}: {e}"
+                                    f"Failed to persist agent_session_id for {conversation_id}: {e}"
                                 )
-                            if agent_session_id:
-                                try:
-                                    await self._storage.update_conversation(
-                                        conversation_id,
-                                        agent_session_id=agent_session_id,
-                                    )
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to persist agent_session_id for "
-                                        f"{conversation_id}: {e}"
-                                    )
-                        self._idle.turn_ended(workspace_id)
+                    self._idle.turn_ended(workspace_id)
         finally:
-            if not turn_ended_seen:
+            if turn_registered and not turn_ended_seen:
                 self._idle.turn_errored(workspace_id, info.runtime_state)
 
     async def _resolve_conversation(
