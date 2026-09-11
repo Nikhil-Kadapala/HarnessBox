@@ -29,7 +29,7 @@ cd ../../apps/web
 bun install
 ```
 
-Export keys in the shell that will run the server (the server also injects these into new workspaces when the UI omits them):
+Export keys in the shell that will run the server. For this local dogfood flow, the server copies the explicitly allowlisted provider and harness keys into new workspaces when the UI omits them. User-provided workspace values take priority. Git authentication uses the credential helper and is not copied into the workspace environment:
 
 ```bash
 export E2B_API_KEY=...

@@ -36,7 +36,7 @@ Use only skills present in `.agents/skills/`:
 ## Safety and security
 
 - The SDK runtime remains stdlib-only; provider integrations are optional extras.
-- Credentials must not travel as sandbox environment variables. Git authentication uses a credential helper.
+- Sandbox environment variables use an explicit allowlist for the local dogfood flow: provider and harness API keys may be copied from the server host when the workspace request does not provide them. Git authentication uses a credential helper and git tokens must not be passed as sandbox environment variables.
 - Credential guard globs and hook regexes are one source of truth. Hooks fail open for availability, while security-sensitive changes require explicit review.
 - Never suppress `ruff`, `mypy`, or test failures just to make CI green.
 - Do not skip a failing test. Ask before deleting an obsolete test.
