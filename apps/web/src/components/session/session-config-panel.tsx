@@ -16,16 +16,17 @@ import { Switch } from "@/components/ui/switch";
 import { useDiscovery } from "@/hooks/use-discovery";
 import { appStorage } from "@/lib/storage-schema";
 import { fetchWorkspaceName } from "@/lib/api";
-import type { CreateSessionRequest } from "@/types";
+import type { CreateSessionRequest, Project } from "@/types";
 
 interface SessionConfigPanelProps {
   onSubmit: (config: CreateSessionRequest) => void;
   onCancel: () => void;
   disabled?: boolean;
   defaultRepoUrl?: string;
+  project?: Project;
 }
 
-export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUrl }: SessionConfigPanelProps) {
+export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUrl, project }: SessionConfigPanelProps) {
   const { harnesses, providers, guards, loading: discoveryLoading } = useDiscovery();
 
   const storedDefaults = appStorage.sessionDefaults;
@@ -50,10 +51,10 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
   const [deniedTools, setDeniedTools] = useState("");
 
   const detectedRepo = appStorage.detectedRepository;
-  const hasDetectedRepo = !!detectedRepo || !!defaultRepoUrl;
+  const hasDetectedRepo = !!project || !!detectedRepo || !!defaultRepoUrl;
   const [workspaceOpen, setWorkspaceOpen] = useState(hasDetectedRepo);
-  const [repoUrl, setRepoUrl] = useState(defaultRepoUrl ?? detectedRepo?.remote ?? "");
-  const [branch, setBranch] = useState(detectedRepo?.default_branch ?? "main");
+  const [repoUrl, setRepoUrl] = useState(project?.remote ?? defaultRepoUrl ?? detectedRepo?.remote ?? "");
+  const [branch, setBranch] = useState(project?.default_branch ?? detectedRepo?.default_branch ?? "main");
   const [authToken, setAuthToken] = useState("");
   const [cloneDepth, setCloneDepth] = useState("");
   const [workspaceName, setWorkspaceName] = useState<string>("");
@@ -111,6 +112,7 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
       sandbox_timeout: sandboxTimeout * 60,
       session_timeout: sessionTimeout * 60,
       template: template || undefined,
+      harness,
     };
 
     if (securityOpen) {
@@ -124,7 +126,10 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
       };
     }
 
-    if (workspaceOpen && repoUrl) {
+    if (project) {
+      config.project_id = project.project_id;
+      config.branch = branch;
+    } else if (workspaceOpen && repoUrl) {
       config.workspace = {
         remote: repoUrl,
         branch,
@@ -136,9 +141,9 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
 
     onSubmit(config);
   }, [
-    provider, skipPermissions, sandboxTimeout, sessionTimeout, template, envVars,
+    provider, harness, skipPermissions, sandboxTimeout, sessionTimeout, template, envVars,
     securityOpen, denyNetwork, allGuards, selectedGuards, deniedTools,
-    workspaceOpen, repoUrl, branch, authToken, cloneDepth, workspaceName, onSubmit,
+    workspaceOpen, repoUrl, branch, authToken, cloneDepth, workspaceName, project, onSubmit,
   ]);
 
   const providerOptions = providers.length > 0 ? providers : [{ name: "e2b" }];
@@ -342,6 +347,7 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
           {workspaceOpen && (
             <div className="px-4 pb-4 space-y-3">
               <Separator />
+              <p className="text-xs text-muted-foreground">Creating this workspace starts agent execution with the selected sandbox provider. Project and workspace records remain in local HarnessBox storage.</p>
               {workspaceName && (
                 <div className="rounded-md border border-accent/30 bg-accent/5 p-2 flex items-center gap-2">
                   <Sparkles className="h-3 w-3 text-accent shrink-0" />
@@ -358,6 +364,7 @@ export function SessionConfigPanel({ onSubmit, onCancel, disabled, defaultRepoUr
                   placeholder="https://github.com/owner/repo.git"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
+                  readOnly={!!project}
                   disabled={disabled}
                 />
               </div>

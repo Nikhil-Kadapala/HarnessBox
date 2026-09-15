@@ -18,6 +18,7 @@ class MemoryBackend:
     """
 
     def __init__(self) -> None:
+        self._projects: dict[str, dict[str, Any]] = {}
         self._workspaces: dict[str, dict[str, Any]] = {}
         self._conversations: dict[str, list[dict[str, Any]]] = {}  # workspace_id → conversations
         self._events: dict[str, list[dict[str, Any]]] = {}  # workspace_id → events
@@ -25,6 +26,21 @@ class MemoryBackend:
     async def initialize(self) -> None:
         """No-op for memory backend."""
         pass
+
+    async def save_project(self, project_record: dict[str, Any]) -> None:
+        project_id = project_record["project_id"]
+        if project_id in self._projects:
+            raise KeyError(f"Project {project_id} already exists")
+        self._projects[project_id] = project_record.copy()
+
+    async def get_project(self, project_id: str) -> dict[str, Any] | None:
+        project = self._projects.get(project_id)
+        return project.copy() if project else None
+
+    async def list_projects(self) -> list[dict[str, Any]]:
+        return sorted(
+            (p.copy() for p in self._projects.values()), key=lambda p: p["name"].casefold()
+        )
 
     # -- Workspace CRUD --
 

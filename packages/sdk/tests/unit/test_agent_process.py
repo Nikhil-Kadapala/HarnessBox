@@ -26,6 +26,8 @@ class FakeProvider:
         self._on_stdout: Any = None
         self.stdin_writes: list[str] = []
         self.reconnect_calls: list[int] = []
+        self.killed_pids: list[int] = []
+        self.hang_on_kill = False
 
     async def start_session(self, command: str, cwd: str, on_stdout: Any) -> int:
         self._on_stdout = on_stdout
@@ -37,6 +39,11 @@ class FakeProvider:
     async def reconnect_process(self, pid: int, on_stdout: Any) -> None:
         self.reconnect_calls.append(pid)
         self._on_stdout = on_stdout
+
+    async def pty_kill(self, pid: int) -> None:
+        self.killed_pids.append(pid)
+        if self.hang_on_kill:
+            await asyncio.Event().wait()
 
     def inject_stdout(self, line: str) -> None:
         """Simulate a line of NDJSON output from the agent process."""
@@ -268,6 +275,58 @@ class TestCostUpdate:
 
 
 class TestTurnTimeout:
+    @pytest.mark.asyncio
+    async def test_final_retry_emits_terminal_error_and_stops_process(self) -> None:
+        provider, process = _started_process()
+        await _start(process, provider)
+        await process._stdout_queue.put(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "api_retry",
+                    "attempt": 10,
+                    "max_retries": 10,
+                    "error_status": 401,
+                    "error": "authentication_failed",
+                }
+            )
+        )
+
+        events = [event async for event in process.stream_turn()]
+
+        assert [event.event_type for event in events] == [EventType.API_RETRY, EventType.ERROR]
+        assert events[-1].metadata["error_code"] == "API_RETRIES_EXHAUSTED"
+        assert "10/10 retries" in (events[-1].error_message or "")
+        assert provider.killed_pids == [42]
+        assert process.is_running is False
+
+    @pytest.mark.asyncio
+    async def test_terminal_error_is_emitted_even_if_process_kill_hangs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider, process = _started_process()
+        provider.hang_on_kill = True
+        await _start(process, provider)
+        await process._stdout_queue.put(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "api_retry",
+                    "attempt": 10,
+                    "max_retries": 10,
+                    "error": "authentication_failed",
+                }
+            )
+        )
+        monkeypatch.setattr("harnessbox.process._PROCESS_KILL_TIMEOUT_SECONDS", 0.01)
+
+        events = [event async for event in process.stream_turn()]
+
+        assert events[-1].event_type == EventType.ERROR
+        assert events[-1].metadata["error_code"] == "API_RETRIES_EXHAUSTED"
+        assert provider.killed_pids == [42]
+        assert process.is_running is False
+
     @pytest.mark.asyncio
     async def test_configurable_timeout_emits_error_event(self) -> None:
         provider, process = _started_process(turn_timeout=0.01)

@@ -79,6 +79,9 @@ class AgentManager:
                 event = replace(event, session_id=conversation_id, metadata=meta)
                 event = await self._sandbox.event_buffer.push(event)
                 yield event
+                if event.metadata.get("error_code") == "API_RETRIES_EXHAUSTED":
+                    self._agents.pop(conversation_id, None)
+                    return
 
             sid = captured_session_id or conversation_id
             for status_event in await process.poll_status(session_id=sid, timeout=10):

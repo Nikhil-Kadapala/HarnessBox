@@ -43,9 +43,8 @@ class FileSystemParams(BaseModel):
 class CreateWorkspaceRequestParams(BaseModel):
     """Request body for ``POST /v1/workspaces/create``.
 
-    Identity fields (``workspace_id``, ``project_id``, ``model``) are not
-    accepted — the server mints ``workspace_id``; ``project_id`` stays null
-    until a Project API exists; model belongs on a future session/configure path.
+    The server mints ``workspace_id``. A workspace may reference an existing
+    Project; ``branch`` selects a branch other than the Project default.
     ``harness`` selects the agent type stored on the workspace (default
     ``claude-code`` when omitted).
     """
@@ -62,6 +61,23 @@ class CreateWorkspaceRequestParams(BaseModel):
     template: str | None = None
     git: GitSourceParams | None = None
     file_system: FileSystemParams | None = None
+    project_id: str | None = None
+    branch: str | None = None
+
+
+class CreateProjectParams(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    remote: str = Field(min_length=1, max_length=2048)
+    default_branch: str = Field(default="main", min_length=1, max_length=255)
+
+
+class ProjectResponseParams(BaseModel):
+    project_id: str
+    name: str
+    remote: str
+    default_branch: str
+    created_at: str
+    updated_at: str
 
 
 class CreateWorkspaceResponseParams(BaseModel):

@@ -143,6 +143,7 @@ class WorkspaceInstance:
             "base_branch": self.base_branch,
             "total_cost_usd": self.total_cost_usd,
             "error_message": self.error_message,
+            "project_id": self.project_id,
         }
 
 
@@ -415,6 +416,7 @@ class WorkspaceRegistry:
                     base_branch=record.get("base_branch"),
                     total_cost_usd=record.get("total_cost_usd", 0.0),
                     error_message=record.get("error_message"),
+                    project_id=record.get("project_id"),
                 )
                 self._workspaces[wid] = info
 
@@ -489,6 +491,7 @@ class WorkspaceRegistry:
             base_branch=record.get("base_branch"),
             total_cost_usd=record.get("total_cost_usd", 0.0),
             error_message=record.get("error_message"),
+            project_id=record.get("project_id"),
         )
 
     # --- Connection lifecycle ---

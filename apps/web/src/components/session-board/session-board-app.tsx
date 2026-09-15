@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   ArrowCounterClockwiseIcon,
   GitBranchIcon,
+  ChatCircleIcon,
   MagnifyingGlassIcon,
   PauseIcon,
   StopIcon,
@@ -29,6 +30,7 @@ import {
 import { KANBAN_COLUMNS, getColumnForState } from "@/lib/sessions/columns"
 import type { SessionCard } from "@/lib/sessions/types"
 import { cn } from "@/lib/utils"
+import { RuntimeStateIcon } from "@/components/runtime-state-icon"
 
 interface SessionBoardAppProps {
   onSelectSession?: (sessionId: string) => void
@@ -238,8 +240,9 @@ function SessionCardItem({
     >
       <CardHeader className="gap-1.5">
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="line-clamp-1 text-sm">
-            {session.title}
+          <CardTitle className="flex min-w-0 items-center gap-1.5 text-sm">
+            <ChatCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="line-clamp-1">{session.title}</span>
           </CardTitle>
           <StatusBadge status={session.status} />
         </div>
@@ -334,6 +337,7 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <Badge variant={variant} className="shrink-0 text-[10px]">
+      <RuntimeStateIcon state={s} className="size-3" />
       {formatStatusLabel(s)}
     </Badge>
   )

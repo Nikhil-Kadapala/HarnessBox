@@ -18,7 +18,7 @@ Read this when analyzing codebase structure, adding providers or harnesses, or r
 
 **Public API (SDK users):**
 1. **Construct** — `HarnessBox(provider="e2b", harness="claude-code", secrets=..., workspace_config=...)`
-2. **Create Session** — `session = await hb.create_session(branch="feat/x")` provisions a sandbox, clones the workspace when configured, runs setup
+2. **Create SDK Session** — `session = await hb.create_session(branch="feat/x")` provisions a runtime, clones the workspace when configured, runs setup
 3. **Execute** — `async for event in session.send_message(prompt)` or `await session.run_command(cmd)`
 4. **Snapshot** — `snapshot = await hb.save_snapshot()` / `HarnessBox.create_from_snapshot(id)`
 5. **Kill** — `await hb.kill()` destroys all sessions
@@ -51,7 +51,7 @@ All SDK source lives under `packages/sdk/src/harnessbox/`.
 - **Credentials never as env vars** — Git auth tokens use a git credential helper, not environment variables.
 - **Manifest is pure computation** — `build_manifest()` returns a `SandboxManifest` with no I/O.
 - **Fail-open hook guard** — PreToolUse hooks exit 0 on errors, prioritizing availability.
-- **Server-minted workspace identity** — HTTP create always mints `workspace_id`; client-supplied IDs are ignored. `project_id` stays null until a Project API exists.
+- **Server-minted workspace identity** — HTTP create always mints `workspace_id`; client-supplied IDs are ignored. Durable Project records back `project_id`; workspace creation resolves the Project remote and default branch before provisioning.
 - **Git cwd wins** — When git is configured, agent cwd is `/workspace/<clone_dir_name>` regardless of request `cwd`.
 - **Event storage round-trip** — `UniversalEvent.to_storage_dict()` / `from_storage_dict()` keep full fidelity for `/history` and `events.jsonl`.
 - **Parallel conversations share a workspace** — Different conversations in one Workspace are intended to run concurrently against the same sandbox, checkout, branch, and filesystem. HarnessBox serializes turns within one conversation but does not isolate or reconcile file and Git conflicts across conversations; callers own that coordination.
@@ -60,7 +60,7 @@ All SDK source lives under `packages/sdk/src/harnessbox/`.
 
 `AgentManager` owns one process and one turn lock per `conversation_id`. Workspace lifecycle coordination may briefly guard sandbox connect, pause, recovery, snapshot, and destruction, but it must not serialize complete turns from different conversations.
 
-The current `SessionRouter.prompt()` implementation still holds a workspace lock across the streamed turn, so it does **not yet satisfy this intended concurrency contract**. Treat that as an implementation gap, not as the desired single-writer policy. See [`agent-manager.html`](agent-manager.html) for the routing details.
+`SessionRouter.prompt()` delegates turns to `AgentManager`, which serializes within a conversation. Workspace lifecycle coordination is separate from streamed turn execution. See [`agent-manager.html`](agent-manager.html) for the routing details.
 
 ## Extension Points
 

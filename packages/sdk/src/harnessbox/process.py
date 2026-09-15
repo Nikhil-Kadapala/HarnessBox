@@ -25,6 +25,7 @@ from harnessbox.status import parse_context_output
 from harnessbox.streaming import EventType, StreamParser, UniversalEvent
 
 _log = logging.getLogger("harnessbox.process")
+_PROCESS_KILL_TIMEOUT_SECONDS = 5.0
 
 
 class AgentProcess:
@@ -200,18 +201,64 @@ class AgentProcess:
                             last_retry.get("error"),
                             last_retry.get("error_status"),
                         )
+                        attempt = last_retry.get("attempt")
+                        max_retries = last_retry.get("max_retries")
+                        if (
+                            isinstance(attempt, int)
+                            and isinstance(max_retries, int)
+                            and max_retries > 0
+                            and attempt >= max_retries
+                        ):
+                            yield event
+                            yield self._retries_exhausted_event(last_retry)
+                            await self._terminate_after_retries()
+                            return
+                        yield event
                     else:
                         _log.info(
                             "Parsed event: %s (error: %s)",
                             event.event_type,
                             event.error_message,
                         )
-                    yield event
+                        yield event
                     if event.event_type in (EventType.SESSION_ENDED, EventType.TURN_ENDED):
                         if event.cost_usd is not None or event.duration_ms is not None:
                             return
         finally:
             self._turn_active = False
+
+    async def _terminate_after_retries(self) -> None:
+        """Stop the CLI after its final reported retry, if the provider supports it."""
+        pid = self._pid
+        kill_process = getattr(self._provider, "pty_kill", None)
+        if pid is not None and kill_process is not None:
+            try:
+                await asyncio.wait_for(kill_process(pid), timeout=_PROCESS_KILL_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                _log.error(
+                    "Timed out terminating exhausted agent process pid=%s after %.1fs",
+                    pid,
+                    _PROCESS_KILL_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                _log.exception("Failed to terminate exhausted agent process pid=%s", pid)
+        self._running = False
+        self._pid = None
+
+    def _retries_exhausted_event(self, retry: dict[str, Any]) -> UniversalEvent:
+        attempt = retry.get("attempt")
+        max_retries = retry.get("max_retries")
+        error = retry.get("error")
+        error_status = retry.get("error_status")
+        message = (
+            f"Agent request failed after {attempt}/{max_retries} retries "
+            f"(error={error!r}, error_status={error_status!r})"
+        )
+        return self._parser._make_event(
+            EventType.ERROR,
+            error_message=message,
+            metadata={**retry, "error_code": "API_RETRIES_EXHAUSTED"},
+        )
 
     def _turn_timeout_event(self, last_retry: dict[str, Any] | None) -> UniversalEvent:
         """Build the terminal ERROR when the absolute turn budget is exhausted."""

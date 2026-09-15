@@ -14,7 +14,7 @@ export type Action =
       type: "update_metadata";
       sessionId: string;
       metadata: Partial<
-        Pick<SessionEntry, "workspaceName" | "branch" | "baseBranch" | "remote" | "runtimeState">
+        Pick<SessionEntry, "workspaceName" | "branch" | "baseBranch" | "remote" | "runtimeState" | "projectId">
       >;
     };
 

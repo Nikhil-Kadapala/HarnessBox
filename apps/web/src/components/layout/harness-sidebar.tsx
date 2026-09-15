@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Settings,
   GitBranch,
+  FolderGit2,
   HelpCircle,
   BookOpen,
 } from "lucide-react";
@@ -37,15 +38,18 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { AddRepoDialog } from "@/components/layout/add-repo-dialog";
+import { CreateProjectDialog } from "@/components/layout/create-project-dialog";
+import { RuntimeStateIcon } from "@/components/runtime-state-icon";
 import { appStorage } from "@/lib/storage-schema";
-import type { SessionEntry } from "@/types";
+import type { Project, SessionEntry } from "@/types";
 
 interface HarnessSidebarProps {
   sessions: Map<string, SessionEntry>;
   activeSessionId: string | null;
   onSelectSession: (id: string) => void;
-  onNewSession: (repoUrl?: string) => void;
+  projects: Project[];
+  onCreateProject: (project: Pick<Project, "name" | "remote" | "default_branch">) => Promise<void>;
+  onNewWorkspace: (project: Project) => void;
   onDestroySession: (id: string) => void;
   currentView: "board" | "session" | "settings";
   onNavigateToBoard: () => void;
@@ -125,14 +129,17 @@ export function HarnessSidebar({
   sessions,
   activeSessionId,
   onSelectSession,
-  onNewSession,
+  projects,
+  onCreateProject,
+  onNewWorkspace,
   onDestroySession,
   currentView,
   onNavigateToBoard,
   onNavigateToSettings,
 }: HarnessSidebarProps) {
   const sessionArray = useMemo(() => Array.from(sessions.values()), [sessions]);
-  const repoGroups = useMemo(() => groupByRepo(sessionArray), [sessionArray]);
+  const projectSessions = useMemo(() => sessionArray.filter((session) => session.projectId), [sessionArray]);
+  const repoGroups = useMemo(() => groupByRepo(sessionArray.filter((session) => !session.projectId)), [sessionArray]);
   const [openRepos, setOpenRepos] = useState<Set<string>>(
     () => new Set(repoGroups.map((g) => g.name)),
   );
@@ -188,26 +195,75 @@ export function HarnessSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Sessions tree */}
+        {/* Projects tree */}
         <SidebarGroup>
           <div className="flex items-center justify-between px-2 py-1">
-            <SidebarGroupLabel>Workspaces</SidebarGroupLabel>
+            <div className="min-w-0">
+              <SidebarGroupLabel>Projects</SidebarGroupLabel>
+              <p className="px-2 text-[10px] text-muted-foreground" title="Project records are stored locally; workspaces use the selected sandbox provider">Local records · sandbox workspaces</p>
+            </div>
             <button
               onClick={() => setAddRepoOpen(true)}
               className="p-1 rounded-sm transition-colors cursor-pointer opacity-30 hover:opacity-100"
-              title="Add Workspace"
+              title="Create Project"
             >
               <Plus className="h-4 w-4 hover:text-foreground" />
             </button>
           </div>
           <SidebarGroupContent>
             <SidebarMenu>
-              {repoGroups.length === 0 ? (
+              {projects.length === 0 ? (
                 <div className="px-3 py-2 text-xs text-muted-foreground">
-                  No Workspaces yet
+                  No Projects yet
                 </div>
               ) : (
-                repoGroups.map((group) => (
+                <>
+                {projects.map((project) => {
+                  const linkedSessions = projectSessions.filter((session) => session.projectId === project.project_id);
+                  return (
+                    <Collapsible key={project.project_id} open={openRepos.has(project.project_id)} onOpenChange={() => toggleRepo(project.project_id)}>
+                      <SidebarMenuItem className="group/project">
+                        <div className="relative flex items-center w-full">
+                          <SidebarMenuButton className="flex-1 cursor-pointer pr-12" onClick={() => toggleRepo(project.project_id)}>
+                            <FolderGit2 className="h-4 w-4 shrink-0" />
+                            <span className="flex-1 truncate">{project.name}</span>
+                            <ChevronRight className={cn("h-4 w-4 shrink-0 transition-transform", openRepos.has(project.project_id) && "rotate-90")} />
+                          </SidebarMenuButton>
+                          <button onClick={() => onNewWorkspace(project)} className="absolute right-2 opacity-0 group-hover/project:opacity-100 p-0.5 hover:bg-accent rounded cursor-pointer z-10" title={`New workspace in ${project.name}`}>
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {linkedSessions.map((session) => (
+                              <SidebarMenuSubItem key={session.id} className="relative group/session">
+                                <SidebarMenuButton isActive={session.id === activeSessionId} onClick={() => onSelectSession(session.id)} className="w-full pr-8 cursor-pointer">
+                                  <span className="flex items-center gap-2 flex-1 min-w-0 justify-between">
+                                    <span className="flex items-center gap-2 min-w-0"><GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" /><span className="truncate text-xs">{session.workspaceName || session.branch || session.id.slice(0, 8)}</span></span>
+                                    <RuntimeStateIcon state={session.runtimeState} className="h-3.5 w-3.5 shrink-0" />
+                                  </span>
+                                </SidebarMenuButton>
+                                <button onClick={(event) => { event.stopPropagation(); onDestroySession(session.id); }} className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/session:opacity-100 p-1 hover:bg-destructive/10 rounded cursor-pointer" title="Delete workspace"><Trash2 className="h-3 w-3 text-destructive" /></button>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </SidebarMenuItem>
+                    </Collapsible>
+                  );
+                })}
+                </>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Workspaces not associated with a Project (legacy sessions) */}
+        {repoGroups.length > 0 && <SidebarGroup>
+          <SidebarGroupLabel>Unlinked workspaces</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+                {repoGroups.map((group) => (
                   <Collapsible
                     key={group.name}
                     open={openRepos.has(group.name)}
@@ -237,16 +293,6 @@ export function HarnessSidebar({
                             )}
                           />
                         </SidebarMenuButton>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNewSession(group.remote);
-                          }}
-                          className="absolute right-2 opacity-0 group-hover/repo:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity cursor-pointer z-10"
-                          title="New Session"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
                       </div>
 
                       {/* Collapsed sidebar view - dropdown menu */}
@@ -297,14 +343,6 @@ export function HarnessSidebar({
                                 </span>
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => onNewSession(group.remote)}
-                              className="cursor-pointer"
-                            >
-                              <Plus className="h-3.5 w-3.5 mr-2" />
-                              New session
-                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -347,11 +385,10 @@ export function HarnessSidebar({
                       </CollapsibleContent>
                     </SidebarMenuItem>
                   </Collapsible>
-                ))
-              )}
+                ))}
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup>
+        </SidebarGroup>}
       </SidebarContent>
 
       <SidebarFooter className="gap-0 p-0">
@@ -393,10 +430,10 @@ export function HarnessSidebar({
         </div>
       </SidebarFooter>
     </Sidebar>
-      <AddRepoDialog
+      <CreateProjectDialog
         open={addRepoOpen}
         onOpenChange={setAddRepoOpen}
-        onSubmit={(repoUrl) => onNewSession(repoUrl)}
+        onCreate={onCreateProject}
       />
     </>
   );

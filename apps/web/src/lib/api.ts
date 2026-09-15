@@ -5,11 +5,33 @@ import type {
   GuardInfo,
   HarnessInfo,
   ProviderInfo,
+  Project,
   SessionResponse,
   WorkspaceNameResponse,
 } from "@/types";
 
 const BASE = "/api";
+
+export async function listProjects(): Promise<Project[]> {
+  return fetchJSON<Project[]>("/v1/projects");
+}
+
+export async function createProject(project: Pick<Project, "name" | "remote" | "default_branch">): Promise<Project> {
+  try {
+    return await fetchJSON<Project>("/v1/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(project),
+    });
+  } catch (cause) {
+    if (cause instanceof Error && cause.message.startsWith("404:")) {
+      throw new Error(
+        "The running HarnessBox server does not have the project API. Restart the server from this checkout, then try again.",
+      );
+    }
+    throw cause;
+  }
+}
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);

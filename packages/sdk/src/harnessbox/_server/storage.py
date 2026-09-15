@@ -34,6 +34,20 @@ class StorageBackend(Protocol):
         """
         ...
 
+    # -- Project CRUD --
+
+    async def save_project(self, project_record: dict[str, Any]) -> None:
+        """Persist a Project record; duplicate IDs raise KeyError."""
+        ...
+
+    async def get_project(self, project_id: str) -> dict[str, Any] | None:
+        """Return one Project record, or None if it does not exist."""
+        ...
+
+    async def list_projects(self) -> list[dict[str, Any]]:
+        """Return Projects ordered by name."""
+        ...
+
     # -- Workspace CRUD --
 
     async def save_workspace(self, workspace_record: dict[str, Any]) -> None:

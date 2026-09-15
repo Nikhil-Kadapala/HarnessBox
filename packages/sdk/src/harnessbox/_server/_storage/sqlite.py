@@ -69,6 +69,52 @@ class SQLiteBackend:
         if applied:
             logger.info(f"Applied {applied} migration(s), now at v{runner.get_version()}")
 
+    async def save_project(self, project_record: dict[str, Any]) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._save_project_sync, project_record)
+
+    def _save_project_sync(self, record: dict[str, Any]) -> None:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        try:
+            self._conn.execute(
+                "INSERT INTO projects (project_id, name, remote, default_branch, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    record["project_id"],
+                    record["name"],
+                    record["remote"],
+                    record["default_branch"],
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise KeyError(f"Project {record['project_id']} already exists") from exc
+
+    async def get_project(self, project_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            return await asyncio.to_thread(self._get_project_sync, project_id)
+
+    def _get_project_sync(self, project_id: str) -> dict[str, Any] | None:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        row = self._conn.execute(
+            "SELECT * FROM projects WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    async def list_projects(self) -> list[dict[str, Any]]:
+        async with self._lock:
+            return await asyncio.to_thread(self._list_projects_sync)
+
+    def _list_projects_sync(self) -> list[dict[str, Any]]:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        rows = self._conn.execute("SELECT * FROM projects ORDER BY name COLLATE NOCASE").fetchall()
+        return [dict(row) for row in rows]
+
     # -- Workspace CRUD --
 
     async def save_workspace(self, workspace_record: dict[str, Any]) -> None:
@@ -85,8 +131,8 @@ class SQLiteBackend:
                     workspace_id, remote, branch, provider, provider_sandbox_id,
                     snapshot_id, harness, runtime_state,
                     created_at, last_active, config_json, workspace_name, base_branch,
-                    total_cost_usd
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_cost_usd, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["workspace_id"],
@@ -103,6 +149,7 @@ class SQLiteBackend:
                     record.get("workspace_name"),
                     record.get("base_branch"),
                     record.get("total_cost_usd", 0.0),
+                    record.get("project_id"),
                 ),
             )
             self._conn.commit()

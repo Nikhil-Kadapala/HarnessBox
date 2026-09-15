@@ -45,6 +45,22 @@ class TestWorkspaceCRUD:
         assert result["workspace_id"] == "w-1"
         assert result["remote"] == "https://github.com/user/repo.git"
 
+
+class TestProjectCRUD:
+    @pytest.mark.asyncio
+    async def test_project_round_trip(self, memory_backend):
+        project = {
+            "project_id": "p-1",
+            "name": "Example",
+            "remote": "https://example.com/repo.git",
+            "default_branch": "main",
+            "created_at": "2026-09-14T00:00:00Z",
+            "updated_at": "2026-09-14T00:00:00Z",
+        }
+        await memory_backend.save_project(project)
+        assert await memory_backend.get_project("p-1") == project
+        assert await memory_backend.list_projects() == [project]
+
     @pytest.mark.asyncio
     async def test_get_workspace_not_found(self, memory_backend):
         """Should return None for non-existent workspace."""

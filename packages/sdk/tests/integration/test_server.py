@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from harnessbox._server.workspace_manager import WorkspaceManager
 from harnessbox.server import create_app
+from harnessbox.streaming import ContentPart, EventType, UniversalEvent
 
 
 @pytest.fixture
@@ -96,6 +97,132 @@ class TestListSessions:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
+
+
+class TestProjects:
+    def test_create_project_persists_without_creating_workspace(self) -> None:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        with TestClient(create_app(storage=storage)) as project_client:
+            response = project_client.post(
+                "/v1/projects",
+                json={
+                    "name": "Example",
+                    "remote": "https://github.com/example/repo.git",
+                    "default_branch": "trunk",
+                },
+            )
+            assert response.status_code == 201
+            project = response.json()
+            assert project["name"] == "Example"
+            assert project_client.get("/v1/projects").json() == [project]
+            assert project_client.get("/v1/workspaces").json() == []
+
+    def test_workspace_created_from_project_is_linked(self) -> None:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        with (
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            TestClient(create_app(storage=storage)) as project_client,
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-project"
+            instance._event_buffer = None
+
+            project = project_client.post(
+                "/v1/projects",
+                json={
+                    "name": "Example",
+                    "remote": "https://example.com/repo.git",
+                    "default_branch": "trunk",
+                },
+            ).json()
+            response = project_client.post(
+                "/v1/workspaces/create",
+                json={
+                    "project_id": project["project_id"],
+                    "provider": "e2b",
+                    "env_vars": {},
+                    "branch": "feature/demo",
+                },
+            )
+
+        assert response.status_code == 202
+        workspace = response.json()
+        assert workspace["project_id"] == project["project_id"]
+        assert workspace["remote"] == project["remote"]
+        assert workspace["base_branch"] == "feature/demo"
+
+    def test_unknown_project_does_not_create_workspace(self) -> None:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        storage = MemoryBackend()
+        with TestClient(create_app(storage=storage)) as project_client:
+            response = project_client.post(
+                "/v1/workspaces/create",
+                json={"project_id": "missing", "provider": "e2b", "env_vars": {}},
+            )
+            assert response.status_code == 404
+            assert project_client.get("/v1/workspaces").json() == []
+
+
+class TestEventReplayAfterRestart:
+    @pytest.mark.asyncio
+    async def test_events_endpoint_replays_persisted_history_for_paused_workspace(self) -> None:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        workspace_id = "ws-replay-after-restart"
+        storage = MemoryBackend()
+        await storage.initialize()
+        await storage.save_workspace(
+            {
+                "workspace_id": workspace_id,
+                "remote": "https://example.com/repo.git",
+                "branch": "main",
+                "provider": "e2b",
+                "provider_sandbox_id": "sandbox-1",
+                "snapshot_id": "snapshot-1",
+                "harness": "claude-code",
+                "runtime_state": "paused",
+                "created_at": "2026-09-14T12:00:00Z",
+                "last_active": "2026-09-14T12:01:00Z",
+                "config_json": "{}",
+            }
+        )
+        user_prompt = UniversalEvent(
+            event_id="event-prompt",
+            sequence=1,
+            timestamp="2026-09-14T12:00:01Z",
+            session_id=workspace_id,
+            event_type=EventType.USER_PROMPT,
+            content=(ContentPart(type="text", text="Hi"),),
+        )
+        auth_error = UniversalEvent(
+            event_id="event-error",
+            sequence=2,
+            timestamp="2026-09-14T12:00:02Z",
+            session_id=workspace_id,
+            event_type=EventType.ERROR,
+            error_message="Agent authentication failed",
+        )
+        await storage.append_events(
+            workspace_id, [user_prompt.to_storage_dict(), auth_error.to_storage_dict()]
+        )
+
+        # A newly constructed manager has no live sandbox or event buffer.
+        manager = await WorkspaceManager.create(storage=storage)
+        with TestClient(create_app(manager=manager, storage=None)) as restarted_client:
+            response = restarted_client.get(f"/v1/workspaces/{workspace_id}/events")
+
+        assert response.status_code == 200
+        assert "id: 1" in response.text
+        assert "id: 2" in response.text
+        assert '"type": "user.prompt"' in response.text
+        assert '"type": "error"' in response.text
+        assert "Agent authentication failed" in response.text
 
 
 class TestGetSession:

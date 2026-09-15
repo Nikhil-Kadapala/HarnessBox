@@ -9,6 +9,39 @@ servers:
   - url: http://localhost:8000
     description: Local development server
 paths:
+  /v1/projects:
+    get:
+      summary: List projects
+      operationId: listProjects
+      responses:
+        '200':
+          description: Projects ordered by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+    post:
+      summary: Create project
+      description: Save a Git repository Project without creating a workspace.
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '503':
+          description: Persistent storage is unavailable
+
   /v1/workspaces:
     post:
       summary: Create session
@@ -158,6 +191,36 @@ components:
           nullable: true
           description: Optional subdirectory name to clone into.
 
+    CreateProjectRequest:
+      type: object
+      required: [name, remote]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        remote:
+          type: string
+          maxLength: 2048
+        default_branch:
+          type: string
+          default: main
+
+    Project:
+      allOf:
+        - $ref: '#/components/schemas/CreateProjectRequest'
+        - type: object
+          required: [project_id, created_at, updated_at]
+          properties:
+            project_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
     SecurityPolicyRequest:
       type: object
       description: Sandbox security policy settings.
@@ -242,6 +305,13 @@ components:
           $ref: '#/components/schemas/SecurityPolicyRequest'
         workspace:
           $ref: '#/components/schemas/WorkspaceRequest'
+        project_id:
+          type: string
+          format: uuid
+          description: Existing Project to associate with this workspace.
+        branch:
+          type: string
+          description: Branch to use instead of the Project default branch.
 
     SessionResponse:
       type: object
@@ -274,6 +344,10 @@ components:
           nullable: true
         remote:
           type: string
+          nullable: true
+        project_id:
+          type: string
+          format: uuid
           nullable: true
         total_cost_usd:
           type: number

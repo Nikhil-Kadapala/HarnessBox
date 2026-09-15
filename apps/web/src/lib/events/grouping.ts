@@ -1,17 +1,18 @@
 import type { UniversalEvent } from "@/types";
+import { isAuthenticationFailure } from "./error-display";
 
 export type EventGroup =
   | { type: "message"; itemId: string; deltas: UniversalEvent[] }
   | { type: "tool_call"; itemId: string; events: UniversalEvent[] }
   | { type: "tool_calls_batch"; toolCalls: { itemId: string; events: UniversalEvent[] }[] }
   | { type: "reasoning"; itemId: string; events: UniversalEvent[] }
+  | { type: "retry"; events: UniversalEvent[]; failure?: UniversalEvent }
   | { type: "single"; event: UniversalEvent };
 
 const STANDALONE_EVENT_TYPES = new Set([
   "error",
   "permission.requested",
   "input.requested",
-  "api.retry",
 ]);
 
 export function groupEvents(events: UniversalEvent[]): EventGroup[] {
@@ -19,6 +20,26 @@ export function groupEvents(events: UniversalEvent[]): EventGroup[] {
   const openGroups = new Map<string, EventGroup>();
 
   for (const event of events) {
+    if (event.type === "api.retry") {
+      const previous = groups.at(-1);
+      if (previous?.type === "retry") {
+        previous.events.push(event);
+      } else {
+        groups.push({ type: "retry", events: [event] });
+      }
+      continue;
+    }
+
+    if (event.type === "error" && isAuthenticationFailure(event)) {
+      const previousRetry = [...groups]
+        .reverse()
+        .find((group) => group.type === "retry" && !group.failure);
+      if (previousRetry?.type === "retry") {
+        previousRetry.failure = event;
+        continue;
+      }
+    }
+
     const msg = event.message;
     const itemId = msg.item_id;
     const kind = msg.item_kind;
