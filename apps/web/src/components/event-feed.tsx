@@ -4,6 +4,7 @@ import { EventGroupCard } from "@/components/event-card";
 import { UserMessage } from "@/components/event/user-message";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { groupEvents } from "@/lib/events/grouping";
+import { isAuthenticationFailure } from "@/lib/events/error-display";
 import type { UniversalEvent } from "@/types";
 
 const cardVariants = {
@@ -16,29 +17,35 @@ interface EventFeedProps {
   sessionId?: string;
   isStreaming?: boolean;
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onRetryPrompt?: (prompt: string) => void;
 }
 
-export const EventFeed = memo(function EventFeed({ events, sessionId, isStreaming = false, onPermissionRespond }: EventFeedProps) {
+export const EventFeed = memo(function EventFeed({ events, sessionId, isStreaming = false, onPermissionRespond, onRetryPrompt }: EventFeedProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Split events into user prompts and agent events, preserving order
   const segments = useMemo(() => {
-    const result: Array<{ type: "user"; event: UniversalEvent } | { type: "agent"; events: UniversalEvent[] }> = [];
+    const result: Array<{ type: "user"; event: UniversalEvent } | { type: "agent"; events: UniversalEvent[]; retryPrompt: string }> = [];
     let currentAgent: UniversalEvent[] = [];
+    let lastPrompt = "";
 
     for (const event of events) {
       if (event.type === "user.prompt") {
         if (currentAgent.length > 0) {
-          result.push({ type: "agent", events: currentAgent });
+          result.push({ type: "agent", events: currentAgent, retryPrompt: lastPrompt });
           currentAgent = [];
         }
+        const attachments = event.message.metadata?.attachments;
+        lastPrompt = Array.isArray(attachments) && attachments.length > 0
+          ? ""
+          : event.message.content?.[0]?.text ?? "";
         result.push({ type: "user", event });
       } else {
         currentAgent.push(event);
       }
     }
     if (currentAgent.length > 0) {
-      result.push({ type: "agent", events: currentAgent });
+      result.push({ type: "agent", events: currentAgent, retryPrompt: lastPrompt });
     }
     return result;
   }, [events]);
@@ -79,7 +86,15 @@ export const EventFeed = memo(function EventFeed({ events, sessionId, isStreamin
             const groups = groupEvents(segment.events);
             return groups.map((group) => (
               <m.div
-                key={group.type === "single" ? group.event.message.event_id : group.type === "tool_calls_batch" ? `batch-${group.toolCalls[0].itemId}` : `${group.type}-${group.itemId}`}
+                key={
+                  group.type === "single"
+                    ? group.event.message.event_id
+                    : group.type === "tool_calls_batch"
+                      ? `batch-${group.toolCalls[0].itemId}`
+                      : group.type === "retry"
+                        ? `retry-${group.events[0].message.event_id}`
+                        : `${group.type}-${group.itemId}`
+                }
                 variants={cardVariants}
                 initial="hidden"
                 animate="visible"
@@ -90,6 +105,11 @@ export const EventFeed = memo(function EventFeed({ events, sessionId, isStreamin
                   sessionId={sessionId}
                   isStreaming={isStreaming}
                   onPermissionRespond={onPermissionRespond}
+                  onRetry={!isStreaming && group.type === "retry" && group.failure && isAuthenticationFailure(group.failure) && segment.retryPrompt
+                    ? () => onRetryPrompt?.(segment.retryPrompt)
+                    : !isStreaming && group.type === "single" && group.event.type === "error" && isAuthenticationFailure(group.event) && segment.retryPrompt
+                      ? () => onRetryPrompt?.(segment.retryPrompt)
+                      : undefined}
                 />
               </m.div>
             ));

@@ -12,8 +12,9 @@ function evt(overrides: {
   tool_kind?: string;
   metadata?: Record<string, unknown>;
   event_type?: string;
+  error_message?: string;
 } = {}): UniversalEvent {
-  const { type, event_type, item_id, item_kind, item_status, content, delta, tool_kind, metadata } = overrides;
+  const { type, event_type, item_id, item_kind, item_status, content, delta, tool_kind, metadata, error_message } = overrides;
   return {
     type: type ?? event_type ?? "item.delta",
     timestamp: "2026-01-01T00:00:00Z",
@@ -28,6 +29,7 @@ function evt(overrides: {
       delta,
       tool_kind,
       metadata,
+      error_message,
     },
   };
 }
@@ -161,15 +163,40 @@ describe("groupEvents", () => {
     }
   });
 
-  it("renders api.retry as standalone single event", () => {
+  it("groups consecutive api.retry events into one updating status", () => {
     const events = [
-      evt({ event_type: "api.retry", item_id: undefined, item_kind: undefined, metadata: { attempt: 1, max_retries: 3 } }),
+      evt({ event_type: "api.retry", item_id: undefined, item_kind: undefined, metadata: { attempt: 1, max_retries: 10 } }),
+      evt({ event_type: "api.retry", item_id: undefined, item_kind: undefined, metadata: { attempt: 2, max_retries: 10 } }),
     ];
     const groups = groupEvents(events);
     expect(groups).toHaveLength(1);
-    expect(groups[0].type).toBe("single");
-    if (groups[0].type === "single") {
-      expect(groups[0].event.type).toBe("api.retry");
+    expect(groups[0].type).toBe("retry");
+    if (groups[0].type === "retry") {
+      expect(groups[0].events).toHaveLength(2);
+      expect(groups[0].events.at(-1)?.message.metadata?.attempt).toBe(2);
+    }
+  });
+
+  it("replaces the retry status with one terminal authentication failure", () => {
+    const retry = evt({
+      event_type: "api.retry",
+      item_id: undefined,
+      item_kind: undefined,
+      metadata: { attempt: 10, max_retries: 10, error: "authentication_failed" },
+    });
+    const failure = evt({
+      event_type: "error",
+      item_id: undefined,
+      item_kind: undefined,
+      metadata: { error: "authentication_failed" },
+      error_message: "Turn budget exhausted while retrying upstream API",
+    });
+
+    const groups = groupEvents([retry, failure]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].type).toBe("retry");
+    if (groups[0].type === "retry") {
+      expect(groups[0].failure).toBe(failure);
     }
   });
 });

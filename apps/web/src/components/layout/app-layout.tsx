@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Outlet, useNavigate, useRouter } from "@tanstack/react-router";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,28 +13,34 @@ import { HarnessHeader } from "@/components/layout/harness-header";
 import { SessionConfigPanel } from "@/components/session/session-config-panel";
 import { SessionManagerProvider, useSessionManager } from "@/hooks/use-session-manager";
 import { appStorage } from "@/lib/storage-schema";
-import type { CreateSessionRequest } from "@/types";
+import { createProject as apiCreateProject, listProjects } from "@/lib/api";
+import type { CreateSessionRequest, Project } from "@/types";
 
 export function AppLayout() {
   const manager = useSessionManager();
   const navigate = useNavigate();
   const router = useRouter();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [prefillRepoUrl, setPrefillRepoUrl] = useState<string | undefined>();
+  const [selectedProject, setSelectedProject] = useState<Project | undefined>();
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  useEffect(() => {
+    listProjects().then(setProjects).catch((err) => console.error("Failed to load projects", err));
+  }, []);
 
   const currentPath = router.state.location.pathname;
   const currentView: "board" | "session" | "settings" =
     currentPath.startsWith("/session") ? "session" :
     currentPath.startsWith("/settings") ? "settings" : "board";
 
-  const handleNewSession = useCallback((repoUrl?: string) => {
-    setPrefillRepoUrl(repoUrl);
+  const handleNewWorkspace = useCallback((project: Project) => {
+    setSelectedProject(project);
     setSheetOpen(true);
   }, []);
 
   const handleCloseSheet = useCallback(() => {
     setSheetOpen(false);
-    setPrefillRepoUrl(undefined);
+    setSelectedProject(undefined);
   }, []);
 
   const handleCreateSession = useCallback(
@@ -81,14 +87,22 @@ export function AppLayout() {
             sessions={manager.sessions}
             activeSessionId={manager.activeSessionId}
             onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
+            projects={projects}
+            onCreateProject={async (input) => {
+              const project = await apiCreateProject(input);
+              setProjects((current) => [...current, project].sort((a, b) => a.name.localeCompare(b.name)));
+            }}
+            onNewWorkspace={handleNewWorkspace}
             onDestroySession={manager.destroySession}
             currentView={currentView}
             onNavigateToBoard={handleNavigateToBoard}
             onNavigateToSettings={handleNavigateToSettings}
           />
           <SidebarInset className="max-h-screen overflow-hidden">
-            <HarnessHeader session={currentView === "session" ? manager.activeSession : null} />
+            <HarnessHeader
+              session={currentView === "session" ? manager.activeSession : null}
+              onResume={manager.resumeSession}
+            />
             <div className="flex flex-1 flex-col min-h-0 overflow-y-auto">
               <Outlet />
             </div>
@@ -97,12 +111,13 @@ export function AppLayout() {
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <SheetContent side="right" className="sm:max-w-xl w-full overflow-y-auto">
               <SheetHeader>
-                <SheetTitle>New Session</SheetTitle>
+              <SheetTitle>New Workspace</SheetTitle>
               </SheetHeader>
               <SessionConfigPanel
+                key={selectedProject?.project_id ?? "no-project"}
                 onSubmit={handleCreateSession}
                 onCancel={handleCloseSheet}
-                defaultRepoUrl={prefillRepoUrl}
+                project={selectedProject}
               />
             </SheetContent>
           </Sheet>

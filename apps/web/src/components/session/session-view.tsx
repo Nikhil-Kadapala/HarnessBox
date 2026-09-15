@@ -44,6 +44,7 @@ export function SessionView({ session, onSendPrompt, onStop }: SessionViewProps)
         sessionId={session.id}
         isStreaming={isStreaming}
         onPermissionRespond={handlePermissionRespond}
+        onRetryPrompt={onSendPrompt}
       />
 
       <div className="shrink-0">

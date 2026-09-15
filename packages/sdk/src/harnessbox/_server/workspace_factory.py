@@ -250,7 +250,7 @@ def build_workspace_config(
         security_policy=None,
         workspace=workspace,
         file_system=file_system_spec,
-        project_id=None,
+        project_id=normalized.project_id,
         session_timeout=session_timeout,
         branch_label=branch_label,
         remote_label=remote_label,

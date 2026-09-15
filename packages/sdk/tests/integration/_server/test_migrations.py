@@ -24,15 +24,15 @@ class TestMigrationRunner:
     def test_run_pending_applies_all_migrations(self, conn):
         runner = MigrationRunner(conn)
         applied = runner.run_pending()
-        assert applied == 6
-        assert runner.get_version() == 6
+        assert applied == 7
+        assert runner.get_version() == 7
 
     def test_run_pending_idempotent(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
         applied = runner.run_pending()
         assert applied == 0
-        assert runner.get_version() == 6
+        assert runner.get_version() == 7
 
     def test_creates_workspaces_table(self, conn):
         runner = MigrationRunner(conn)
@@ -91,7 +91,7 @@ class TestMigrationRunner:
             migrations.MIGRATIONS[:] = original
 
         runner.run_pending()
-        assert runner.get_version() == 6
+        assert runner.get_version() == 7
 
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(workspaces)")}
         assert {"workflow_state", "pr_url", "pr_number", "ci_status"}.isdisjoint(columns)
@@ -104,7 +104,7 @@ class TestMigrationRunner:
     def test_rollback_on_failure(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        assert runner.get_version() == 6
+        assert runner.get_version() == 7
 
         # Monkey-patch MIGRATIONS to add a failing migration
         from harnessbox._server._storage import migrations
@@ -128,8 +128,8 @@ class TestMigrationRunner:
             with pytest.raises(RuntimeError, match="Intentional failure"):
                 runner.run_pending()
 
-            # Version should stay at 6 (fake v007 rolled back)
-            assert runner.get_version() == 6
+            # Version should stay at 7 (the failing v008 rolled back)
+            assert runner.get_version() == 7
         finally:
             migrations.MIGRATIONS[:] = original
             del sys.modules["harnessbox._server._storage.migrations._fake_broken"]
@@ -156,10 +156,10 @@ class TestMigrationRunner:
         finally:
             migrations.MIGRATIONS[:] = original
 
-        # Now run remaining (v002 through v006)
+        # Now run remaining (v002 through v007)
         applied = runner.run_pending()
-        assert applied == 5
-        assert runner.get_version() == 6
+        assert applied == 6
+        assert runner.get_version() == 7
 
         # Index should exist now
         cursor = conn.execute(
@@ -178,11 +178,37 @@ class TestSQLiteBackendIntegration:
         db_path = tmp_path / "test.db"
         backend = SQLiteBackend(path=db_path, max_events_per_workspace=100)
         await backend.initialize()
+        project = {
+            "project_id": "p-sqlite",
+            "name": "SQLite Project",
+            "remote": "https://example.com/repo.git",
+            "default_branch": "main",
+            "created_at": "2026-09-14T00:00:00Z",
+            "updated_at": "2026-09-14T00:00:00Z",
+        }
+        await backend.save_project(project)
+        assert await backend.get_project("p-sqlite") == project
+        await backend.close()
+        backend = SQLiteBackend(path=db_path, max_events_per_workspace=100)
+        await backend.initialize()
         yield backend
         await backend.close()
 
     async def test_initialize_creates_db(self, backend, tmp_path):
         assert (tmp_path / "test.db").exists()
+
+    async def test_project_persists_across_backend_restart(self, backend):
+        projects = await backend.list_projects()
+        assert projects == [
+            {
+                "project_id": "p-sqlite",
+                "name": "SQLite Project",
+                "remote": "https://example.com/repo.git",
+                "default_branch": "main",
+                "created_at": "2026-09-14T00:00:00Z",
+                "updated_at": "2026-09-14T00:00:00Z",
+            }
+        ]
 
     async def test_save_and_get_workspace(self, backend):
         record = {
@@ -201,6 +227,34 @@ class TestSQLiteBackendIntegration:
         assert result is not None
         assert result["workspace_id"] == "ws-1"
         assert result["remote"] == "https://github.com/test/repo.git"
+
+    async def test_workspace_project_reference_round_trips(self, backend):
+        await backend.save_project(
+            {
+                "project_id": "p-1",
+                "name": "Project",
+                "remote": "https://example.com/repo.git",
+                "default_branch": "main",
+                "created_at": "2026-09-14T00:00:00Z",
+                "updated_at": "2026-09-14T00:00:00Z",
+            }
+        )
+        record = {
+            "workspace_id": "ws-project-linked",
+            "project_id": "p-1",
+            "remote": "https://example.com/repo.git",
+            "branch": "codex/test",
+            "provider": "e2b",
+            "harness": "claude-code",
+            "runtime_state": "active",
+            "created_at": "2026-09-14T00:00:00Z",
+            "last_active": "2026-09-14T00:00:00Z",
+            "config_json": "{}",
+        }
+        await backend.save_workspace(record)
+        stored = await backend.get_workspace("ws-project-linked")
+        assert stored is not None
+        assert stored["project_id"] == "p-1"
 
     async def test_event_retention_prunes_excess(self, backend):
         record = {

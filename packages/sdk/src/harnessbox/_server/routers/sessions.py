@@ -44,9 +44,28 @@ async def create_workspace(
 ) -> CreateWorkspaceResponseParams:
     """Create a workspace (slim provision: VM + tools + env + optional git/file_system)."""
     try:
+        if isinstance(req, CreateWorkspaceRequestParams) and req.project_id:
+            storage = mgr.storage
+            if storage is None:
+                raise HTTPException(status_code=503, detail="Project storage is unavailable")
+            project = await storage.get_project(req.project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            from ._models import GitSourceParams
+
+            req = req.model_copy(
+                update={
+                    "git": GitSourceParams(
+                        repo_url=project["remote"],
+                        branch=req.branch or project["default_branch"],
+                    )
+                }
+            )
         config = build_workspace_config(req)
         # Server always mints workspace_id — ignore any client-supplied id.
         info = mgr.register_workspace(config)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Failed to register workspace")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -345,54 +364,64 @@ async def stream_events(
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
     last_event_id_str = request.headers.get("last-event-id")
-    last_seq = int(last_event_id_str) if last_event_id_str else None
+    last_seq = int(last_event_id_str) if last_event_id_str else 0
 
     async def event_generator() -> Any:
+        cursor = last_seq
         if info.sandbox_conn is not None:
-            if last_seq is not None:
-                live_buffer = info.sandbox_conn.event_buffer
+            async for event in mgr.event_replay.replay_then_live(
+                workspace_id, cursor, info.sandbox_conn.event_buffer
+            ):
+                cursor = max(cursor, event.sequence)
+                yield ServerSentEvent(
+                    data=json.dumps(event.to_dict()),
+                    event="message",
+                    id=str(event.sequence),
+                )
+            return
+
+        # A restarted server has no live buffer for paused/terminal workspaces,
+        # but their durable event history is still available in storage.
+        async for event in mgr.event_replay.replay_from_sequence(workspace_id, cursor):
+            cursor = max(cursor, event.sequence)
+            yield ServerSentEvent(
+                data=json.dumps(event.to_dict()),
+                event="message",
+                id=str(event.sequence),
+            )
+
+        if info.runtime_state == "paused":
+            return
+
+        terminal = frozenset({"error", "dead", "ended"})
+        while True:
+            if info.sandbox_conn is not None:
                 async for event in mgr.event_replay.replay_then_live(
-                    workspace_id, last_seq, live_buffer
+                    workspace_id, cursor, info.sandbox_conn.event_buffer
                 ):
+                    cursor = max(cursor, event.sequence)
                     yield ServerSentEvent(
                         data=json.dumps(event.to_dict()),
                         event="message",
                         id=str(event.sequence),
                     )
-            else:
-                async for event in info.sandbox_conn.event_buffer.stream(last_seq):
-                    yield ServerSentEvent(
-                        data=json.dumps(event.to_dict()),
-                        event="message",
-                        id=str(event.sequence),
-                    )
-        else:
-            # Workspace is provisioning — poll until sandbox appears or terminal state
-            terminal = frozenset({"error", "dead", "ended"})
-            while True:
-                if info.runtime_state in terminal:
-                    yield ServerSentEvent(
-                        data=json.dumps(
-                            {
-                                "event_type": "runtime.state",
-                                "metadata": {
-                                    "runtime_state": info.runtime_state,
-                                    "error_message": info.error_message,
-                                },
-                            }
-                        ),
-                        event="message",
-                    )
-                    break
-                if info.sandbox_conn is not None:
-                    async for event in info.sandbox_conn.event_buffer.stream(last_seq):
-                        yield ServerSentEvent(
-                            data=json.dumps(event.to_dict()),
-                            event="message",
-                            id=str(event.sequence),
-                        )
-                    break
-                await asyncio.sleep(0.5)
+                return
+            if info.runtime_state in terminal:
+                yield ServerSentEvent(
+                    data=json.dumps(
+                        {
+                            "event_type": "runtime.state",
+                            "metadata": {
+                                "runtime_state": info.runtime_state,
+                                "error_message": getattr(info, "error_message", None),
+                            },
+                        }
+                    ),
+                    event="message",
+                )
+                return
+            # Workspace is provisioning — wait for its live buffer after replay.
+            await asyncio.sleep(0.5)
 
     return EventSourceResponse(event_generator(), ping=15)
 

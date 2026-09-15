@@ -83,10 +83,12 @@ Sandboxes are persistent. When idle, they pause automatically to save cost. On t
 
 ### HTTP create (server API)
 
-`POST /v1/workspaces/create` is a slim create surface:
+`POST /v1/workspaces/create` creates a Workspace associated with a Project:
 
-- Server always mints `workspace_id` (client ids ignored); `project_id` is always `null` until a Project API exists.
-- Optional `git` (+ `GitCredentials`) and `file_system` (`FileSystemParams`) — response uses `file_system_path`.
+- The server mints `workspace_id`; clients cannot choose it. An optional `project_id` links the Workspace to a locally stored Project, and `branch` selects a branch other than the Project default.
+- Project records store the repository remote and default branch in the local HarnessBox database. Creating a Project alone does not provision a Workspace or cloud runtime.
+- Runtime provisioning uses the configured provider adapter; provider-specific IDs and agent execution are runtime state, not Project/Workspace identity.
+- Optional `git` (+ `GitCredentials`) and `file_system` (`FileSystemParams`) are also supported — response uses `file_system_path`.
 - `model` is not accepted on create (deferred to session/configure).
 - Host env merge is `ENV_VAR_KEYS` setdefault only — no Claude/GCP auto-inject helpers.
 - `GitCredentials.type=ssh` / `ssh_key` are accepted but not yet wired into clone auth.

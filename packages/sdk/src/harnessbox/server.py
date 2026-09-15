@@ -39,6 +39,7 @@ except ImportError as e:
 from harnessbox._server.routers import (
     account_router,
     discovery_router,
+    projects_router,
     sessions_router,
     workspace_router,
 )
@@ -143,6 +144,7 @@ def create_app(
     app.include_router(discovery_router)
     app.include_router(workspace_router)
     app.include_router(account_router)
+    app.include_router(projects_router)
     app.include_router(sessions_router)
 
     return app

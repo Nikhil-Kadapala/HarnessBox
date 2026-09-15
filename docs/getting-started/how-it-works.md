@@ -8,11 +8,11 @@ generated: { by: process:okf-migration, at: 2026-07-27T19:33:00Z }
 ---
 # How It Works
 
-Your code talks to the **HarnessBox SDK**, which provisions a sandbox via a provider (E2B), injects agent configuration and security policies, clones your git workspace, and starts the AI agent. Prompts and agent output stream over the provider's transport layer.
+Your code talks to the **HarnessBox SDK**, which provisions a cloud runtime through a configurable provider adapter, injects agent configuration and security policies, clones your git workspace, and starts the AI agent. Prompts and agent output stream over the provider's transport layer. HarnessBox stores Project, Workspace, Session/Conversation metadata and events locally; agent execution and the working filesystem live in the selected cloud runtime.
 
 ```
 ┌─────────────┐      ┌──────────────┐      ┌─────────────────────────┐
-│  Your Code  │─────▶│  HarnessBox  │─────▶│   Sandbox (E2B VM)      │
+│  Your Code  │─────▶│  HarnessBox  │─────▶│  Cloud Runtime          │
 │             │      │     SDK      │      │  ┌───────────────────┐  │
 │             │◀─────│              │◀─────│  │  AI Agent (Claude)│  │
 │  (prompts)  │      │  (provider)  │      │  │  + Security Policy│  │
@@ -98,7 +98,9 @@ Agent output is parsed from NDJSON (Claude Code's `--output-format stream-json`)
 
 ## Sessions
 
-HarnessBox supports multiple concurrent sessions, each with its own sandbox, workspace, and agent instance. Sessions are managed by the `WorkspaceManager` which handles pooling, lifecycle transitions, and storage.
+The dashboard models repository setup as **Project → Workspace → Session**. A Project stores the repository remote and default branch locally; creating one does not start an agent. The user creates a Workspace from the Project when needed, and starts a Session within that workspace. Branch/worktree and provider runtime bindings describe the Workspace environment; they are not Session identifiers. Runtime provider implementations are swappable through the provider adapter boundary.
+
+In the server model, multiple Conversations (durable agent threads) can belong to one Workspace. The local server persists their metadata and event history, while agent processes execute in the configured cloud runtime.
 
 ## Next Steps
 

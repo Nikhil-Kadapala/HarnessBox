@@ -286,26 +286,28 @@
 
       <h2 id="overview">Overview</h2>
       <p>
-        HarnessBox separates <em>compute</em> (the sandbox) from <em>agent chat
-        state</em> (conversations and CLI processes). The E2B sandbox id is only
-        how we reconnect the VM. Agent routing never uses the E2B id as a chat
-        key.
+        HarnessBox separates <em>local durable project/workspace/session metadata</em>
+        from <em>cloud compute</em> (the sandbox) and <em>agent chat state</em>
+        (conversations and CLI processes). A provider sandbox id is only how we
+        reconnect a runtime. Agent routing never uses a provider sandbox id,
+        branch, or worktree path as a chat key.
       </p>
 
       <div class="diagram" aria-label="Hierarchy diagram">
         <pre>
-Workspace (workspace_id) ──────────────────────────────┐
-  │  SQLite: workspaces row                            │
-  │  In-memory: WorkspaceInstance                      │
-  │                                                    │
-  ├─ Sandbox (provider_sandbox_id)  ← E2B VM           │
+Project (local repository record)
+  └─ Workspace (workspace_id) ────────────────────────┐
+     │  SQLite: project + workspace rows               │
+     │  In-memory: WorkspaceInstance                  │
+     │                                                │
+     ├─ Sandbox (provider_sandbox_id)  ← cloud runtime │
   │     filesystem, network, PIDs                      │
   │                                                    │
-  └─ AgentManager                                      │
-        ├─ conversation A → AgentProcess (claude-code) │
-        ├─ conversation B → AgentProcess (codex)       │
-        └─ conversation C → AgentProcess (claude-code) │
-              ↑ keyed only by conversation_id          ┘
+     └─ AgentManager                                  │
+           ├─ conversation A → AgentProcess (harness) │
+           ├─ conversation B → AgentProcess (harness) │
+           └─ conversation C → AgentProcess (harness) │
+                 ↑ keyed only by conversation_id      ┘
         </pre>
       </div>
 
@@ -332,12 +334,10 @@ Workspace (workspace_id) ──────────────────�
         policy for ordinary conversation turns.
       </p>
       <div class="banner">
-        <strong>Current implementation gap.</strong>
-        <code>SessionRouter.prompt()</code> still holds the workspace lock across
-        the complete streamed turn, which effectively serializes conversations
-        today. That behavior is not the target architecture; the lock should be
-        narrowed to sandbox lifecycle transitions while per-conversation locks
-        protect each agent process.
+        <strong>Implementation note.</strong>
+        Turns are serialized per conversation by <code>AgentManager</code>;
+        workspace lifecycle coordination is separate and is not held across the
+        full streamed turn.
       </div>
 
       <h2 id="identities">Identity layers</h2>
@@ -471,7 +471,7 @@ agent_session_id  TEXT              -- CLI --resume id (migration v005)</pre>
         <div class="flow-num">2</div>
         <div class="flow-body">
           <strong>Ensure sandbox</strong>
-          <code>ensure_sandbox</code> resumes the E2B VM if paused (via
+          <code>ensure_sandbox</code> resumes the provider runtime if paused (via
           <code>provider_sandbox_id</code> stored on the workspace). Still no
           agent routing — just compute.
         </div>

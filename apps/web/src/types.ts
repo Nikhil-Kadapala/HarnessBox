@@ -98,6 +98,15 @@ export interface DetectedWorkspace {
   name: string;
 }
 
+export interface Project {
+  project_id: string;
+  name: string;
+  remote: string;
+  default_branch: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // --- Workspace creation ---
 
 export interface SecurityPolicyConfig {
@@ -144,6 +153,7 @@ export interface WorkspaceConfig {
 
 export interface CreateWorkspaceRequestParams {
   provider: string;
+  harness?: string;
   env_vars: Record<string, string>;
   skip_permissions: boolean;
   sandbox_timeout?: number;
@@ -155,6 +165,7 @@ export interface CreateWorkspaceRequestParams {
   session_id?: string;
   workspace_id?: string;
   project_id?: string;
+  branch?: string;
   model?: string;
   security_policy?: SecurityPolicyConfig;
   workspace?: WorkspaceConfig;
@@ -245,4 +256,5 @@ export interface SessionEntry {
   branch?: string;
   baseBranch?: string;
   remote?: string;
+  projectId?: string;
 }

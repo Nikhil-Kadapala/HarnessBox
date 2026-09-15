@@ -36,7 +36,7 @@ export E2B_API_KEY=...
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY for Codex
 ```
 
-You can also paste keys in the dashboard **Settings** page or the New Session sheet; host env is enough for most dogfood runs.
+You can also paste keys in the dashboard **Settings** page or the New Workspace sheet; host env is enough for most dogfood runs.
 
 ## 1. Start the backend
 
@@ -99,21 +99,20 @@ Use that for component/regression checks. Use the steps below for end-to-end dog
 
 ## 3. Simple dogfood workflow
 
-Goal: **create → chat → pause → resume → stop**.
+Goal: **create Project → create Workspace → chat → pause → resume → stop**.
 
-### Create a workspace (session)
+### Create a Project, then a Workspace
 
-1. In the dashboard, click **New Session** (sidebar).
-2. Keep **Provider** `e2b` and **Harness** `claude-code` (or pick another discovered harness).
-3. Optional: set a git remote under the repo fields, or leave empty for a blank sandbox.
-4. Leave **Skip permissions** on for a smoother first run.
-5. Click **Create Session**.
+1. In the sidebar, click **+** beside Projects and create a Project from a remote Git URL or a local repository. Local selection reads Git metadata in the browser and records the remote; it does not copy the local working tree to the server.
+2. Click **+** beside the new Project to create a Workspace. Project creation alone does not provision a cloud runtime.
+3. Choose the runtime provider and harness (for example, `e2b` and `claude-code`) and configure credentials/permissions as needed.
+4. Click **Create Workspace**.
 
-The UI navigates to `/session/<id>` while the server provisions an E2B sandbox (can take ~30–90s). Watch the creating state; on failure, check the server terminal for E2B / credential errors.
+The UI navigates to `/session/<id>` while the server provisions the selected cloud runtime (time varies by provider). Watch the creating state; on failure, check the server terminal for provider or credential errors.
 
 ### Chat
 
-1. When the session is **active**, send a short prompt, e.g. `Reply with exactly: pong`.
+1. When the runtime is **Running**, send a short prompt, e.g. `Reply with exactly: pong`.
 2. Confirm streamed events appear in the feed (assistant text / tool calls).
 3. Optional: send a second turn to confirm the conversation continues in the same workspace.
 
@@ -141,7 +140,7 @@ The UI navigates to `/session/<id>` while the server provisions an E2B sandbox (
 | Board empty / network errors | Server not on `:8000`, or Vite not proxying |
 | Create fails immediately | Missing `E2B_API_KEY` in server env / Settings |
 | Sandbox up, agent silent / auth errors | Missing harness key (`ANTHROPIC_API_KEY`, etc.) |
-| Resume fails | Provider key missing on reconnect; restart server with env set |
+| Resume fails | The server may have a newer runtime state than the page; refresh the page and check the server terminal/provider credentials |
 | Port already in use | `uv run harnessbox serve --port 8001` and point Vite proxy at that port, or free `8000` |
 
 ## Related

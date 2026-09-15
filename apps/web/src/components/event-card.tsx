@@ -1,10 +1,12 @@
 import { memo, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { AlertCircle, ChevronDown, ChevronRight, LoaderCircle, RotateCw, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleToolCall } from "@/components/event/collapsible-tool-call";
 import { MarkdownMessage } from "@/components/event/markdown-message";
 import { PermissionCard } from "@/components/event/permission-card";
 import type { EventGroup } from "@/lib/events/grouping";
+import { isAuthenticationFailure } from "@/lib/events/error-display";
 import type { UniversalEvent } from "@/types";
 
 interface EventGroupCardProps {
@@ -12,6 +14,7 @@ interface EventGroupCardProps {
   sessionId?: string;
   isStreaming?: boolean;
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onRetry?: () => void;
 }
 
 export const EventGroupCard = memo(function EventGroupCard({
@@ -19,6 +22,7 @@ export const EventGroupCard = memo(function EventGroupCard({
   sessionId,
   isStreaming = false,
   onPermissionRespond,
+  onRetry,
 }: EventGroupCardProps) {
   switch (group.type) {
     case "message":
@@ -29,12 +33,15 @@ export const EventGroupCard = memo(function EventGroupCard({
       return <ToolCallsBatch toolCalls={group.toolCalls} />;
     case "reasoning":
       return <ReasoningGroup events={group.events} />;
+    case "retry":
+      return <RetryGroup events={group.events} failure={group.failure} onRetry={onRetry} />;
     case "single":
       return (
         <SingleEventCard
           event={group.event}
           sessionId={sessionId}
           onPermissionRespond={onPermissionRespond}
+          onRetry={onRetry}
         />
       );
   }
@@ -141,10 +148,12 @@ function SingleEventCard({
   event,
   sessionId,
   onPermissionRespond,
+  onRetry,
 }: {
   event: UniversalEvent;
   sessionId?: string;
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onRetry?: () => void;
 }) {
   const msg = event.message;
 
@@ -212,6 +221,9 @@ function SingleEventCard({
     }
 
     case "error":
+      if (isAuthenticationFailure(event)) {
+        return <AuthenticationFailureCard onRetry={onRetry} />;
+      }
       return (
         <div className="rounded border border-destructive/50 bg-destructive/10 p-2 my-1">
           <span className="text-xs text-destructive">
@@ -238,23 +250,77 @@ function SingleEventCard({
         </div>
       );
 
-    case "api.retry": {
-      const attempt = (msg.metadata?.attempt as number) ?? 0;
-      const maxRetries = (msg.metadata?.max_retries as number) ?? 3;
-      const delayMs = (msg.metadata?.retry_delay_ms as number) ?? 0;
-      const error = (msg.metadata?.error as string) ?? "unknown";
-      return (
-        <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 my-1">
-          <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-          <span className="text-xs text-amber-600 dark:text-amber-400">
-            Retrying ({attempt}/{maxRetries}) — {error}
-            {delayMs > 0 && ` — ${(delayMs / 1000).toFixed(1)}s`}
-          </span>
-        </div>
-      );
-    }
-
     default:
       return null;
   }
+}
+
+function RetryGroup({
+  events,
+  failure,
+  onRetry,
+}: {
+  events: UniversalEvent[];
+  failure?: UniversalEvent;
+  onRetry?: () => void;
+}) {
+  if (failure && isAuthenticationFailure(failure)) {
+    return <AuthenticationFailureCard onRetry={onRetry} />;
+  }
+
+  const latest = events.at(-1);
+  if (!latest) return null;
+
+  const attempt = (latest.message.metadata?.attempt as number) ?? events.length;
+  const maxRetries = (latest.message.metadata?.max_retries as number) ?? 3;
+  const isAuthFailure = events.some(isAuthenticationFailure);
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 my-1"
+    >
+      <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-amber-500" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+          {isAuthFailure ? "Authentication failed" : "Agent request failed"}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Retrying ({attempt} of {maxRetries})
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AuthenticationFailureCard({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="my-2 rounded-md border border-destructive/40 bg-destructive/5 p-3"
+    >
+      <div className="flex items-center gap-2">
+        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+        <p className="text-sm font-medium text-destructive">Agent authentication failed</p>
+      </div>
+      <p className="mt-1 pl-6 text-sm text-muted-foreground">
+        The agent stopped after exhausting its retries. Check the selected agent’s credentials in{" "}
+        <Link to="/settings" className="underline underline-offset-2 hover:text-foreground">
+          Settings
+        </Link>
+        , then retry the last prompt.
+      </p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-3 ml-6 inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-secondary"
+        >
+          <RotateCw className="h-3.5 w-3.5" />
+          Retry last prompt
+        </button>
+      )}
+    </div>
+  );
 }

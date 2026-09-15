@@ -13,12 +13,14 @@ import {
   createSession as apiCreateSession,
   destroySession as apiDestroySession,
   listSessions,
+  resumeSession as apiResumeSession,
 } from "@/lib/api";
 import { sessionsReducer, statusFromEvent } from "@/lib/sessions/reducer";
 import { SessionConnections } from "@/lib/sessions/connections";
 import type {
   CreateSessionRequest,
   SessionEntry,
+  SessionResponse,
   SessionStatus,
   UniversalEvent,
 } from "@/types";
@@ -58,6 +60,7 @@ export function useSessionManager() {
                 branch: s.branch,
                 baseBranch: s.base_branch,
                 remote: s.remote,
+                projectId: s.project_id,
               },
             });
             activeSessions.push(id);
@@ -155,7 +158,6 @@ export function useSessionManager() {
         const {
           workspace_id: _wid,
           session_id: _sid,
-          project_id: _pid,
           model: _model,
           ...createBody
         } = config;
@@ -172,7 +174,7 @@ export function useSessionManager() {
 
         const entry: SessionEntry = {
           id: sessionId,
-          harness: "claude-code",
+          harness: res.harness || config.harness || "claude-code",
           status: "creating",
           runtimeState: workspaceStateOf(res) || "creating",
           createdAt: res.created_at || new Date().toISOString(),
@@ -181,6 +183,7 @@ export function useSessionManager() {
           workspaceName: res.workspace_name || config.git?.clone_dir_name || config.workspace?.clone_dir_name,
           branch: res.branch || config.git?.branch || config.workspace?.branch,
           remote: res.remote || config.git?.repo_url || config.workspace?.remote,
+          projectId: res.project_id || config.project_id,
         };
         dispatch({ type: "add_session", entry });
         setActiveSessionId(sessionId);
@@ -194,6 +197,7 @@ export function useSessionManager() {
             branch: res.branch,
             baseBranch: res.base_branch,
             remote: res.remote,
+            projectId: res.project_id,
             runtimeState: workspaceStateOf(res),
           },
         });
@@ -236,10 +240,6 @@ export function useSessionManager() {
 
         for await (const event of stream) {
           dispatch({ type: "append_event", sessionId, event });
-          if (event.type === "error" && event.message.error_message) {
-            dispatch({ type: "set_error", sessionId, error: event.message.error_message });
-            continue;
-          }
           const newStatus = statusFromEvent(event);
           if (newStatus && newStatus !== "streaming") {
             dispatch({ type: "set_status", sessionId, status: newStatus });
@@ -289,6 +289,47 @@ export function useSessionManager() {
     [activeSessionId, sessions],
   );
 
+  const resumeSessionById = useCallback(async (sessionId: string) => {
+    let response: SessionResponse;
+    try {
+      response = await apiResumeSession(sessionId);
+    } catch (resumeError) {
+      // The runtime may have resumed elsewhere while this page was stale.
+      // Reconcile from the server before surfacing the failed action.
+      try {
+        const current = (await listSessions()).find((session) => workspaceIdOf(session) === sessionId);
+        if (current) {
+          const currentState = workspaceStateOf(current);
+          dispatch({
+            type: "update_metadata",
+            sessionId,
+            metadata: { runtimeState: currentState },
+          });
+          dispatch({
+            type: "set_status",
+            sessionId,
+            status: (currentState as SessionStatus) || "active",
+          });
+          if (currentState === "active") return;
+        }
+      } catch {
+        // Keep the original resume error if reconciliation is unavailable.
+      }
+      throw resumeError;
+    }
+    const runtimeState = workspaceStateOf(response) || "active";
+    dispatch({
+      type: "update_metadata",
+      sessionId,
+      metadata: { runtimeState },
+    });
+    dispatch({
+      type: "set_status",
+      sessionId,
+      status: runtimeState === "paused" ? "paused" : "active",
+    });
+  }, []);
+
   return {
     sessions,
     activeSessionId,
@@ -299,6 +340,7 @@ export function useSessionManager() {
     sendPrompt,
     stopStreaming,
     destroySession: destroySessionById,
+    resumeSession: resumeSessionById,
   };
 }
 

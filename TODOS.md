@@ -8,19 +8,6 @@ not tracked here.
 These items were deferred by the 2026-09-10 engineering review of the
 Project-defined Workspace model.
 
-### Web Project → Workspace create flow
-
-Add the dashboard flow for synchronous Project creation followed by Workspace
-creation with `project_id` and `branch`. The web client currently posts the
-legacy inline Git shape and drops `project_id`.
-
-Touch points: `apps/web/src/lib/api.ts`,
-`apps/web/src/hooks/use-session-manager.ts`, session/project creation UI, and
-`apps/web/src/types.ts`.
-
-Depends on the Project CRUD and Project-backed Workspace APIs. Ship before
-considering dashboard dogfood green.
-
 ### Rename `ProjectConfig` to `RepoConfig`
 
 Rename the `.harnessbox.toml` configuration types to `RepoConfig`,
