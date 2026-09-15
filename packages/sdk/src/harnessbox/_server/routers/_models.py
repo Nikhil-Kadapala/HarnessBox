@@ -63,12 +63,32 @@ class CreateWorkspaceRequestParams(BaseModel):
     file_system: FileSystemParams | None = None
     project_id: str | None = None
     branch: str | None = None
+    security_policy: dict[str, object] | None = None
+
+
+class ProjectWorkspaceSettings(BaseModel):
+    """Non-secret defaults applied when provisioning workspaces for a Project."""
+
+    provider: str = "e2b"
+    default_harness: str = "claude-code"
+    sandbox_timeout: int = Field(default=1800, ge=60, le=86400)
+    session_timeout: int = Field(default=900, ge=0, le=86400)
+    skip_permissions: bool = False
+    security_policy: dict[str, object] = Field(default_factory=dict)
 
 
 class CreateProjectParams(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     remote: str = Field(min_length=1, max_length=2048)
     default_branch: str = Field(default="main", min_length=1, max_length=255)
+    workspace_settings: ProjectWorkspaceSettings = Field(default_factory=ProjectWorkspaceSettings)
+
+
+class UpdateProjectParams(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    remote: str | None = Field(default=None, min_length=1, max_length=2048)
+    default_branch: str | None = Field(default=None, min_length=1, max_length=255)
+    workspace_settings: ProjectWorkspaceSettings | None = None
 
 
 class ProjectResponseParams(BaseModel):
@@ -78,6 +98,7 @@ class ProjectResponseParams(BaseModel):
     default_branch: str
     created_at: str
     updated_at: str
+    workspace_settings: ProjectWorkspaceSettings = Field(default_factory=ProjectWorkspaceSettings)
 
 
 class CreateWorkspaceResponseParams(BaseModel):
@@ -133,6 +154,22 @@ class PromptRequest(BaseModel):
     harness: str
     conversation_id: str | None = None
     attachments: list[AttachmentPayload] = []
+
+
+class CreateConversationParams(BaseModel):
+    harness: str = "claude-code"
+
+
+class UpdateConversationParams(BaseModel):
+    harness: str
+
+
+class ConversationResponseParams(BaseModel):
+    conversation_id: str
+    workspace_id: str
+    agent_type: str
+    title: str | None = None
+    last_active: str
 
 
 class PermissionRequest(BaseModel):

@@ -31,7 +31,10 @@ class MemoryBackend:
         project_id = project_record["project_id"]
         if project_id in self._projects:
             raise KeyError(f"Project {project_id} already exists")
-        self._projects[project_id] = project_record.copy()
+        self._projects[project_id] = {
+            **project_record,
+            "workspace_settings": project_record.get("workspace_settings", {}),
+        }
 
     async def get_project(self, project_id: str) -> dict[str, Any] | None:
         project = self._projects.get(project_id)
@@ -41,6 +44,11 @@ class MemoryBackend:
         return sorted(
             (p.copy() for p in self._projects.values()), key=lambda p: p["name"].casefold()
         )
+
+    async def update_project(self, project_id: str, **fields: Any) -> None:
+        if project_id not in self._projects:
+            raise KeyError(f"Project {project_id} not found")
+        self._projects[project_id].update(fields)
 
     # -- Workspace CRUD --
 
@@ -128,6 +136,15 @@ class MemoryBackend:
                 return
 
         self._conversations[workspace_id].append(conversation_record.copy())
+
+    async def create_conversation(self, conversation_record: dict[str, Any]) -> None:
+        workspace_id = conversation_record["workspace_id"]
+        conversations = self._conversations.setdefault(workspace_id, [])
+        if any(
+            c["conversation_id"] == conversation_record["conversation_id"] for c in conversations
+        ):
+            raise KeyError(f"Conversation {conversation_record['conversation_id']} already exists")
+        conversations.append(conversation_record.copy())
 
     async def get_active_conversation(self, workspace_id: str) -> dict[str, Any] | None:
         """Get the most recent conversation for a workspace."""

@@ -20,6 +20,7 @@ MIGRATIONS: list[str] = [
     "harnessbox._server._storage.migrations.v005_conversation_session_id",
     "harnessbox._server._storage.migrations.v006_drop_workflow_and_pr",
     "harnessbox._server._storage.migrations.v007_projects",
+    "harnessbox._server._storage.migrations.v008_project_settings",
 ]
 
 

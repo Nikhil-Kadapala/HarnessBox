@@ -56,10 +56,27 @@ class TestProjectCRUD:
             "default_branch": "main",
             "created_at": "2026-09-14T00:00:00Z",
             "updated_at": "2026-09-14T00:00:00Z",
+            "workspace_settings": {},
         }
         await memory_backend.save_project(project)
         assert await memory_backend.get_project("p-1") == project
         assert await memory_backend.list_projects() == [project]
+
+    @pytest.mark.asyncio
+    async def test_update_project_settings(self, memory_backend):
+        project = {
+            "project_id": "p-1",
+            "name": "Example",
+            "remote": "https://example.com/repo.git",
+            "default_branch": "main",
+            "created_at": "2026-09-14T00:00:00Z",
+            "updated_at": "2026-09-14T00:00:00Z",
+            "workspace_settings": {},
+        }
+        await memory_backend.save_project(project)
+        await memory_backend.update_project("p-1", workspace_settings={"default_harness": "codex"})
+        updated = await memory_backend.get_project("p-1")
+        assert updated["workspace_settings"] == {"default_harness": "codex"}
 
     @pytest.mark.asyncio
     async def test_get_workspace_not_found(self, memory_backend):

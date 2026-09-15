@@ -50,6 +50,7 @@ interface HarnessSidebarProps {
   projects: Project[];
   onCreateProject: (project: Pick<Project, "name" | "remote" | "default_branch">) => Promise<void>;
   onNewWorkspace: (project: Project) => void;
+  onProjectSettings: (project: Project) => void;
   onDestroySession: (id: string) => void;
   currentView: "board" | "session" | "settings";
   onNavigateToBoard: () => void;
@@ -132,6 +133,7 @@ export function HarnessSidebar({
   projects,
   onCreateProject,
   onNewWorkspace,
+  onProjectSettings,
   onDestroySession,
   currentView,
   onNavigateToBoard,
@@ -229,8 +231,11 @@ export function HarnessSidebar({
                             <span className="flex-1 truncate">{project.name}</span>
                             <ChevronRight className={cn("h-4 w-4 shrink-0 transition-transform", openRepos.has(project.project_id) && "rotate-90")} />
                           </SidebarMenuButton>
-                          <button onClick={() => onNewWorkspace(project)} className="absolute right-2 opacity-0 group-hover/project:opacity-100 p-0.5 hover:bg-accent rounded cursor-pointer z-10" title={`New workspace in ${project.name}`}>
+                          <button onClick={() => void onNewWorkspace(project)} className="absolute right-2 opacity-0 group-hover/project:opacity-100 p-0.5 hover:bg-accent rounded cursor-pointer z-10" title={`New workspace in ${project.name}`}>
                             <Plus className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => onProjectSettings(project)} className="absolute right-8 opacity-0 group-hover/project:opacity-100 p-0.5 hover:bg-accent rounded cursor-pointer z-10" title={`${project.name} settings`}>
+                            <Settings className="h-3.5 w-3.5" />
                           </button>
                         </div>
                         <CollapsibleContent>

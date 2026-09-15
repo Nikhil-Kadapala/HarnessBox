@@ -24,15 +24,15 @@ class TestMigrationRunner:
     def test_run_pending_applies_all_migrations(self, conn):
         runner = MigrationRunner(conn)
         applied = runner.run_pending()
-        assert applied == 7
-        assert runner.get_version() == 7
+        assert applied == 8
+        assert runner.get_version() == 8
 
     def test_run_pending_idempotent(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
         applied = runner.run_pending()
         assert applied == 0
-        assert runner.get_version() == 7
+        assert runner.get_version() == 8
 
     def test_creates_workspaces_table(self, conn):
         runner = MigrationRunner(conn)
@@ -91,7 +91,7 @@ class TestMigrationRunner:
             migrations.MIGRATIONS[:] = original
 
         runner.run_pending()
-        assert runner.get_version() == 7
+        assert runner.get_version() == 8
 
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(workspaces)")}
         assert {"workflow_state", "pr_url", "pr_number", "ci_status"}.isdisjoint(columns)
@@ -104,7 +104,7 @@ class TestMigrationRunner:
     def test_rollback_on_failure(self, conn):
         runner = MigrationRunner(conn)
         runner.run_pending()
-        assert runner.get_version() == 7
+        assert runner.get_version() == 8
 
         # Monkey-patch MIGRATIONS to add a failing migration
         from harnessbox._server._storage import migrations
@@ -128,8 +128,8 @@ class TestMigrationRunner:
             with pytest.raises(RuntimeError, match="Intentional failure"):
                 runner.run_pending()
 
-            # Version should stay at 7 (the failing v008 rolled back)
-            assert runner.get_version() == 7
+            # Version should stay at 7 (the appended migration failed)
+            assert runner.get_version() == 8
         finally:
             migrations.MIGRATIONS[:] = original
             del sys.modules["harnessbox._server._storage.migrations._fake_broken"]
@@ -156,10 +156,10 @@ class TestMigrationRunner:
         finally:
             migrations.MIGRATIONS[:] = original
 
-        # Now run remaining (v002 through v007)
+        # Now run remaining (v002 through v008)
         applied = runner.run_pending()
-        assert applied == 6
-        assert runner.get_version() == 7
+        assert applied == 7
+        assert runner.get_version() == 8
 
         # Index should exist now
         cursor = conn.execute(
@@ -185,6 +185,7 @@ class TestSQLiteBackendIntegration:
             "default_branch": "main",
             "created_at": "2026-09-14T00:00:00Z",
             "updated_at": "2026-09-14T00:00:00Z",
+            "workspace_settings": {},
         }
         await backend.save_project(project)
         assert await backend.get_project("p-sqlite") == project
@@ -207,6 +208,7 @@ class TestSQLiteBackendIntegration:
                 "default_branch": "main",
                 "created_at": "2026-09-14T00:00:00Z",
                 "updated_at": "2026-09-14T00:00:00Z",
+                "workspace_settings": {},
             }
         ]
 

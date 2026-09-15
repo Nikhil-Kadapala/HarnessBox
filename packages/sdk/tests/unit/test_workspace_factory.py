@@ -236,7 +236,7 @@ class TestBuildWorkspaceConfig:
         assert config.session_timeout == 540  # max(600 - 60, 0)
         assert config.timeout == 600
 
-    def test_security_policy_ignored_on_slim_create(self) -> None:
+    def test_security_policy_applied_on_slim_create(self) -> None:
         from harnessbox.server import SecurityPolicyRequest
 
         req = self._make_request(
@@ -253,7 +253,9 @@ class TestBuildWorkspaceConfig:
             ),
         ):
             config = build_workspace_config(req)
-        assert config.security_policy is None
+        assert config.security_policy is not None
+        assert config.security_policy.denied_tools == ["bash"]
+        assert config.security_policy.deny_network is True
 
     def test_file_system_maps_to_spec(self) -> None:
         from harnessbox.server import FileSystemParams

@@ -6,6 +6,8 @@ import type {
   HarnessInfo,
   ProviderInfo,
   Project,
+  ProjectWorkspaceSettings,
+  ConversationEntry,
   SessionResponse,
   WorkspaceNameResponse,
 } from "@/types";
@@ -14,6 +16,44 @@ const BASE = "/api";
 
 export async function listProjects(): Promise<Project[]> {
   return fetchJSON<Project[]>("/v1/projects");
+}
+
+export async function getProject(projectId: string): Promise<Project> {
+  return fetchJSON<Project>(`/v1/projects/${encodeURIComponent(projectId)}`);
+}
+
+export async function updateProject(
+  projectId: string,
+  updates: Partial<Pick<Project, "name" | "remote" | "default_branch">> & { workspace_settings?: ProjectWorkspaceSettings },
+): Promise<Project> {
+  return fetchJSON<Project>(`/v1/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function listConversations(workspaceId: string): Promise<Omit<ConversationEntry, "events" | "streaming" | "error">[]> {
+  const data = await fetchJSON<{ conversations: Omit<ConversationEntry, "events" | "streaming" | "error">[] }>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/conversations`,
+  );
+  return data.conversations;
+}
+
+export async function createConversation(workspaceId: string, harness: string): Promise<Omit<ConversationEntry, "events" | "streaming" | "error">> {
+  return fetchJSON(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ harness }),
+  });
+}
+
+export async function updateConversationHarness(workspaceId: string, conversationId: string, harness: string): Promise<void> {
+  await fetchJSON(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ harness }),
+  });
 }
 
 export async function createProject(project: Pick<Project, "name" | "remote" | "default_branch">): Promise<Project> {

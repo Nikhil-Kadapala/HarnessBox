@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from harnessbox._server.routers._models import (
@@ -164,6 +164,9 @@ def _normalize_create_request(
         template=req.template,
         git=git,
         file_system=file_system,
+        security_policy=(
+            req.security_policy.model_dump(exclude_none=True) if req.security_policy else None
+        ),
     )
 
 
@@ -235,6 +238,12 @@ def build_workspace_config(
             session_timeout,
         )
 
+    security_policy = None
+    if normalized.security_policy:
+        from harnessbox.security.policy import SecurityPolicy
+
+        security_policy = SecurityPolicy(**cast(Any, normalized.security_policy))
+
     return WorkspaceConfig(
         provider=normalized.provider,
         api_key=api_key,
@@ -247,7 +256,7 @@ def build_workspace_config(
         timeout=sandbox_timeout,
         skip_permissions=normalized.skip_permissions,
         template=normalized.template,
-        security_policy=None,
+        security_policy=security_policy,
         workspace=workspace,
         file_system=file_system_spec,
         project_id=normalized.project_id,

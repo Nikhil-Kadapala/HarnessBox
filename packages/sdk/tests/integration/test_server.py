@@ -111,12 +111,24 @@ class TestProjects:
                     "name": "Example",
                     "remote": "https://github.com/example/repo.git",
                     "default_branch": "trunk",
+                    "workspace_settings": {"default_harness": "codex", "session_timeout": 1200},
                 },
             )
             assert response.status_code == 201
             project = response.json()
             assert project["name"] == "Example"
-            assert project_client.get("/v1/projects").json() == [project]
+            assert project["workspace_settings"]["default_harness"] == "codex"
+            updated = project_client.patch(
+                f"/v1/projects/{project['project_id']}",
+                json={
+                    "default_branch": "main",
+                    "workspace_settings": {"default_harness": "claude-code"},
+                },
+            )
+            assert updated.status_code == 200
+            assert updated.json()["default_branch"] == "main"
+            assert updated.json()["workspace_settings"]["default_harness"] == "claude-code"
+            assert project_client.get("/v1/projects").json() == [updated.json()]
             assert project_client.get("/v1/workspaces").json() == []
 
     def test_workspace_created_from_project_is_linked(self) -> None:
@@ -138,6 +150,7 @@ class TestProjects:
                     "name": "Example",
                     "remote": "https://example.com/repo.git",
                     "default_branch": "trunk",
+                    "workspace_settings": {"default_harness": "codex", "sandbox_timeout": 2400},
                 },
             ).json()
             response = project_client.post(
@@ -155,6 +168,7 @@ class TestProjects:
         assert workspace["project_id"] == project["project_id"]
         assert workspace["remote"] == project["remote"]
         assert workspace["base_branch"] == "feature/demo"
+        assert workspace["harness"] == "codex"
 
     def test_unknown_project_does_not_create_workspace(self) -> None:
         from harnessbox._server._storage.memory import MemoryBackend
@@ -167,6 +181,35 @@ class TestProjects:
             )
             assert response.status_code == 404
             assert project_client.get("/v1/workspaces").json() == []
+
+    def test_conversation_can_be_created_and_harness_changed_before_prompt(self) -> None:
+        from harnessbox._server._storage.memory import MemoryBackend
+
+        with (
+            patch("harnessbox._server.registry.Sandbox") as MockSandbox,
+            TestClient(create_app(storage=MemoryBackend())) as project_client,
+        ):
+            instance = MockSandbox.return_value
+            instance.setup = AsyncMock()
+            instance.sandbox_id = "sb-conversation"
+            instance._event_buffer = None
+            workspace = project_client.post("/v1/workspaces/create", json={}).json()
+            workspace_id = workspace["workspace_id"]
+
+            created = project_client.post(
+                f"/v1/workspaces/{workspace_id}/conversations", json={"harness": "codex"}
+            )
+            assert created.status_code == 201
+            conversation = created.json()
+            assert conversation["agent_type"] == "codex"
+            assert conversation["title"] is None
+
+            changed = project_client.patch(
+                f"/v1/workspaces/{workspace_id}/conversations/{conversation['conversation_id']}",
+                json={"harness": "claude-code"},
+            )
+            assert changed.status_code == 200
+            assert changed.json()["agent_type"] == "claude-code"
 
 
 class TestEventReplayAfterRestart:
