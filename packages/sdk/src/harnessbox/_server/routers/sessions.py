@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import uuid as _uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +22,14 @@ from harnessbox.streaming import Attachment
 
 from ._deps import get_manager, workspace_response
 from ._models import (
+    ConversationResponseParams,
+    CreateConversationParams,
     CreateSessionRequest,
     CreateWorkspaceRequestParams,
     CreateWorkspaceResponseParams,
     PermissionRequest,
     PromptRequest,
+    UpdateConversationParams,
     UploadFileParams,
 )
 
@@ -51,14 +55,30 @@ async def create_workspace(
             project = await storage.get_project(req.project_id)
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
+            settings = project.get("workspace_settings") or {}
+            supplied = req.model_fields_set
+            updates: dict[str, Any] = {}
+            for field in (
+                "provider",
+                "harness",
+                "sandbox_timeout",
+                "session_timeout",
+                "skip_permissions",
+            ):
+                if field not in supplied:
+                    settings_field = "default_harness" if field == "harness" else field
+                    updates[field] = settings.get(settings_field, getattr(req, field))
+            if "security_policy" not in supplied:
+                updates["security_policy"] = settings.get("security_policy") or None
             from ._models import GitSourceParams
 
             req = req.model_copy(
                 update={
+                    **updates,
                     "git": GitSourceParams(
                         repo_url=project["remote"],
                         branch=req.branch or project["default_branch"],
-                    )
+                    ),
                 }
             )
         config = build_workspace_config(req)
@@ -158,6 +178,76 @@ async def list_conversations(
         conversations = await mgr.storage.get_conversations(workspace_id=workspace_id)
         return {"conversations": conversations}
     return {"conversations": []}
+
+
+@router.post(
+    "/v1/workspaces/{workspace_id}/conversations",
+    response_model=ConversationResponseParams,
+    status_code=201,
+)
+async def create_conversation(
+    workspace_id: str,
+    req: CreateConversationParams,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> ConversationResponseParams:
+    try:
+        mgr.get_workspace(workspace_id)
+    except WorkspaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
+    if mgr.storage is None:
+        raise HTTPException(status_code=503, detail="Conversation storage is unavailable")
+    from harnessbox.config.harness import list_harness_types
+
+    if req.harness not in list_harness_types():
+        raise HTTPException(status_code=422, detail=f"Unknown harness: {req.harness!r}")
+    record = {
+        "conversation_id": str(_uuid.uuid4()),
+        "workspace_id": workspace_id,
+        "agent_type": req.harness,
+        "title": None,
+        "last_active": datetime.now(timezone.utc).isoformat(),
+        "agent_session_id": None,
+    }
+    try:
+        await mgr.storage.create_conversation(record)
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ConversationResponseParams.model_validate(record)
+
+
+@router.patch(
+    "/v1/workspaces/{workspace_id}/conversations/{conversation_id}",
+    response_model=ConversationResponseParams,
+)
+async def update_conversation(
+    workspace_id: str,
+    conversation_id: str,
+    req: UpdateConversationParams,
+    mgr: WorkspaceManager = Depends(get_manager),
+) -> ConversationResponseParams:
+    try:
+        mgr.get_workspace(workspace_id)
+    except WorkspaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Workspace not found") from exc
+    if mgr.storage is None:
+        raise HTTPException(status_code=503, detail="Conversation storage is unavailable")
+    from harnessbox.config.harness import list_harness_types
+
+    if req.harness not in list_harness_types():
+        raise HTTPException(status_code=422, detail=f"Unknown harness: {req.harness!r}")
+    conversations = await mgr.storage.get_conversations(workspace_id)
+    conversation = next(
+        (item for item in conversations if item["conversation_id"] == conversation_id), None
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conversation.get("title") or conversation.get("agent_session_id"):
+        raise HTTPException(
+            status_code=409, detail="Harness can only be changed before the first prompt"
+        )
+    await mgr.storage.update_conversation(conversation_id, agent_type=req.harness)
+    updated = {**conversation, "agent_type": req.harness}
+    return ConversationResponseParams(**updated)
 
 
 @router.post("/v1/workspaces/{workspace_id}/pause", response_model=CreateWorkspaceResponseParams)

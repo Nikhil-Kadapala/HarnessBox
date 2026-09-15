@@ -48,6 +48,10 @@ class StorageBackend(Protocol):
         """Return Projects ordered by name."""
         ...
 
+    async def update_project(self, project_id: str, **fields: Any) -> None:
+        """Update selected Project fields; raise KeyError when missing."""
+        ...
+
     # -- Workspace CRUD --
 
     async def save_workspace(self, workspace_record: dict[str, Any]) -> None:
@@ -145,6 +149,10 @@ class StorageBackend(Protocol):
                 - last_active (str ISO 8601, required)
                 - agent_session_id (str | None) — Claude's session_id for --resume
         """
+        ...
+
+    async def create_conversation(self, conversation_record: dict[str, Any]) -> None:
+        """Persist a new empty conversation; duplicate IDs raise KeyError."""
         ...
 
     async def get_active_conversation(self, workspace_id: str) -> dict[str, Any] | None:

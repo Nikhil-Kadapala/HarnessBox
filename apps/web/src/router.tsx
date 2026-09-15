@@ -8,6 +8,7 @@ import { BoardPage } from "@/pages/board";
 import { SessionPage } from "@/pages/session";
 import { SettingsPage } from "@/pages/settings";
 import TestCostViz from "@/pages/test-cost-viz";
+import { ProjectSettingsPage } from "@/pages/project-settings";
 
 const rootRoute = createRootRoute({
   component: AppLayout,
@@ -31,13 +32,19 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const projectSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$projectId/settings",
+  component: ProjectSettingsPage,
+});
+
 const testCostVizRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/test-cost-viz",
   component: TestCostViz,
 });
 
-const routeTree = rootRoute.addChildren([boardRoute, sessionRoute, settingsRoute, testCostVizRoute]);
+const routeTree = rootRoute.addChildren([boardRoute, sessionRoute, settingsRoute, projectSettingsRoute, testCostVizRoute]);
 
 export const router = createRouter({ routeTree });
 

@@ -78,6 +78,23 @@ class SessionRouter:
         try:
             assert info.sandbox_conn is not None
 
+            conversation_saved = False
+            if self._storage:
+                try:
+                    await self._storage.save_conversation(
+                        {
+                            "conversation_id": conversation_id,
+                            "workspace_id": workspace_id,
+                            "agent_type": harness,
+                            "title": prompt[:50],
+                            "last_active": datetime.now(timezone.utc).isoformat(),
+                            "agent_session_id": stored_agent_session_id,
+                        }
+                    )
+                    conversation_saved = True
+                except Exception as e:
+                    logger.error(f"Failed to save conversation {conversation_id}: {e}")
+
             resolved_attachments = await self._upload_attachments(info, attachments or [])
 
             user_prompt_event = self._build_user_prompt_event(
@@ -96,7 +113,6 @@ class SessionRouter:
 
             augmented_prompt = self._augment_prompt(prompt, resolved_attachments)
 
-            conversation_saved = False
             agent_session_id: str | None = None
             async for event in info.agent_manager.send_message(
                 conversation_id,

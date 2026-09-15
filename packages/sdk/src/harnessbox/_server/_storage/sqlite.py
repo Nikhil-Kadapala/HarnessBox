@@ -11,6 +11,7 @@ all writes to prevent corruption.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from collections.abc import AsyncGenerator
@@ -78,8 +79,8 @@ class SQLiteBackend:
             raise RuntimeError("SQLiteBackend not initialized")
         try:
             self._conn.execute(
-                "INSERT INTO projects (project_id, name, remote, default_branch, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO projects (project_id, name, remote, default_branch, created_at, updated_at, workspace_settings_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     record["project_id"],
                     record["name"],
@@ -87,6 +88,7 @@ class SQLiteBackend:
                     record["default_branch"],
                     record["created_at"],
                     record["updated_at"],
+                    json.dumps(record.get("workspace_settings", {})),
                 ),
             )
             self._conn.commit()
@@ -103,7 +105,13 @@ class SQLiteBackend:
         row = self._conn.execute(
             "SELECT * FROM projects WHERE project_id = ?", (project_id,)
         ).fetchone()
-        return dict(row) if row else None
+        return self._project_row(row) if row else None
+
+    @staticmethod
+    def _project_row(row: sqlite3.Row) -> dict[str, Any]:
+        record = dict(row)
+        record["workspace_settings"] = json.loads(record.pop("workspace_settings_json", "{}"))
+        return record
 
     async def list_projects(self) -> list[dict[str, Any]]:
         async with self._lock:
@@ -113,7 +121,34 @@ class SQLiteBackend:
         if self._conn is None:
             raise RuntimeError("SQLiteBackend not initialized")
         rows = self._conn.execute("SELECT * FROM projects ORDER BY name COLLATE NOCASE").fetchall()
-        return [dict(row) for row in rows]
+        return [self._project_row(row) for row in rows]
+
+    async def update_project(self, project_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        async with self._lock:
+            await asyncio.to_thread(self._update_project_sync, project_id, fields)
+
+    def _update_project_sync(self, project_id: str, fields: dict[str, Any]) -> None:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        allowed = {"name", "remote", "default_branch", "updated_at", "workspace_settings"}
+        if fields.keys() - allowed:
+            raise ValueError("Unsupported Project field")
+        values = {
+            ("workspace_settings_json" if key == "workspace_settings" else key): (
+                json.dumps(value) if key == "workspace_settings" else value
+            )
+            for key, value in fields.items()
+        }
+        set_clause = ", ".join(f"{key} = ?" for key in values)
+        cursor = self._conn.execute(
+            f"UPDATE projects SET {set_clause} WHERE project_id = ?",
+            (*values.values(), project_id),
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(f"Project {project_id} not found")
 
     # -- Workspace CRUD --
 
@@ -254,6 +289,29 @@ class SQLiteBackend:
     async def save_conversation(self, conversation_record: dict[str, Any]) -> None:
         async with self._lock:
             await asyncio.to_thread(self._save_conversation_sync, conversation_record)
+
+    async def create_conversation(self, conversation_record: dict[str, Any]) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._create_conversation_sync, conversation_record)
+
+    def _create_conversation_sync(self, record: dict[str, Any]) -> None:
+        if self._conn is None:
+            raise RuntimeError("SQLiteBackend not initialized")
+        try:
+            self._conn.execute(
+                "INSERT INTO conversations (conversation_id, workspace_id, agent_type, title, last_active, agent_session_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    record["conversation_id"],
+                    record["workspace_id"],
+                    record["agent_type"],
+                    record.get("title"),
+                    record["last_active"],
+                    record.get("agent_session_id"),
+                ),
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise KeyError(f"Conversation {record['conversation_id']} already exists") from exc
 
     def _save_conversation_sync(self, record: dict[str, Any]) -> None:
         if self._conn is None:

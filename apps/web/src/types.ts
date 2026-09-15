@@ -105,6 +105,27 @@ export interface Project {
   default_branch: string;
   created_at: string;
   updated_at: string;
+  workspace_settings: ProjectWorkspaceSettings;
+}
+
+export interface ProjectWorkspaceSettings {
+  provider: string;
+  default_harness: string;
+  sandbox_timeout: number;
+  session_timeout: number;
+  skip_permissions: boolean;
+  security_policy: SecurityPolicyConfig;
+}
+
+export interface ConversationEntry {
+  conversation_id: string;
+  workspace_id: string;
+  agent_type: string;
+  title: string | null;
+  last_active: string;
+  events: UniversalEvent[];
+  streaming: boolean;
+  error: string | null;
 }
 
 // --- Workspace creation ---

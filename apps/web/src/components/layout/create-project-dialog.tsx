@@ -192,7 +192,7 @@ export function CreateProjectDialog({ open, onOpenChange, onCreate }: CreateProj
                   <Input id="project-local-path" value={localPath} onChange={(event) => { setLocalPath(event.target.value); setLocalRepo(null); }} placeholder="/Users/me/code/project" />
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">This saves the project record in local HarnessBox storage. No repository files are copied. Click + beside the project to create a workspace and start agent execution with the selected sandbox provider.</p>
+              <p className="text-xs text-muted-foreground">This saves the project record in local HarnessBox storage. Set workspace defaults in Project settings, then click + beside the project to create a workspace immediately.</p>
             </div>
           )}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
